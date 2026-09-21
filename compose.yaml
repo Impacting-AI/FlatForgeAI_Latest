@@ -1,0 +1,49 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile.frontend
+    environment:
+      FLATFORGE_API_KEY: ${FLATFORGE_API_KEY:?Set a long random FLATFORGE_API_KEY}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [api]
+    restart: unless-stopped
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flatforge
+      POSTGRES_USER: flatforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: ["database:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flatforge"]
+      interval: 5s
+      retries: 10
+  api:
+    build: ./backend
+    environment: &backend-env
+      DATABASE_URL: postgresql+psycopg://flatforge:${POSTGRES_PASSWORD}@database/flatforge
+      FLATFORGE_API_KEY: ${FLATFORGE_API_KEY:?Set a long random FLATFORGE_API_KEY}
+      FLATFORGE_DATA: /data
+      ODA_FILE_CONVERTER: ${ODA_FILE_CONVERTER:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    volumes: ["artifacts:/data"]
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      database: {condition: service_healthy}
+    restart: unless-stopped
+  worker:
+    build: ./backend
+    command: ["python", "-m", "flatforge.worker"]
+    environment: *backend-env
+    volumes: ["artifacts:/data"]
+    depends_on: [api]
+    mem_limit: 5g
+    restart: unless-stopped
+volumes:
+  database:
+  artifacts:

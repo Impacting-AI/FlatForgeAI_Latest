@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-spa
+.git
+.wrangler
+.openai
+.env
+.env.*
+.dev.vars
+backend/data
+**/__pycache__
+**/.pytest_cache

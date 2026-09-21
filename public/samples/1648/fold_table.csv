@@ -1,0 +1,13 @@
+bend_id,parent,child,angle,signed_angle,axis,source,confidence,status
+C07,0,1,90.0,-90.0,+Y,HORIZONTAL_SECTION vertex 3,drawing,PASS
+C06,0,2,90.0,90.0,+Y,HORIZONTAL_SECTION vertex 4,drawing,PASS
+C05,0,5,90.0,90.0,+X,SIDE_RIGHT vertex 2,drawing,PASS
+C09,0,6,90.0,-90.0,+X,SIDE_RIGHT vertex 3,drawing,PASS
+C03,1,3,90.0,90.0,+Y,HORIZONTAL_SECTION vertex 2,drawing,PASS
+C01,2,4,90.0,-90.0,+Y,HORIZONTAL_SECTION vertex 5,drawing,PASS
+C04,3,7,90.0,90.0,+Y,HORIZONTAL_SECTION vertex 1,drawing,PASS
+C04,3,8,90.0,90.0,+Y,HORIZONTAL_SECTION vertex 1,drawing,PASS
+C04,3,9,90.0,90.0,+Y,HORIZONTAL_SECTION vertex 1; HORIZONTAL_SECTION vertex 1,drawing,PASS
+C04,3,10,90.0,90.0,+Y,HORIZONTAL_SECTION vertex 1; HORIZONTAL_SECTION vertex 1; HORIZONTAL_SECTION vertex 1; HORIZONTAL_SECTION vertex 1,drawing,PASS
+C02,5,11,90.0,-90.0,+X,SIDE_RIGHT vertex 1,drawing,PASS
+C08,6,12,90.0,90.0,+X,SIDE_RIGHT vertex 4,drawing,PASS

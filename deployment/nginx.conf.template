@@ -1,0 +1,22 @@
+server {
+ listen 8080;
+ server_name _;
+ root /usr/share/nginx/html;
+ client_max_body_size 1050m;
+ add_header X-Content-Type-Options nosniff always;
+ add_header Referrer-Policy same-origin always;
+ location = /api/bootstrap {
+  proxy_pass http://api:8000/bootstrap;
+  proxy_set_header X-Flatforge-Key "${FLATFORGE_API_KEY}";
+  proxy_set_header Host $host;
+  proxy_read_timeout 120s;
+ }
+ location /api/engine/ {
+  proxy_pass http://api:8000/;
+  proxy_set_header X-Flatforge-Key "${FLATFORGE_API_KEY}";
+  proxy_set_header Host $host;
+  proxy_read_timeout 120s;
+  proxy_request_buffering off;
+ }
+ location / { try_files $uri $uri/ /index.html; }
+}

@@ -1,0 +1,21 @@
+bend_id,parent,child,angle,signed_angle,axis,source,confidence,status
+C03 / C19,0,1,90.0,90.0,+X,SIDE_LEFT vertex 4; SIDE_RIGHT vertex 2,drawing,PASS
+C18,0,3,90.0,-90.0,+X,SIDE_LEFT vertex 5; SIDE_RIGHT vertex 3,drawing,PASS
+C21,0,7,90.0,-90.0,+Y,A-A vertex 3,drawing,PASS
+C15,0,8,90.0,90.0,+Y,A-A vertex 4,drawing,PASS
+C14,1,2,90.0,90.0,+X,SIDE_LEFT vertex 3,drawing,PASS
+C13,1,11,90.0,-90.0,+Y,B-B vertex 3,drawing,PASS
+C02,1,15,90.0,-90.0,+X,SIDE_RIGHT vertex 1,drawing,PASS
+C04,1,16,90.0,-90.0,+Y,B-B vertex 4,drawing,PASS
+C09,2,5,90.0,90.0,+X,SIDE_LEFT vertex 2,drawing,PASS
+C06,2,17,90.0,-90.0,+Y,C-C vertex 3,drawing,PASS
+C07,2,19,90.0,-90.0,+Y,C-C vertex 2,drawing,PASS
+C20,3,4,90.0,90.0,+X,SIDE_LEFT vertex 6; SIDE_RIGHT vertex 4,drawing,PASS
+C01,4,6,90.0,-90.0,+X,SIDE_LEFT vertex 7; SIDE_RIGHT vertex 5,drawing,PASS
+C10,5,9,90.0,-90.0,+X,SIDE_LEFT vertex 1,drawing,PASS
+C17,7,10,90.0,90.0,+Y,A-A vertex 2,drawing,PASS
+C05,8,13,90.0,-90.0,+Y,A-A vertex 5,drawing,PASS
+C16,10,12,90.0,-90.0,+Y,A-A vertex 1,drawing,PASS
+C12,11,14,90.0,90.0,+Y,B-B vertex 2,drawing,PASS
+C11,14,18,90.0,-90.0,+Y,B-B vertex 1,drawing,PASS
+C08,19,20,90.0,90.0,+Y,C-C vertex 1,drawing,PASS

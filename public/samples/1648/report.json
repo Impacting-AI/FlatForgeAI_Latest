@@ -1,0 +1,551 @@
+{
+  "settings": {
+    "thickness": 2.0,
+    "radius": 2.0,
+    "deduction": 4.0,
+    "input_type": "flat_pattern"
+  },
+  "issues": [],
+  "status": "PASS",
+  "layers": {
+    "0": 53,
+    "\u05e6\u05d1\u05e2": 2,
+    "A-STRS-1": 0,
+    "Defpoints": 0,
+    "HAT": 26,
+    "KIFOF": 9,
+    "CONTOR": 25,
+    "Dim WidthForAreaNetto": 1,
+    "Omega_Lines": 6,
+    "Omega_Text": 3,
+    "Dim LengthForAreaNetto": 1,
+    "FRAME PROFILE": 0
+  },
+  "flat_width": 1122.0,
+  "flat_height": 2980.0,
+  "flat_area": 3300883.1860619974,
+  "bend_lines": 9,
+  "physical_bends": 12,
+  "faces": 13,
+  "source_sha256": "75f9bfd7489a144dc968c3e8fa46c70d145706150d74e389fa2fae661ca21e3f",
+  "origin": [
+    139285.591422183,
+    -167902.0781103666
+  ],
+  "thickness_evidence": {
+    "value": 2.0,
+    "confidence": "drawing",
+    "paired_segments": 11,
+    "source": "Repeated HAT wall separation"
+  },
+  "units_evidence": "Unitless DXF; interpreted in millimetres under workspace convention",
+  "deduction_evidence": {
+    "value": 4.0,
+    "confidence": "drawing",
+    "source": "Matched flat-strip / HAT virtual-midline increments; 90-degree bends",
+    "max_residual_mm": 0.0
+  },
+  "input_evidence": {
+    "classification": "flat_pattern_supported",
+    "reason": "Matched section / flat-strip dimensions"
+  },
+  "unresolved_bends": [],
+  "section_mapping": [
+    {
+      "profile": "HORIZONTAL_SECTION",
+      "cut_axis": "Y",
+      "coordinate": 2577.25,
+      "method": "unlabelled projected profile matched to an equivalent cut lane (no explicit marker)"
+    },
+    {
+      "profile": "SIDE_RIGHT",
+      "cut_axis": "X",
+      "coordinate": 591.0,
+      "method": "unlabelled projected profile matched to an equivalent cut lane (no explicit marker)"
+    }
+  ],
+  "bends": [
+    {
+      "id": 0,
+      "bend_ids": [
+        "C07"
+      ],
+      "parent": 0,
+      "child": 1,
+      "angle": -90.0,
+      "key": "42A:F0:F1",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 3,
+          "handles_before": [
+            "3B0",
+            "3B1"
+          ],
+          "handles_after": [
+            "407",
+            "408"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 1,
+      "bend_ids": [
+        "C06"
+      ],
+      "parent": 0,
+      "child": 2,
+      "angle": 90.0,
+      "key": "429:F0:F2",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 4,
+          "handles_before": [
+            "407",
+            "408"
+          ],
+          "handles_after": [
+            "2AE",
+            "2AF"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 2,
+      "bend_ids": [
+        "C05"
+      ],
+      "parent": 0,
+      "child": 5,
+      "angle": 90.0,
+      "key": "344:F0:F5",
+      "source": [
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 2,
+          "handles_before": [
+            "301",
+            "305"
+          ],
+          "handles_after": [
+            "362",
+            "363"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 3,
+      "bend_ids": [
+        "C09"
+      ],
+      "parent": 0,
+      "child": 6,
+      "angle": -90.0,
+      "key": "42E:F0:F6",
+      "source": [
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 3,
+          "handles_before": [
+            "362",
+            "363"
+          ],
+          "handles_after": [
+            "384",
+            "385"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 4,
+      "bend_ids": [
+        "C03"
+      ],
+      "parent": 1,
+      "child": 3,
+      "angle": 90.0,
+      "key": "342:F1:F3",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 2,
+          "handles_before": [
+            "3B5",
+            "3B6"
+          ],
+          "handles_after": [
+            "3B0",
+            "3B1"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 5,
+      "bend_ids": [
+        "C01"
+      ],
+      "parent": 2,
+      "child": 4,
+      "angle": -90.0,
+      "key": "287:F2:F4",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 5,
+          "handles_before": [
+            "2AE",
+            "2AF"
+          ],
+          "handles_after": [
+            "29D",
+            "29E"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 6,
+      "bend_ids": [
+        "C04"
+      ],
+      "parent": 3,
+      "child": 7,
+      "angle": 90.0,
+      "key": "343:F3:F7",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 7,
+      "bend_ids": [
+        "C04"
+      ],
+      "parent": 3,
+      "child": 8,
+      "angle": 90.0,
+      "key": "343:F3:F8",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0,
+          "correspondence": "same original KIFOF LINE, separated flange tab"
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 8,
+      "bend_ids": [
+        "C04"
+      ],
+      "parent": 3,
+      "child": 9,
+      "angle": 90.0,
+      "key": "343:F3:F9",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0,
+          "correspondence": "same original KIFOF LINE, separated flange tab"
+        },
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0,
+          "correspondence": "same original KIFOF LINE, separated flange tab"
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 9,
+      "bend_ids": [
+        "C04"
+      ],
+      "parent": 3,
+      "child": 10,
+      "angle": 90.0,
+      "key": "343:F3:F10",
+      "source": [
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0,
+          "correspondence": "same original KIFOF LINE, separated flange tab"
+        },
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0,
+          "correspondence": "same original KIFOF LINE, separated flange tab"
+        },
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0,
+          "correspondence": "same original KIFOF LINE, separated flange tab"
+        },
+        {
+          "profile": "HORIZONTAL_SECTION",
+          "vertex": 1,
+          "handles_before": [
+            "3B2",
+            "3B3"
+          ],
+          "handles_after": [
+            "3B5",
+            "3B6"
+          ],
+          "angle": 90.0,
+          "correspondence": "same original KIFOF LINE, separated flange tab"
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 10,
+      "bend_ids": [
+        "C02"
+      ],
+      "parent": 5,
+      "child": 11,
+      "angle": -90.0,
+      "key": "2E1:F5:F11",
+      "source": [
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 1,
+          "handles_before": [
+            "302",
+            "304"
+          ],
+          "handles_after": [
+            "301",
+            "305"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 11,
+      "bend_ids": [
+        "C08"
+      ],
+      "parent": 6,
+      "child": 12,
+      "angle": 90.0,
+      "key": "42D:F6:F12",
+      "source": [
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 4,
+          "handles_before": [
+            "384",
+            "385"
+          ],
+          "handles_after": [
+            "381",
+            "382"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    }
+  ],
+  "solid": {
+    "valid": true,
+    "solid_count": 1,
+    "volume_mm3": 6626586.0680257995,
+    "pre_fuse_volume_mm3": 6626616.953695053,
+    "fusion_volume_removed_mm3": 30.885669253766537,
+    "bbox_mm": [
+      990.0,
+      2917.0,
+      55.00000000000002
+    ],
+    "bbox_min_mm": [
+      84.99999999999999,
+      44.99999999999999,
+      -54.0
+    ],
+    "bbox_max_mm": [
+      1075.0,
+      2962.0,
+      1.0000000000000222
+    ],
+    "plate_flat_area": 3230985.3975546956,
+    "bend_developed_area": 69878.0
+  },
+  "bbox": [
+    990.0,
+    2917.0,
+    55.00000000000002
+  ],
+  "section_checks": [
+    {
+      "profile": "HORIZONTAL_SECTION",
+      "segments": 6,
+      "section_edges": 24,
+      "max_length_error_mm": 0.0,
+      "max_turn_error_deg": 0.0,
+      "max_paint_normal_error_deg": 0.0,
+      "circular_edges": 10,
+      "expected_circular_edges": 10,
+      "max_radius_error_mm": 1.4832579608992091e-13,
+      "missing_or_interrupted": [],
+      "chain_status": "PASS",
+      "full_plane_status": "PASS"
+    },
+    {
+      "profile": "SIDE_RIGHT",
+      "segments": 5,
+      "section_edges": 20,
+      "max_length_error_mm": 4.263256414560601e-14,
+      "max_turn_error_deg": 0.0,
+      "max_paint_normal_error_deg": 0.0,
+      "circular_edges": 8,
+      "expected_circular_edges": 8,
+      "max_radius_error_mm": 5.773159728050814e-13,
+      "missing_or_interrupted": [],
+      "chain_status": "PASS",
+      "full_plane_status": "PASS"
+    }
+  ],
+  "unfold_check": {
+    "method": "inverse fold-tree mapping of actual fused BREP painted planar/cylindrical faces; cylindrical angle mapped by derived K",
+    "flat_input_area_mm2": 3300883.1860619974,
+    "unfolded_area_mm2": 3300844.8577500973,
+    "symmetric_difference_mm2": 87.71486420883744,
+    "symmetric_difference_percent": 0.0026573150052450834,
+    "net_area_difference_percent": -0.0011611532350488543,
+    "missing_area_mm2": 63.02223599999986,
+    "excess_area_mm2": 24.693276152111657,
+    "surface_patch_counts": {
+      "planar_patches": 13,
+      "cylindrical_patches": 32
+    },
+    "status": "PASS"
+  },
+  "k_factor": 0.27323954473516276,
+  "allowance": 4.0,
+  "corner_contacts": [
+    {
+      "faces": [
+        1,
+        5
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (125 63, 123 63)"
+    },
+    {
+      "faces": [
+        1,
+        6
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (123 2919, 125 2919)"
+    },
+    {
+      "faces": [
+        2,
+        5
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (1059 63, 1057 63)"
+    },
+    {
+      "faces": [
+        2,
+        6
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (1057 2919, 1059 2919)"
+    }
+  ],
+  "review_decisions": {}
+}

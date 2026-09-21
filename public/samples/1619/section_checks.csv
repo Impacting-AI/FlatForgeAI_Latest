@@ -1,0 +1,4 @@
+profile,segments,section_edges,max_length_error_mm,max_turn_error_deg,max_paint_normal_error_deg,circular_edges,expected_circular_edges,max_radius_error_mm,missing_or_interrupted,chain_status,full_plane_status
+B-B,6,24,0.00025449940585531294,0.0,0.0,10,10,5.773159728050814e-13,[],PASS,PASS
+SIDE_LEFT,8,32,0.0,0.0,0.0,14,14,4.214406601477094e-13,[],PASS,PASS
+A-A,6,24,0.00025449940585531294,0.0,0.0,10,10,5.773159728050814e-13,[],PASS,PASS

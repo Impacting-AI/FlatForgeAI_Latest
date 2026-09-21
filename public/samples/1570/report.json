@@ -1,0 +1,816 @@
+{
+  "settings": {
+    "thickness": 2.0,
+    "radius": 2.0,
+    "deduction": 4.0,
+    "input_type": "flat_pattern"
+  },
+  "issues": [],
+  "status": "PASS",
+  "layers": {
+    "0": 79,
+    "\u05e6\u05d1\u05e2": 1,
+    "A-STRS-1": 15,
+    "Defpoints": 1,
+    "HAT": 68,
+    "KIFOF": 21,
+    "CONTOR": 29,
+    "hat hide": 14,
+    "Dim WidthForAreaNetto": 3,
+    "Omega_Lines": 2,
+    "Omega_Text": 1,
+    "Dim LengthForAreaNetto": 1,
+    "FRAME PROFILE": 0
+  },
+  "flat_width": 2156.0,
+  "flat_height": 1191.0,
+  "flat_area": 2302186.812897,
+  "bend_lines": 21,
+  "physical_bends": 20,
+  "faces": 21,
+  "source_sha256": "f0aff3fbd7dff931cd2f23694059aeb432c428ebef786533395a6f51a0a71e65",
+  "origin": [
+    92232.16395886416,
+    -152563.2163459541
+  ],
+  "thickness_evidence": {
+    "value": 2.0,
+    "confidence": "drawing",
+    "paired_segments": 29,
+    "source": "Repeated HAT wall separation"
+  },
+  "units_evidence": "Unitless DXF; interpreted in millimetres under workspace convention",
+  "deduction_evidence": {
+    "value": 4.0,
+    "confidence": "drawing",
+    "source": "Matched flat-strip / HAT virtual-midline increments; 90-degree bends",
+    "max_residual_mm": 0.16173293365864083
+  },
+  "input_evidence": {
+    "classification": "flat_pattern_supported",
+    "reason": "Matched section / flat-strip dimensions"
+  },
+  "unresolved_bends": [],
+  "section_mapping": [
+    {
+      "profile": "C-C",
+      "cut_axis": "Y",
+      "coordinate": 94.11704790819203,
+      "method": "paired cutting markers"
+    },
+    {
+      "profile": "SIDE_LEFT",
+      "cut_axis": "X",
+      "coordinate": 895.0,
+      "method": "unlabelled projected profile matched to an equivalent cut lane (no explicit marker)"
+    },
+    {
+      "profile": "SIDE_RIGHT",
+      "cut_axis": "X",
+      "coordinate": 1854.5,
+      "method": "unlabelled projected profile matched to an equivalent cut lane (no explicit marker)"
+    },
+    {
+      "profile": "A-A",
+      "cut_axis": "Y",
+      "coordinate": 731.458188335615,
+      "method": "paired cutting markers"
+    },
+    {
+      "profile": "B-B",
+      "cut_axis": "Y",
+      "coordinate": 333.42044886309304,
+      "method": "paired cutting markers"
+    }
+  ],
+  "bends": [
+    {
+      "id": 0,
+      "bend_ids": [
+        "C03",
+        "C19"
+      ],
+      "parent": 0,
+      "child": 1,
+      "angle": 90.0,
+      "key": "395:608:F0:F1",
+      "source": [
+        {
+          "profile": "SIDE_LEFT",
+          "vertex": 4,
+          "handles_before": [
+            "552",
+            "553"
+          ],
+          "handles_after": [
+            "57C",
+            "57D"
+          ],
+          "angle": 90.0
+        },
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 2,
+          "handles_before": [
+            "36B",
+            "36F"
+          ],
+          "handles_after": [
+            "37E",
+            "37F"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 1,
+      "bend_ids": [
+        "C18"
+      ],
+      "parent": 0,
+      "child": 3,
+      "angle": -90.0,
+      "key": "5E4:F0:F3",
+      "source": [
+        {
+          "profile": "SIDE_LEFT",
+          "vertex": 5,
+          "handles_before": [
+            "57C",
+            "57D"
+          ],
+          "handles_after": [
+            "2A5",
+            "2A6"
+          ],
+          "angle": -90.0
+        },
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 3,
+          "handles_before": [
+            "37E",
+            "37F"
+          ],
+          "handles_after": [
+            "2D9",
+            "2DA"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 2,
+      "bend_ids": [
+        "C21"
+      ],
+      "parent": 0,
+      "child": 7,
+      "angle": -90.0,
+      "key": "60A:F0:F7",
+      "source": [
+        {
+          "profile": "A-A",
+          "vertex": 3,
+          "handles_before": [
+            "317",
+            "318"
+          ],
+          "handles_after": [
+            "490",
+            "491"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 3,
+      "bend_ids": [
+        "C15"
+      ],
+      "parent": 0,
+      "child": 8,
+      "angle": 90.0,
+      "key": "590:F0:F8",
+      "source": [
+        {
+          "profile": "A-A",
+          "vertex": 4,
+          "handles_before": [
+            "490",
+            "491"
+          ],
+          "handles_after": [
+            "3C7",
+            "3C8"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 4,
+      "bend_ids": [
+        "C14"
+      ],
+      "parent": 1,
+      "child": 2,
+      "angle": 90.0,
+      "key": "503:F1:F2",
+      "source": [
+        {
+          "profile": "SIDE_LEFT",
+          "vertex": 3,
+          "handles_before": [
+            "543",
+            "544"
+          ],
+          "handles_after": [
+            "552",
+            "553"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 5,
+      "bend_ids": [
+        "C13"
+      ],
+      "parent": 1,
+      "child": 11,
+      "angle": -90.0,
+      "key": "502:F1:F11",
+      "source": [
+        {
+          "profile": "B-B",
+          "vertex": 3,
+          "handles_before": [
+            "449",
+            "44A"
+          ],
+          "handles_after": [
+            "468",
+            "469"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 6,
+      "bend_ids": [
+        "C02"
+      ],
+      "parent": 1,
+      "child": 15,
+      "angle": -90.0,
+      "key": "393:F1:F15",
+      "source": [
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 1,
+          "handles_before": [
+            "36C",
+            "36E"
+          ],
+          "handles_after": [
+            "36B",
+            "36F"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 7,
+      "bend_ids": [
+        "C04"
+      ],
+      "parent": 1,
+      "child": 16,
+      "angle": -90.0,
+      "key": "3FA:F1:F16",
+      "source": [
+        {
+          "profile": "B-B",
+          "vertex": 4,
+          "handles_before": [
+            "468",
+            "469"
+          ],
+          "handles_after": [
+            "3E9",
+            "3EA"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 8,
+      "bend_ids": [
+        "C09"
+      ],
+      "parent": 2,
+      "child": 5,
+      "angle": 90.0,
+      "key": "4BF:F2:F5",
+      "source": [
+        {
+          "profile": "SIDE_LEFT",
+          "vertex": 2,
+          "handles_before": [
+            "516",
+            "517"
+          ],
+          "handles_after": [
+            "543",
+            "544"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 9,
+      "bend_ids": [
+        "C06"
+      ],
+      "parent": 2,
+      "child": 17,
+      "angle": -90.0,
+      "key": "473:F2:F17",
+      "source": [
+        {
+          "profile": "C-C",
+          "vertex": 3,
+          "handles_before": [
+            "217",
+            "218"
+          ],
+          "handles_after": [
+            "1D7",
+            "1D8"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 10,
+      "bend_ids": [
+        "C07"
+      ],
+      "parent": 2,
+      "child": 19,
+      "angle": -90.0,
+      "key": "49F:F2:F19",
+      "source": [
+        {
+          "profile": "C-C",
+          "vertex": 2,
+          "handles_before": [
+            "1ED",
+            "1EE"
+          ],
+          "handles_after": [
+            "217",
+            "218"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 11,
+      "bend_ids": [
+        "C20"
+      ],
+      "parent": 3,
+      "child": 4,
+      "angle": 90.0,
+      "key": "609:F3:F4",
+      "source": [
+        {
+          "profile": "SIDE_LEFT",
+          "vertex": 6,
+          "handles_before": [
+            "2A5",
+            "2A6"
+          ],
+          "handles_after": [
+            "2A7",
+            "2A8"
+          ],
+          "angle": 90.0
+        },
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 4,
+          "handles_before": [
+            "2D9",
+            "2DA"
+          ],
+          "handles_after": [
+            "2DB",
+            "2DC"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 12,
+      "bend_ids": [
+        "C01"
+      ],
+      "parent": 4,
+      "child": 6,
+      "angle": -90.0,
+      "key": "292:F4:F6",
+      "source": [
+        {
+          "profile": "SIDE_LEFT",
+          "vertex": 7,
+          "handles_before": [
+            "2A7",
+            "2A8"
+          ],
+          "handles_after": [
+            "2C7",
+            "2C9"
+          ],
+          "angle": -90.0
+        },
+        {
+          "profile": "SIDE_RIGHT",
+          "vertex": 5,
+          "handles_before": [
+            "2DB",
+            "2DC"
+          ],
+          "handles_after": [
+            "2FB",
+            "2FD"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 13,
+      "bend_ids": [
+        "C10"
+      ],
+      "parent": 5,
+      "child": 9,
+      "angle": -90.0,
+      "key": "4FF:F5:F9",
+      "source": [
+        {
+          "profile": "SIDE_LEFT",
+          "vertex": 1,
+          "handles_before": [
+            "513",
+            "514"
+          ],
+          "handles_after": [
+            "516",
+            "517"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 14,
+      "bend_ids": [
+        "C17"
+      ],
+      "parent": 7,
+      "child": 10,
+      "angle": 90.0,
+      "key": "5C0:F7:F10",
+      "source": [
+        {
+          "profile": "A-A",
+          "vertex": 2,
+          "handles_before": [
+            "313",
+            "314"
+          ],
+          "handles_after": [
+            "317",
+            "318"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 15,
+      "bend_ids": [
+        "C05"
+      ],
+      "parent": 8,
+      "child": 13,
+      "angle": -90.0,
+      "key": "419:F8:F13",
+      "source": [
+        {
+          "profile": "A-A",
+          "vertex": 5,
+          "handles_before": [
+            "3C7",
+            "3C8"
+          ],
+          "handles_after": [
+            "3C4",
+            "3C5"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 16,
+      "bend_ids": [
+        "C16"
+      ],
+      "parent": 10,
+      "child": 12,
+      "angle": -90.0,
+      "key": "5BF:F10:F12",
+      "source": [
+        {
+          "profile": "A-A",
+          "vertex": 1,
+          "handles_before": [
+            "315",
+            "316"
+          ],
+          "handles_after": [
+            "313",
+            "314"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 17,
+      "bend_ids": [
+        "C12"
+      ],
+      "parent": 11,
+      "child": 14,
+      "angle": 90.0,
+      "key": "501:F11:F14",
+      "source": [
+        {
+          "profile": "B-B",
+          "vertex": 2,
+          "handles_before": [
+            "447",
+            "448"
+          ],
+          "handles_after": [
+            "449",
+            "44A"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 18,
+      "bend_ids": [
+        "C11"
+      ],
+      "parent": 14,
+      "child": 18,
+      "angle": -90.0,
+      "key": "500:F14:F18",
+      "source": [
+        {
+          "profile": "B-B",
+          "vertex": 1,
+          "handles_before": [
+            "435",
+            "437"
+          ],
+          "handles_after": [
+            "447",
+            "448"
+          ],
+          "angle": -90.0
+        }
+      ],
+      "confirmed": false
+    },
+    {
+      "id": 19,
+      "bend_ids": [
+        "C08"
+      ],
+      "parent": 19,
+      "child": 20,
+      "angle": 90.0,
+      "key": "4A1:F19:F20",
+      "source": [
+        {
+          "profile": "C-C",
+          "vertex": 1,
+          "handles_before": [
+            "1EB",
+            "1EC"
+          ],
+          "handles_after": [
+            "1ED",
+            "1EE"
+          ],
+          "angle": 90.0
+        }
+      ],
+      "confirmed": false
+    }
+  ],
+  "solid": {
+    "valid": true,
+    "solid_count": 1,
+    "volume_mm3": 4628120.921184255,
+    "pre_fuse_volume_mm3": 4628200.834455588,
+    "fusion_volume_removed_mm3": 79.91327133309096,
+    "bbox_mm": [
+      2034.0,
+      670.0,
+      358.0
+    ],
+    "bbox_min_mm": [
+      74.99999999999999,
+      448.0,
+      -357.0
+    ],
+    "bbox_max_mm": [
+      2109.0,
+      1118.0,
+      1.0000000000000222
+    ],
+    "plate_flat_area": 2235318.6982537224,
+    "bend_developed_area": 66872.0
+  },
+  "bbox": [
+    2034.0,
+    670.0,
+    358.0
+  ],
+  "section_checks": [
+    {
+      "profile": "C-C",
+      "segments": 4,
+      "section_edges": 40,
+      "max_length_error_mm": 0.0,
+      "max_turn_error_deg": 0.0,
+      "max_paint_normal_error_deg": 0.0,
+      "circular_edges": 14,
+      "expected_circular_edges": 6,
+      "max_radius_error_mm": 5.773159728050814e-13,
+      "missing_or_interrupted": [],
+      "chain_status": "PASS",
+      "full_plane_status": "FAIL"
+    },
+    {
+      "profile": "SIDE_LEFT",
+      "segments": 8,
+      "section_edges": 32,
+      "max_length_error_mm": 0.0,
+      "max_turn_error_deg": 0.0,
+      "max_paint_normal_error_deg": 0.0,
+      "circular_edges": 14,
+      "expected_circular_edges": 14,
+      "max_radius_error_mm": 1.4832579608992091e-13,
+      "missing_or_interrupted": [],
+      "chain_status": "PASS",
+      "full_plane_status": "PASS"
+    },
+    {
+      "profile": "SIDE_RIGHT",
+      "segments": 6,
+      "section_edges": 24,
+      "max_length_error_mm": 0.32346586731727456,
+      "max_turn_error_deg": 0.0,
+      "max_paint_normal_error_deg": 0.0,
+      "circular_edges": 10,
+      "expected_circular_edges": 10,
+      "max_radius_error_mm": 1.4832579608992091e-13,
+      "missing_or_interrupted": [],
+      "chain_status": "PASS",
+      "full_plane_status": "PASS"
+    },
+    {
+      "profile": "A-A",
+      "segments": 6,
+      "section_edges": 24,
+      "max_length_error_mm": 0.0002544994349591434,
+      "max_turn_error_deg": 0.0,
+      "max_paint_normal_error_deg": 0.0,
+      "circular_edges": 10,
+      "expected_circular_edges": 10,
+      "max_radius_error_mm": 5.773159728050814e-13,
+      "missing_or_interrupted": [],
+      "chain_status": "PASS",
+      "full_plane_status": "PASS"
+    },
+    {
+      "profile": "B-B",
+      "segments": 5,
+      "section_edges": 20,
+      "max_length_error_mm": 0.0,
+      "max_turn_error_deg": 0.0,
+      "max_paint_normal_error_deg": 0.0,
+      "circular_edges": 8,
+      "expected_circular_edges": 8,
+      "max_radius_error_mm": 1.5631940186722204e-13,
+      "missing_or_interrupted": [],
+      "chain_status": "PASS",
+      "full_plane_status": "PASS"
+    }
+  ],
+  "unfold_check": {
+    "method": "inverse fold-tree mapping of actual fused BREP painted planar/cylindrical faces; cylindrical angle mapped by derived K",
+    "flat_input_area_mm2": 2302186.812897,
+    "unfolded_area_mm2": 2302146.1610778878,
+    "symmetric_difference_mm2": 134.24525902353412,
+    "symmetric_difference_percent": 0.005831206150234354,
+    "net_area_difference_percent": -0.001765791502431986,
+    "missing_area_mm2": 87.44897749999994,
+    "excess_area_mm2": 46.7967199575024,
+    "surface_patch_counts": {
+      "planar_patches": 21,
+      "cylindrical_patches": 40
+    },
+    "status": "PASS"
+  },
+  "k_factor": 0.27323954473516276,
+  "allowance": 4.0,
+  "corner_contacts": [
+    {
+      "faces": [
+        1,
+        8
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (2091 466, 2093 466)"
+    },
+    {
+      "faces": [
+        3,
+        7
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (115 1075, 113 1075)"
+    },
+    {
+      "faces": [
+        3,
+        8
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (2093 1075, 2091 1075)"
+    },
+    {
+      "faces": [
+        5,
+        19
+      ],
+      "length_mm": 2.0,
+      "geometry": "LINESTRING (113 67, 115 67)"
+    }
+  ],
+  "review_decisions": {
+    "accept_partial_sections": true
+  }
+}

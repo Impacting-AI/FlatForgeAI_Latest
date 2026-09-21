@@ -1,0 +1,14 @@
+fastapi==0.141.1
+uvicorn==0.53.0
+python-dotenv==1.0.1
+python-multipart==0.0.32
+sqlalchemy==2.0.54
+psycopg[binary]==3.3.6
+boto3==1.43.97
+ezdxf==1.4.4
+numpy==2.3.5
+shapely==2.1.2
+cadquery==2.7.0
+cadquery-ocp==7.8.1.1.post1
+trimesh==5.1.0
+matplotlib==3.10.8
