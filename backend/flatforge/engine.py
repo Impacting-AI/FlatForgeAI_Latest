@@ -6,6 +6,7 @@ import ezdxf
 from shapely.geometry import Point,LineString
 from . import geometry as g
 from . import dwg
+from .section_mapping import map_normal_sections
 DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
 def dump(path,obj):path.write_text(json.dumps(obj,indent=2,default=lambda x:x.tolist() if isinstance(x,np.ndarray) else float(x)))
 def thickness_evidence(doc):
@@ -65,17 +66,18 @@ def map_review(edges,overrides):
   key=':'.join(sorted(l['handle'] for l in e['source']))+f':F{e["parent"]}:F{e["child"]}';e['review_key']=key
   if key in overrides:
    angle=float(overrides[key])
-   if angle not in [-90,90]:raise ValueError('Only signed 90-degree override values are supported.')
+   if not math.isfinite(angle) or not 0<abs(angle)<180:raise ValueError('A signed bend rotation must be between 0 and 180 degrees.')
    e['angle']=angle;e['evidence']=[{'profile':'USER CONFIRMED','vertex':None,'angle':angle}];e['confirmed']=True
   if 'angle' not in e:
-   unknown.append({'key':key,'bend_ids':[l['id'] for l in e['source']],'handles':[l['handle'] for l in e['source']],'parent':e['parent'],'child':e['child'],'axis':'+X' if e['dim']==0 else '+Y','axis_coordinate':e['c'],'reason':'No section crosses this hinge; choose its signed parent-local rotation.'})
+   u,n,c=g.support(e)
+   unknown.append({'key':key,'bend_ids':[l['id'] for l in e['source']],'handles':[l['handle'] for l in e['source']],'parent':e['parent'],'child':e['child'],'axis':f'({u[0]:.6f}, {u[1]:.6f}, 0)','axis_coordinate':c,'reason':'No unambiguous section establishes this hinge rotation.'})
  return unknown
 
 def viewer_data(faces,material,edges,tf,t,r,bd):
  ba=2*(r+t)-bd
  return {'units':'mm','thickness':t,'radius':r,'deduction':bd,'allowance':ba,'k_factor':(ba/(math.pi/2)-r)/t,
   'faces':[{'id':i,'polygons':[{'outer':list(p.exterior.coords),'holes':[list(h.coords) for h in p.interiors]} for p in g.poly_parts(material[i])],'rotation':tf[i][0],'translation':tf[i][1]} for i in range(len(faces))],
-  'bends':[{'id':e['index'],'name':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'axis':e['axis'],'d':e['d'],'coordinate':e['c'],'dim':e['dim'],'low':e['geom'].bounds[e['dim']],'high':e['geom'].bounds[e['dim']+2],'angle':e['angle'],'source':e['evidence']} for e in edges]}
+  'bends':[{'id':e['index'],'name':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'axis':e['axis'],'d':e['d'],'hinge':e['hinge'],'allowance':e['allowance'],'coordinate':e['c'],'dim':e['dim'],'low':g.hinge_span(e)[0],'high':g.hinge_span(e)[1],'angle':e['angle'],'source':e['evidence']} for e in edges]}
 def paint_glb(solid,tf,edges,t,r,path):
  import trimesh
  from OCP.BRepAdaptor import BRepAdaptor_Surface
@@ -128,7 +130,10 @@ def run(config):
  checkpoint('EXTRACTING','DXF ready. Reading contour, bends and section evidence…')
  doc=ezdxf.readfile(source);layers={l.dxf.name:sum(1 for e in doc.modelspace() if e.dxf.layer==l.dxf.name) for l in doc.layers};report['layers']=layers
  if len(doc.modelspace())>100000:raise ValueError('Drawing exceeds the 100,000-entity processing limit.')
- missing=[l for l in ['CONTOR','KIFOF','HAT'] if not layers.get(l)]
+ section_layer=g.section_layer(doc)
+ report['section_convention']={'layer':section_layer,'canonical_role':'HAT','alias_used':section_layer not in (None,'HAT')}
+ missing=[l for l in ['CONTOR','KIFOF'] if not layers.get(l)]
+ if section_layer is None:missing.append('HAT')
  if 'CONTOR' in missing:issue('LAYERS','Missing or empty required layer: CONTOR');return finish('NEEDS_REVIEW')
  d,origin,outer,blank,lines=g.read_drawing(source);faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
  used={l['handle'] for e in edges for l in e['source']}
@@ -151,6 +156,7 @@ def run(config):
  report['relief_extension_proposals']=extensions
  report['unassigned_axes']=unassigned
  report['geometry_normalization']=g.read_drawing.repairs
+ report['contour_annotations']=g.read_drawing.annotations
  report.update(flat_width=outer.bounds[2],flat_height=outer.bounds[3],flat_area=blank.area,bend_lines=len(lines),physical_bends=len(edges),faces=len(faces),source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),origin=origin.tolist())
  (out/'extraction.svg').write_text(extract_svg(outer,blank,lines,doc,origin));shutil.copyfile(source,out/'flat.dxf')
  extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
@@ -166,23 +172,42 @@ def run(config):
  if settings['input_type']!='flat_pattern':issue('INPUT_TYPE','This engine requires a developed flat pattern. Folded-dimension drawings need an explicit developed-pattern export.');return finish('NEEDS_REVIEW')
  t,r,bd=settings['thickness'],settings['radius'],settings['deduction'];ba=2*(r+t)-bd;k=(ba/(math.pi/2)-r)/t
  if not 0<k<1:issue('BEND_PARAMETERS','Thickness, radius and deduction imply a K-factor outside (0, 1).');return finish('NEEDS_REVIEW')
- profs=g.profiles(doc,origin,t);deduction=infer_deduction(faces,outer,profs,t);report['deduction_evidence']=deduction
+ try:profs=g.profiles(doc,origin,t)
+ except ValueError as exc:
+  issue('SECTION_EVIDENCE',str(exc));return finish('NEEDS_REVIEW')
+ report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
+ general=section_layer!='HAT' or any(not l['orthogonal'] for l in lines) or any(abs(g.unit(a)@g.unit(b))>math.sin(math.radians(.01)) for p in profs for a,b in zip(np.diff(p['points'],axis=0),np.diff(p['points'],axis=0)[1:]))
+ if general:
+  mapped=map_normal_sections(faces,outer,edges,profs,t,r,bd)
+  report['section_mapping']=mapped
+  report['unresolved_bends']=map_review(edges,{})
+  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':False} for e in edges]
+  report['bend_parameter_model']={'deduction_reference_angle_deg':90,'k_factor':k,'other_angles':'constant K derived from the 90-degree calibration'}
+  unresolved=[m for m in mapped if m['status']!='PASS']
+  if unresolved:
+   report['unmapped_hinges']=report.pop('unresolved_bends')
+   issue('SECTION_CORRESPONDENCE',f'{len(unresolved)} section profiles need correspondence or bend-parameter review. See each profile\'s candidate count and strip-length residual. Projected views across nonparallel hinges are not yet supported by the normal-section solver.',profiles=[m['profile'] for m in unresolved])
+   return finish('NEEDS_REVIEW')
+ deduction=infer_deduction(faces,outer,profs,t) if not general else {'value':bd,'confidence':'settings_validated_against_sections','source':'Every normal section matched using the panel bend parameters; no independent deduction measurement'}
+ report['deduction_evidence']=deduction
  report['input_evidence']={'classification':'flat_pattern_supported' if deduction['value'] is not None else 'not_proven','reason':'Matched section / flat-strip dimensions' if deduction['value'] is not None else 'Input interpretation requires user confirmation'}
  if deduction['value'] is not None and abs(deduction['value']-bd)>.5:
   issue('DEDUCTION',f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm.",field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
  if (evidence['value'] is None or deduction['value'] is None) and not overrides.get('confirm_parameters'):
   issue('EVIDENCE','Drawing does not establish thickness or deduction reliably. Confirm the panel parameters before conversion.');return finish('NEEDS_REVIEW')
- try:mapped=g.map_sections(doc,origin,faces,outer,edges,profs,t,r,bd)
+ try:
+  if not general:mapped=g.map_sections(doc,origin,faces,outer,edges,profs,t,r,bd)
  except ValueError as e:
   if str(e)!='Unmapped hinge; no default direction is allowed':raise
   mapped=[]
  unknown=map_review(edges,overrides.get('bend_angles',{}));report['unresolved_bends']=unknown
- report['section_mapping']=[{'profile':p['name'],'cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping')} for p in profs]
+ if not general:report['section_mapping']=[{'profile':p['name'],'cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping')} for p in profs]
  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
  if unknown:
   issue('DIRECTIONS',f'{len(unknown)} hinge directions need explicit review.');return finish('NEEDS_REVIEW')
  paint_points=[g.vec(p)-origin for e in doc.modelspace().query('LWPOLYLINE[layer=="צבע"]') for p in e.get_points()]
- if not paint_points or not all(faces[0].buffer(.01).covers(Point(p)) for p in paint_points):issue('PAINT','Paint marker does not identify the selected main face unambiguously.');return finish('NEEDS_REVIEW')
+ if not general and (not paint_points or not all(faces[0].buffer(.01).covers(Point(p)) for p in paint_points)):issue('PAINT','Paint marker does not identify the selected main face unambiguously.');return finish('NEEDS_REVIEW')
+ if general:report['paint_evidence']={'source':'World-coordinate Zeva section markers; global base +Z is the finish reference','markers':[p['paint_handle'] for p in profs]}
  checkpoint('BUILDING','Section mapping complete. Building and validating the folded solid…')
  tf=g.transforms(faces,edges,order,t,r,bd);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
  if not stats['valid'] or stats['solid_count']!=1:raise ValueError('CAD validation failed: expected one valid connected solid.')
@@ -196,7 +221,7 @@ def run(config):
  dump(out/'viewer.json',viewer_data(faces,trimmed,edges,tf,t,r,bd));paint_glb(solid,tf,edges,t,r,out/'panel.glb')
  rows=[]
  for e in edges:
-  rows.append({'bend_id':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'angle':abs(e['angle']),'signed_angle':e['angle'],'axis':'+X' if e['dim']==0 else '+Y','source':'; '.join(f"{v['profile']} vertex {v.get('vertex','—')}" for v in e['evidence']),'confidence':'user confirmed' if e.get('confirmed') else 'drawing','status':'NEEDS_REVIEW' if issues else 'PASS'})
+  rows.append({'bend_id':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'angle':abs(e['angle']),'signed_angle':e['angle'],'axis':str(e['axis'].tolist()),'source':'; '.join(f"{v['profile']} vertex {v.get('vertex','—')}" for v in e['evidence']),'confidence':'user confirmed' if e.get('confirmed') else 'drawing','status':'NEEDS_REVIEW' if issues else 'PASS'})
  with (out/'fold_table.csv').open('w',newline='') as f:w=csv.DictWriter(f,fieldnames=rows[0]);w.writeheader();w.writerows(rows)
  import cadquery as cq
  cq.exporters.export(solid,str(out/'panel.stl'))
