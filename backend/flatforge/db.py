@@ -1,6 +1,6 @@
 import os, time, uuid
 from pathlib import Path
-from sqlalchemy import create_engine, String, Text, Float, Integer, ForeignKey, Index, event
+from sqlalchemy import create_engine, String, Text, Float, Integer, ForeignKey, Index, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 DATA=Path(os.getenv('FLATFORGE_DATA','./data')).resolve();DATA.mkdir(parents=True,exist_ok=True)
 URL=os.getenv('DATABASE_URL',f'sqlite:///{DATA}/flatforge.db')
@@ -20,6 +20,7 @@ class Project(Base):
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid.uuid4()))
  name:Mapped[str]=mapped_column(String(160));client:Mapped[str]=mapped_column(String(160),default='')
  created:Mapped[float]=mapped_column(Float,default=time.time)
+ deleted_at:Mapped[float|None]=mapped_column(Float,nullable=True,default=None)
 class Panel(Base):
  __tablename__='panels'
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid.uuid4()))
@@ -31,6 +32,7 @@ class Panel(Base):
  error:Mapped[str]=mapped_column(Text,default='');manual_value:Mapped[float|None]=mapped_column(Float,nullable=True)
  manual_axis:Mapped[str]=mapped_column(String(20),default='flat_width');revision:Mapped[int]=mapped_column(Integer,default=1)
  created:Mapped[float]=mapped_column(Float,default=time.time);updated:Mapped[float]=mapped_column(Float,default=time.time)
+ deleted_at:Mapped[float|None]=mapped_column(Float,nullable=True,default=None)
 class Job(Base):
  __tablename__='jobs'
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid.uuid4()))
@@ -40,4 +42,10 @@ class Job(Base):
  heartbeat:Mapped[float]=mapped_column(Float,default=0);attempts:Mapped[int]=mapped_column(Integer,default=0)
  log:Mapped[str]=mapped_column(Text,default='Queued for conversion.\n')
  __table_args__=(Index('ix_jobs_claim','status','created'),)
-def init():Base.metadata.create_all(engine)
+def init():
+ Base.metadata.create_all(engine)
+ inspector=inspect(engine)
+ for table,column in [('projects','deleted_at'),('panels','deleted_at')]:
+  if column not in {c['name'] for c in inspector.get_columns(table)}:
+   coltype='DOUBLE PRECISION' if engine.dialect.name=='postgresql' else 'REAL'
+   with engine.begin() as conn:conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {coltype}'))

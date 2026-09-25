@@ -16,18 +16,40 @@ from shapely.ops import unary_union,polygonize
 from shapely.affinity import translate
 
 GRID=.001
+ENDPOINT_SNAP=.05
+
+def section_lines(doc):
+    """Read explicit HAT walls, including straight polyline segments, with provenance."""
+    for e in doc.modelspace():
+        if e.dxf.layer!='HAT':continue
+        if e.dxftype()=='LINE':yield e
+        elif e.dxftype() in ['LWPOLYLINE','POLYLINE']:
+            for i,v in enumerate(e.virtual_entities()):
+                if v.dxftype()!='LINE':raise ValueError(f'Curved HAT wall at {e.dxf.handle}; curved-profile interpretation requires review')
+                v.dxf.handle=f'{e.dxf.handle}:{i}'
+                yield v
 
 def vec(p):return np.array(tuple(p)[:2],dtype=float)
 def cross(a,b):return float(a[0]*b[1]-a[1]*b[0])
 def unit(a):return a/np.linalg.norm(a)
 def read_drawing(filename):
     doc=ezdxf.readfile(filename);ms=doc.modelspace()
+    read_drawing.repairs=[]
     outlines=[(e,Polygon([tuple(p)[:2] for p in dxfpath.make_path(e).flattening(.005)])) for e in ms.query('LWPOLYLINE[layer=="CONTOR"]')]
     if not outlines:raise ValueError('CONTOR must contain a closed LWPOLYLINE outline')
-    if any(not e.closed or not p.is_valid for e,p in outlines):raise ValueError('CONTOR contains an open or invalid outline')
     outer_e,outer=max(outlines,key=lambda ep:ep[1].area)
+    origin=np.array(outer.bounds[:2])
+    normalized=[]
+    for e,p in outlines:
+        if not e.closed:raise ValueError(f'CONTOR contains an open outline at {e.dxf.handle}')
+        points=np.round(np.array(p.exterior.coords)-origin,3)
+        clean=Polygon(points)
+        if not clean.is_valid:raise ValueError(f'CONTOR contains an invalid outline at {e.dxf.handle}, even after {GRID} mm coordinate normalization')
+        if not p.is_valid:read_drawing.repairs.append({'kind':'coordinate_precision','handle':e.dxf.handle,'grid_mm':GRID,'reason':'Floating point duplicate/backtracking vertices removed by coordinate rounding'})
+        normalized.append((e,clean))
+    outlines=normalized;outer=next(p for e,p in outlines if e is outer_e)
     if any(e is not outer_e and not outer.covers(p) for e,p in outlines):raise ValueError('Multiple outer panels or intersecting contours: upload one panel per drawing')
-    origin=np.array(outer.bounds[:2]);outer=set_precision(translate(outer,*(-origin)),GRID)
+    outer=set_precision(outer,GRID)
     holes=[]
     for e in ms:
         if e.dxf.layer!='CONTOR' or e is outer_e:continue
@@ -41,11 +63,22 @@ def read_drawing(filename):
         if min(abs(u[0]),abs(u[1]))>1e-5:raise ValueError('This implementation supports orthogonal axes only')
         dim=int(abs(u[1])>abs(u[0]));c=float((a[1-dim]+b[1-dim])/2)
         lines.append(dict(id=f'C{i:02}',handle=e.dxf.handle,a=np.round(a,3),b=np.round(b,3),dim=dim,c=round(c,3)))
+    # Resolve only sub-tolerance corner mismatch; keep every adjustment auditable.
+    coords=np.array(outer.exterior.coords)
+    for i,q in enumerate(coords):
+        for l in lines:
+            dim=l['dim'];other=1-dim;dist=abs(q[other]-l['c'])
+            if GRID<dist<=ENDPOINT_SNAP and min(l['a'][dim],l['b'][dim])-3<=q[dim]<=max(l['a'][dim],l['b'][dim])+3:
+                read_drawing.repairs.append({'kind':'contour_to_axis_snap','bend_id':l['id'],'handle':l['handle'],'from':q.tolist(),'distance_mm':float(dist)})
+                q[other]=l['c']
+    adjusted=Polygon(coords)
+    if not adjusted.is_valid:raise ValueError('Endpoint normalization would invalidate CONTOR; review drawing')
+    outer=set_precision(adjusted,GRID);blank=set_precision(outer.difference(unary_union(holes)),GRID)
     return doc,origin,outer,blank,lines
 
 def partition(outer,blank,lines,relief):
     partition.contacts=[]
-    cutters=[set_precision(LineString([l['a']-relief*unit(l['b']-l['a']),l['b']+relief*unit(l['b']-l['a'])]).intersection(outer),GRID) for l in lines]
+    cutters=[set_precision(LineString([l['a']-l.get('relief_extension',relief)*unit(l['b']-l['a']),l['b']+l.get('relief_extension',relief)*unit(l['b']-l['a'])]).intersection(outer),GRID) for l in lines]
     faces=[p for p in polygonize(unary_union([outer.boundary,*cutters])) if outer.covers(p.representative_point())]
     faces.sort(key=lambda p:(-p.area,p.bounds)); edges=[]
     for i,p in enumerate(faces):
@@ -72,7 +105,7 @@ def partition(outer,blank,lines,relief):
 
 def profiles(doc,origin,t):
     ls=[]
-    for e in doc.modelspace().query('LINE[layer=="HAT"]'):
+    for e in section_lines(doc):
         a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin
         if np.linalg.norm(b-a)<t+0.01:continue # end caps, never bend skeletons
         u=unit(b-a);dim=int(abs(u[1])>abs(u[0]))
@@ -280,7 +313,10 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     fused=parts[0].fuse(*parts[1:],tol=1e-6).clean()
     print('CAD valid',fused.isValid(),'solids',len(fused.Solids()),flush=True)
     cq.exporters.export(fused,str(out/'panel.step'))
-    steppath=out/'panel.step';steptext=steppath.read_text();steptext=re.sub(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'","'1970-01-01T00:00:00'",steptext);steppath.write_text(steptext)
+    steppath=out/'panel.step';steptext=steppath.read_text();steptext=re.sub(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'","'1970-01-01T00:00:00'",steptext)
+    # OpenCascade increments the default product label within a process.
+    # Normalize only that generated label; geometry and entity IDs stay intact.
+    steptext=re.sub(r"'Open CASCADE STEP translator [0-9.]+ \d+'","'FlatForge panel'",steptext);steppath.write_text(steptext)
     import trimesh
     vertices,triangles=fused.tessellate(.08,.1)
     mesh=trimesh.Trimesh(vertices=np.array([v.toTuple() for v in vertices]),faces=np.array(triangles),process=False)
@@ -292,7 +328,7 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     ob=Bnd_Box();BRepBndLib.AddOptimal_s(fused.wrapped,ob,False,False);bounds=ob.Get();bmin=list(bounds[:3]);bmax=list(bounds[3:]);bsize=[v-u for u,v in zip(bmin,bmax)]
     return fused,flat_trimmed,dict(valid=fused.isValid(),solid_count=len(fused.Solids()),volume_mm3=fused.Volume(),pre_fuse_volume_mm3=raw_volume,fusion_volume_removed_mm3=raw_volume-fused.Volume(),bbox_mm=bsize,bbox_min_mm=bmin,bbox_max_mm=bmax,plate_flat_area=sum(p.area for p in flat_trimmed),bend_developed_area=sum(b['developed_area'] for b in bend_records))
 
-def check_sections(solid,profs,faces,tf,t,r,out):
+def check_sections(solid,profs,faces,tf,t,r,out,material=None):
     import cadquery as cq
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
     from OCP.gp import gp_Pln,gp_Pnt,gp_Dir
@@ -303,7 +339,7 @@ def check_sections(solid,profs,faces,tf,t,r,out):
         origin=apply_tf(tf[mainface],q);normal=tf[mainface][0][:,1-dim]
         plane=gp_Pln(gp_Pnt(*origin),gp_Dir(*normal));op=BRepAlgoAPI_Section(solid.wrapped,plane,False);op.Build()
         section=cq.Shape.cast(op.Shape());se=section.Edges();linear=[e for e in se if e.geomType()=='LINE']
-        dirs=[];mids=[];tangent_ends=[];misses=[]
+        dirs=[];mids=[];tangent_ends=[];misses=[];openings={}
         for index,(a,b,face) in enumerate(trace):
             R,T=tf[face];di=R[:,dim];nn=R[:,2];q=np.zeros(3);q[dim]=(a+b)/2;q[1-dim]=cut;mid=apply_tf(tf[face],q)
             spans=[]
@@ -319,8 +355,25 @@ def check_sections(solid,profs,faces,tf,t,r,out):
                 else:
                     matches.sort();lo,hi=matches[0]
                     for aa,bb in matches[1:]:
-                        if aa-hi>.03:misses.append(f'segment {index+1}: interrupted wall')
+                        if aa-hi>.03:
+                            # A hole crossing is legitimate only when the input
+                            # CONTOR independently predicts the same missing span.
+                            qa=q[:2].copy();qb=qa.copy();qa[dim]+=hi;qb[dim]+=aa
+                            gap=LineString([qa,qb]);void=faces[face].difference(material[face]) if material is not None else Polygon()
+                            if gap.difference(void.buffer(.03)).length<=.001:
+                                openings[(index,round(hi,3),round(aa,3))]={'segment':index+1,'width_mm':aa-hi,'source':'CONTOR opening intersected by section plane'}
+                            else:misses.append(f'segment {index+1}: interrupted wall not explained by CONTOR')
                         hi=max(hi,bb)
+                    if material is not None:
+                        def flat_interval(aa,bb):
+                            qa=q[:2].copy();qb=qa.copy();qa[dim]+=aa;qb[dim]+=bb
+                            return LineString([qa,qb])
+                        observed=unary_union([flat_interval(aa,bb) for aa,bb in matches])
+                        required=flat_interval(lo,hi).intersection(material[face])
+                        # Check both ways: an invented gap and a filled-in hole
+                        # must both fail even if the global area residual is small.
+                        if observed.difference(required.buffer(.03)).length>.001 or required.difference(observed.buffer(.03)).length>.001:
+                            misses.append(f'segment {index+1}, wall {side}: material span differs from CONTOR')
                     spans.append((lo,hi))
             lo,hi=np.mean(spans,axis=0);dirs.append(di);mids.append(mid);tangent_ends.append((mid+di*lo,mid+di*hi))
         verts=[tangent_ends[0][0]];intersection_gaps=[]
@@ -346,7 +399,7 @@ def check_sections(solid,profs,faces,tf,t,r,out):
             details.append(dict(profile=p['name'],segment=i+1,face=f'F{trace[i][2]}',hat_virtual_midline_length_mm=float(expected[i]),solid_section_virtual_midline_length_mm=float(actual[i]),length_error_mm=float(abs(actual[i]-expected[i])),turn_error_deg=angle_errors[-1] if i<len(trace)-1 else '',paint_normal_error_deg=paint_errors[-1],status='PASS' if abs(actual[i]-expected[i])<=.5 and paint_errors[-1]<=1 and (i==len(trace)-1 or angle_errors[-1]<=1) else 'FAIL'))
         radii=[e.radius() for e in se if e.geomType()=='CIRCLE'];radius_error=max([min(abs(v-r),abs(v-(r+t))) for v in radii],default=float('inf'))
         status='PASS' if not misses and np.max(abs(actual-expected))<=.5 and max(angle_errors)<=1 and max(paint_errors)<=1 and radius_error<.001 else 'FAIL'
-        summaries.append(dict(profile=p['name'],segments=len(trace),section_edges=len(se),max_length_error_mm=float(np.max(abs(actual-expected))),max_turn_error_deg=max(angle_errors),max_paint_normal_error_deg=max(paint_errors),circular_edges=len(radii),expected_circular_edges=2*(len(trace)-1),max_radius_error_mm=radius_error,missing_or_interrupted=misses,chain_status=status,full_plane_status='PASS' if status=='PASS' and len(radii)==2*(len(trace)-1) and len(se)==4*len(trace) else 'FAIL'))
+        summaries.append(dict(profile=p['name'],segments=len(trace),section_edges=len(se),max_length_error_mm=float(np.max(abs(actual-expected))),max_turn_error_deg=max(angle_errors),max_paint_normal_error_deg=max(paint_errors),circular_edges=len(radii),expected_circular_edges=2*(len(trace)-1),max_radius_error_mm=radius_error,missing_or_interrupted=misses,contour_openings=list(openings.values()),chain_status=status,full_plane_status='PASS' if status=='PASS' and len(radii)==2*(len(trace)-1) and len(se)==4*len(trace)+4*len(openings) else 'FAIL'))
         # Evidence image: real BREP section, registered to HAT by main-segment
         # midpoint/orientation only. No scaling or non-rigid fit is performed.
         ref=(verts[main]+verts[main+1])/2;uv=[]
@@ -360,7 +413,7 @@ def check_sections(solid,profs,faces,tf,t,r,out):
     savecsv('section_checks.csv',summaries);savecsv('section_segment_checks.csv',details)
     import matplotlib;matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    fig,axes=plt.subplots(len(plots),1,figsize=(15,15))
+    fig,axes=plt.subplots(len(plots),1,figsize=(15,15));axes=np.atleast_1d(axes)
     for ax,(name,uv,hat) in zip(axes,plots):
         for pp in uv:ax.plot(pp[:,0],pp[:,1],color='#1278ad',lw=1)
         ax.plot(hat[:,0],hat[:,1],'--',color='#e77b21',lw=.8,label='HAT sharp midsurface reference')
@@ -426,4 +479,3 @@ def unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out):
     ax.set_aspect('equal');ax.set_title('Actual BREP unfolded to neutral flat: black input, blue reconstruction, orange differences');ax.set_xlabel('mm');ax.set_ylabel('mm');fig.tight_layout()
     buf=io.BytesIO();fig.savefig(buf,format='png',dpi=120);(out/'unfold_comparison.png').write_bytes(buf.getvalue());plt.close(fig)
     return result
-

@@ -3,14 +3,14 @@ import sys, json, math, io, csv, shutil, traceback, hashlib, collections, html
 from pathlib import Path
 import numpy as np
 import ezdxf
-from shapely.geometry import Point
+from shapely.geometry import Point,LineString
 from . import geometry as g
 from . import dwg
 DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
 def dump(path,obj):path.write_text(json.dumps(obj,indent=2,default=lambda x:x.tolist() if isinstance(x,np.ndarray) else float(x)))
 def thickness_evidence(doc):
  lines=[]
- for e in doc.modelspace().query('LINE[layer=="HAT"]'):
+ for e in g.section_lines(doc):
   a,b=g.vec(e.dxf.start),g.vec(e.dxf.end)
   if np.linalg.norm(b-a)<8:continue
   u=g.unit(b-a);dim=int(abs(u[1])>abs(u[0]))
@@ -108,27 +108,56 @@ def paint_glb(solid,tf,edges,t,r,path):
 def run(config):
  source=Path(config['source']);out=Path(config['output']);out.mkdir(parents=True,exist_ok=True)
  settings={**DEFAULTS,**config.get('settings',{})};overrides=config.get('overrides',{});issues=[];report={'settings':settings,'issues':issues,'status':'FAILED'}
+ def checkpoint(phase,message):
+  report['phase_message']=message
+  print(message,flush=True)
+  dump(out/'report.json',report)
+  dump(out/'progress.tmp',{'phase':phase,'report':report});(out/'progress.tmp').replace(out/'progress.json')
  def issue(code,message,**extra):issues.append({'code':code,'message':message,**extra})
  def finish(status):
   report['status']=status;report['review_decisions']=overrides;dump(out/'report.json',report)
-  artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name!='result.json'}
+  artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
   dump(out/'result.json',{'status':status,'report':report,'artifacts':artifacts});return report
+ report['conversion']={'input_format':source.suffix.lower()[1:],'status':'RUNNING' if source.suffix.lower()=='.dwg' else 'NOT_REQUIRED','engine':'ODA' if source.suffix.lower()=='.dwg' else 'Native DXF'}
  if source.suffix.lower()=='.dwg':
-  try:source=dwg.convert(source,out/'dwg')
-  except dwg.ConverterUnavailable as e:issue('DWG_CONVERTER',str(e));return finish('NEEDS_REVIEW')
+  checkpoint('CONVERTING','Converting DWG to DXF with ODA…')
+  try:
+   source=dwg.convert(source,out/'dwg');report['conversion']['status']='DONE'
+  except dwg.ConverterUnavailable as e:report['conversion']['status']='UNAVAILABLE';issue('DWG_CONVERTER',str(e));return finish('NEEDS_REVIEW')
+ shutil.copyfile(source,out/'flat.dxf')
+ checkpoint('EXTRACTING','DXF ready. Reading contour, bends and section evidence…')
  doc=ezdxf.readfile(source);layers={l.dxf.name:sum(1 for e in doc.modelspace() if e.dxf.layer==l.dxf.name) for l in doc.layers};report['layers']=layers
  if len(doc.modelspace())>100000:raise ValueError('Drawing exceeds the 100,000-entity processing limit.')
  missing=[l for l in ['CONTOR','KIFOF','HAT'] if not layers.get(l)]
- if missing:issue('LAYERS','Missing or empty required layers: '+', '.join(missing));return finish('NEEDS_REVIEW')
+ if 'CONTOR' in missing:issue('LAYERS','Missing or empty required layer: CONTOR');return finish('NEEDS_REVIEW')
  d,origin,outer,blank,lines=g.read_drawing(source);faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
  used={l['handle'] for e in edges for l in e['source']}
  unassigned=[l['id'] for l in lines if l['handle'] not in used]
+ # A narrowly bounded proposal, never automatic manufacturing approval:
+ # both ends must reach the outline along the same axis within two thicknesses.
+ extensions=[];limit=max(3.,2*settings['thickness'])
+ for l in lines:
+  if l['id'] not in unassigned:continue
+  gaps=[];u=g.unit(l['b']-l['a'])
+  for q,sign in [(l['a'],-1),(l['b'],1)]:
+   ray=LineString([q,q+sign*limit*u]);hit=ray.intersection(outer.boundary)
+   gaps.append(float(Point(q).distance(hit)) if not hit.is_empty else float('inf'))
+  if 3.<max(gaps)<=limit and min(gaps)<=3.:
+   extension=max(gaps)+g.GRID;l['relief_extension']=extension
+   extensions.append({'bend_id':l['id'],'handle':l['handle'],'endpoint_gaps_mm':gaps,'proposed_extension_mm':extension,'standard_limit_mm':3.})
+ if extensions:
+  faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
+  used={l['handle'] for e in edges for l in e['source']};unassigned=[l['id'] for l in lines if l['handle'] not in used]
+ report['relief_extension_proposals']=extensions
  report['unassigned_axes']=unassigned
- if unassigned:
-  issue('UNASSIGNED_AXES','These bend entities do not bound a hinge after the 3 mm relief extension: '+', '.join(unassigned)+'. Interior ribs require separate interpretation; they are not cut into the main face.');return finish('NEEDS_REVIEW')
+ report['geometry_normalization']=g.read_drawing.repairs
  report.update(flat_width=outer.bounds[2],flat_height=outer.bounds[3],flat_area=blank.area,bend_lines=len(lines),physical_bends=len(edges),faces=len(faces),source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),origin=origin.tolist())
  (out/'extraction.svg').write_text(extract_svg(outer,blank,lines,doc,origin));shutil.copyfile(source,out/'flat.dxf')
  extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
+ checkpoint('EXTRACTING','Rendered numbered bend axes and contour. Checking drawing parameters…')
+ if missing:issue('LAYERS','Missing or empty required layers: '+', '.join(missing)+'. The contour preview is available, but a folded model cannot be inferred without bend and section evidence.');return finish('NEEDS_REVIEW')
+ if unassigned:
+  issue('UNASSIGNED_AXES','These bend entities do not bound a hinge after the 3 mm relief extension: '+', '.join(unassigned)+'. Check endpoint gaps and contour alignment; this alone does not prove an interior rib.');return finish('NEEDS_REVIEW')
  evidence=thickness_evidence(doc);report['thickness_evidence']=evidence
  if evidence['value'] is not None and abs(evidence['value']-settings['thickness'])>.1:
   issue('THICKNESS',f"Drawing wall spacing is {evidence['value']:g} mm; panel thickness is {settings['thickness']:g} mm.",field='thickness',suggested=evidence['value']);return finish('NEEDS_REVIEW')
@@ -154,17 +183,20 @@ def run(config):
   issue('DIRECTIONS',f'{len(unknown)} hinge directions need explicit review.');return finish('NEEDS_REVIEW')
  paint_points=[g.vec(p)-origin for e in doc.modelspace().query('LWPOLYLINE[layer=="צבע"]') for p in e.get_points()]
  if not paint_points or not all(faces[0].buffer(.01).covers(Point(p)) for p in paint_points):issue('PAINT','Paint marker does not identify the selected main face unambiguously.');return finish('NEEDS_REVIEW')
+ checkpoint('BUILDING','Section mapping complete. Building and validating the folded solid…')
  tf=g.transforms(faces,edges,order,t,r,bd);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
  if not stats['valid'] or stats['solid_count']!=1:raise ValueError('CAD validation failed: expected one valid connected solid.')
- checks,details=g.check_sections(solid,profs,faces,tf,t,r,out);unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out)
+ checks,details=g.check_sections(solid,profs,faces,tf,t,r,out,material);unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out)
  report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=k,allowance=ba,corner_contacts=g.partition.contacts)
  if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or unfolding tolerances failed. Inspect validation results.')
  for c in checks:
-  if c['full_plane_status']!='PASS' and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
+  if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
+ if extensions and not overrides.get('accept_relief_extensions'):
+  issue('RELIEF_EXTENSION','Draft reconstruction extends '+', '.join(f"{e['bend_id']} across a {max(e['endpoint_gaps_mm']):g} mm endpoint gap" for e in extensions)+'. This exceeds the standard 3 mm rule. Inspect the drawing and explicitly approve these endpoint extensions before final export.')
  dump(out/'viewer.json',viewer_data(faces,trimmed,edges,tf,t,r,bd));paint_glb(solid,tf,edges,t,r,out/'panel.glb')
  rows=[]
  for e in edges:
-  rows.append({'bend_id':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'angle':abs(e['angle']),'signed_angle':e['angle'],'axis':'+X' if e['dim']==0 else '+Y','source':'; '.join(f"{v['profile']} vertex {v.get('vertex','—')}" for v in e['evidence']),'confidence':'user confirmed' if e.get('confirmed') else 'drawing','status':'PASS'})
+  rows.append({'bend_id':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'angle':abs(e['angle']),'signed_angle':e['angle'],'axis':'+X' if e['dim']==0 else '+Y','source':'; '.join(f"{v['profile']} vertex {v.get('vertex','—')}" for v in e['evidence']),'confidence':'user confirmed' if e.get('confirmed') else 'drawing','status':'NEEDS_REVIEW' if issues else 'PASS'})
  with (out/'fold_table.csv').open('w',newline='') as f:w=csv.DictWriter(f,fieldnames=rows[0]);w.writeheader();w.writerows(rows)
  import cadquery as cq
  cq.exporters.export(solid,str(out/'panel.stl'))
@@ -178,5 +210,9 @@ if __name__=='__main__':
  except Exception as e:
   out=Path(config['output']);out.mkdir(parents=True,exist_ok=True)
   message=f'{type(e).__name__}: {str(e)}'
-  dump(out/'result.json',{'status':'FAILED','report':{'status':'FAILED','issues':[{'code':'GEOMETRY','message':message}],'error':message},'artifacts':{p.name:p.name for p in out.iterdir() if p.is_file() and p.name!='result.json'}})
+  report=json.loads((out/'report.json').read_text()) if (out/'report.json').exists() else {}
+
+  if report.get('conversion',{}).get('status')=='RUNNING':report['conversion']['status']='FAILED'
+  report.update(status='FAILED',error=message);report.setdefault('issues',[]).append({'code':'GEOMETRY','message':message});dump(out/'report.json',report)
+  dump(out/'result.json',{'status':'FAILED','report':report,'artifacts':{p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}})
   traceback.print_exc();sys.exit(1)
