@@ -76,6 +76,19 @@ def test_conflicting_section_lengths_do_not_export_solid(tmp_path):
     assert not (tmp_path/'out/panel.step').exists()
 
 
+def test_invalid_k_reports_the_actual_panel_settings(tmp_path):
+    source=tmp_path/'source.dxf';channel(source)
+    result=run({'source':str(source),'output':str(tmp_path/'out'),
+                'settings':{'thickness':2.,'radius':2.,'deduction':8.}})
+    issue=result['issues'][0]
+    assert result['status']=='NEEDS_REVIEW'
+    assert issue['code']=='BEND_PARAMETERS'
+    assert issue['calculated_k']==-1
+    assert issue['deduction_90_mm']==8
+    assert 'BD90=8' in issue['message']
+    assert not (tmp_path/'out/panel.step').exists()
+
+
 @pytest.mark.parametrize('name,axes,faces',[('135',21,22),('145',14,17),('148',19,22),('149',23,28)])
 def test_supplied_complex_drawings_report_remaining_evidence(tmp_path,name,axes,faces):
     folder=os.environ.get('FLATFORGE_REGRESSION_DXF_DIR')
@@ -89,3 +102,9 @@ def test_supplied_complex_drawings_report_remaining_evidence(tmp_path,name,axes,
     assert result['issues'][0]['code']=='SECTION_CORRESPONDENCE'
     assert (tmp_path/'out/extraction.svg').exists()
     assert not (tmp_path/'out/panel.step').exists()
+    unresolved=[m for m in result['section_mapping'] if m['status']!='PASS']
+    assert all(m['reason_code'] in {'AMBIGUOUS_CHAIN','NO_CHAIN','NON_NORMAL_CHAIN','STRIP_LENGTH_MISMATCH'} for m in unresolved)
+    for mapping in unresolved:
+        nearest=mapping['nearest_candidate']
+        if nearest:
+            assert len(nearest['segment_checks'])==len(nearest['faces'])

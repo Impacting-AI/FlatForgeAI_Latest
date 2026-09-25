@@ -59,3 +59,22 @@ Regression command with customer files in a local (untracked) directory:
 ```sh
 FLATFORGE_REGRESSION_DXF_DIR=/path/to/dxfs PYTHONPATH=backend python -m pytest backend/tests -q
 ```
+# Re-upload investigation (2026-09-25)
+
+The three re-uploaded files `PN_NM_145(1).dxf`, `PN_NM_148(1).dxf`
+and `PN_NM_149(1).dxf` have exactly the same SHA-256 hashes as their
+previous copies. No drawing repair has been made or presumed.
+
+The lane optimiser now minimises the maximum absolute strip residual,
+matching the 0.5 mm acceptance criterion. The former least-squares objective
+could reject a feasible lane. This fix does **not** resolve these three files:
+145 still has a 1.922 mm normal-chain mismatch; 148 has 2.048 and 0.850 mm
+normal-chain mismatches plus non-normal chains; 149 has three matching upper
+chains and two unresolved non-normal chains. No validated STEP is available.
+
+Reports now distinguish `AMBIGUOUS_CHAIN`, `NO_CHAIN`, `NON_NORMAL_CHAIN`
+and `STRIP_LENGTH_MISMATCH`. Each nearest candidate includes per-segment
+source handles, observed/required strip lengths, signed residual and tolerance
+result. These are candidate diagnostics, not proof the drawing is incorrect.
+Invalid-K reports include the panel's actual settings and computed K so a
+settings problem can be reproduced without guessing from a screenshot.

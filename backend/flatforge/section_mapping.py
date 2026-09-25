@@ -10,6 +10,26 @@ from shapely.geometry import LineString
 from . import geometry as g
 
 
+def minimax_station(start, end, expected):
+    """Minimise the largest absolute strip residual on one affine cut lane.
+
+    The upper envelope of signed affine residuals is convex and piecewise
+    linear. Its minimum occurs at an endpoint or a pairwise intersection.
+    Ties select the lowest station, making correspondence deterministic.
+    """
+    offset=np.asarray(start,dtype=float)-np.asarray(expected,dtype=float)
+    slope=np.asarray(end,dtype=float)-np.asarray(start,dtype=float)
+    intercept=np.r_[offset,-offset];gradient=np.r_[slope,-slope]
+    candidates=[0.,1.]
+    for i in range(len(intercept)):
+        for j in range(i):
+            denominator=gradient[i]-gradient[j]
+            if abs(denominator)<1e-12:continue
+            x=float((intercept[j]-intercept[i])/denominator)
+            if 0<=x<=1:candidates.append(x)
+    return min(candidates,key=lambda x:(float(np.max(np.abs(offset+slope*x))),x))
+
+
 def trace(faces, outer, direction, coordinate):
     normal=np.array([-direction[1],direction[0]])
     origin=normal*coordinate
@@ -67,7 +87,7 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                         start=np.array([b-a for a,b,_ in ends[0]]);end=np.array([b-a for a,b,_ in ends[1]])
                         slope=end-start
                         if slope@slope>1e-12:
-                            ratio=float(np.clip((expected-start)@slope/(slope@slope),0,1))
+                            ratio=minimax_station(start,end,expected)
                             c=low+eps+ratio*(high-low-2*eps);items=trace(faces,outer,direction,c)
                     hinges=[lookup.get(frozenset((a[2],b[2]))) for a,b in zip(items,items[1:])]
                     if any(e is None for e in hinges):continue
@@ -78,6 +98,12 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                             'observed_flat_lengths_mm':actual.tolist(),'required_flat_lengths_mm':expected.tolist(),
                             'profile_lengths_mm':lengths.tolist(),'turn_angles_deg':angles.tolist(),
                             'cut_direction':direction.tolist(),'cut_coordinate':c}
+                    record['segment_checks']=[{
+                        'segment':i+1,'face':items[i][2],
+                        'source_handles':segs[i]['handles'],
+                        'observed_flat_mm':float(a),'required_flat_mm':float(b),
+                        'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=.5)
+                    } for i,(a,b) in enumerate(zip(actual,expected))]
                     if nearest is None or error<nearest['max_strip_error_mm']:nearest=record
                     if not normal_cut or error>.5:continue
                     rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
@@ -87,7 +113,19 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
         row={'profile':p['name'],'section_layer':p.get('layer'),'paint_marker':p['paint_handle'],
              'source_handles':[s['handles'] for s in p['segments']], 'candidate_chains':len(signatures),'nearest_candidate':nearest}
         if len(signatures)!=1:
-            row.update(status='NEEDS_REVIEW',reason='No normal section matches the flat strip lengths and bend parameters.' if not signatures else 'More than one distinct hinge chain matches this profile; a section cut marker is required.')
+            if signatures:
+                code='AMBIGUOUS_CHAIN'
+                reason='More than one distinct hinge chain matches this profile; a section cut marker is required.'
+            elif nearest is None:
+                code='NO_CHAIN'
+                reason='No contiguous face chain matches the profile segment count.'
+            elif not nearest['normal_to_all_hinges']:
+                code='NON_NORMAL_CHAIN'
+                reason='The closest chain crosses nonparallel hinges; its apparent section turns cannot be used as bend rotations.'
+            else:
+                code='STRIP_LENGTH_MISMATCH'
+                reason=f"Closest normal chain exceeds the 0.5 mm strip tolerance (maximum {nearest['max_strip_error_mm']:.3f} mm). Check its segment diagnostics and bend parameters."
+            row.update(status='NEEDS_REVIEW',reason_code=code,reason=reason)
             reports.append(row);continue
         candidate=min(candidates,key=lambda c:(-c['width'],c['error'],c['c'],c['signature']))
         conflicts=[e['index'] for e,a in zip(candidate['hinges'],candidate['rotations']) if 'angle' in e and abs(e['angle']-a)>1]

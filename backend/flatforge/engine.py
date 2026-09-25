@@ -171,7 +171,11 @@ def run(config):
  report['units_evidence']='DXF millimetres' if doc.units==4 else 'Unitless DXF; interpreted in millimetres under workspace convention'
  if settings['input_type']!='flat_pattern':issue('INPUT_TYPE','This engine requires a developed flat pattern. Folded-dimension drawings need an explicit developed-pattern export.');return finish('NEEDS_REVIEW')
  t,r,bd=settings['thickness'],settings['radius'],settings['deduction'];ba=2*(r+t)-bd;k=(ba/(math.pi/2)-r)/t
- if not 0<k<1:issue('BEND_PARAMETERS','Thickness, radius and deduction imply a K-factor outside (0, 1).');return finish('NEEDS_REVIEW')
+ if not 0<k<1:
+  issue('BEND_PARAMETERS',f'Panel settings t={t:g} mm, r={r:g} mm, BD90={bd:g} mm imply K={k:.6g}; this model requires 0 < K < 1. Check the saved panel settings.',
+        thickness_mm=t,inside_radius_mm=r,deduction_90_mm=bd,calculated_k=k,
+        deduction_range_exclusive_mm=[2*(r+t)-(math.pi/2)*(r+t),2*(r+t)-(math.pi/2)*r])
+  return finish('NEEDS_REVIEW')
  try:profs=g.profiles(doc,origin,t)
  except ValueError as exc:
   issue('SECTION_EVIDENCE',str(exc));return finish('NEEDS_REVIEW')
@@ -186,7 +190,8 @@ def run(config):
   unresolved=[m for m in mapped if m['status']!='PASS']
   if unresolved:
    report['unmapped_hinges']=report.pop('unresolved_bends')
-   issue('SECTION_CORRESPONDENCE',f'{len(unresolved)} section profiles need correspondence or bend-parameter review. See each profile\'s candidate count and strip-length residual. Projected views across nonparallel hinges are not yet supported by the normal-section solver.',profiles=[m['profile'] for m in unresolved])
+   reasons='; '.join(f"{m['profile']}: {m['reason']}" for m in unresolved)
+   issue('SECTION_CORRESPONDENCE',f'{len(unresolved)} section profiles need review. {reasons}',profiles=[m['profile'] for m in unresolved])
    return finish('NEEDS_REVIEW')
  deduction=infer_deduction(faces,outer,profs,t) if not general else {'value':bd,'confidence':'settings_validated_against_sections','source':'Every normal section matched using the panel bend parameters; no independent deduction measurement'}
  report['deduction_evidence']=deduction
