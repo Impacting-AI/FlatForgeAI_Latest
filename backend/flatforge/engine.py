@@ -6,7 +6,7 @@ import ezdxf
 from shapely.geometry import Point,LineString
 from . import geometry as g
 from . import dwg
-from .section_mapping import map_normal_sections
+from .detail_mapping import map_details, normal_instances, check_local_profiles
 DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
 def dump(path,obj):path.write_text(json.dumps(obj,indent=2,default=lambda x:x.tolist() if isinstance(x,np.ndarray) else float(x)))
 def thickness_evidence(doc):
@@ -182,7 +182,7 @@ def run(config):
  report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
  general=section_layer!='HAT' or any(not l['orthogonal'] for l in lines) or any(abs(g.unit(a)@g.unit(b))>math.sin(math.radians(.01)) for p in profs for a,b in zip(np.diff(p['points'],axis=0),np.diff(p['points'],axis=0)[1:]))
  if general:
-  mapped=map_normal_sections(faces,outer,edges,profs,t,r,bd)
+  mapped=map_details(faces,outer,edges,profs,t,r,bd)
   report['section_mapping']=mapped
   report['unresolved_bends']=map_review(edges,{})
   report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':False} for e in edges]
@@ -193,7 +193,7 @@ def run(config):
    reasons='; '.join(f"{m['profile']}: {m['reason']}" for m in unresolved)
    issue('SECTION_CORRESPONDENCE',f'{len(unresolved)} section profiles need review. {reasons}',profiles=[m['profile'] for m in unresolved])
    return finish('NEEDS_REVIEW')
- deduction=infer_deduction(faces,outer,profs,t) if not general else {'value':bd,'confidence':'settings_validated_against_sections','source':'Every normal section matched using the panel bend parameters; no independent deduction measurement'}
+ deduction=infer_deduction(faces,outer,profs,t) if not general else {'value':bd,'confidence':'settings_validated_against_sections','source':'Section and local-detail strip dimensions matched using the panel bend parameters; no independent deduction measurement'}
  report['deduction_evidence']=deduction
  report['input_evidence']={'classification':'flat_pattern_supported' if deduction['value'] is not None else 'not_proven','reason':'Matched section / flat-strip dimensions' if deduction['value'] is not None else 'Input interpretation requires user confirmation'}
  if deduction['value'] is not None and abs(deduction['value']-bd)>.5:
@@ -216,11 +216,20 @@ def run(config):
  checkpoint('BUILDING','Section mapping complete. Building and validating the folded solid…')
  tf=g.transforms(faces,edges,order,t,r,bd);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
  if not stats['valid'] or stats['solid_count']!=1:raise ValueError('CAD validation failed: expected one valid connected solid.')
- checks,details=g.check_sections(solid,profs,faces,tf,t,r,out,material);unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out)
+ normal_profs=normal_instances(profs) if general else profs
+ checks,details=g.check_sections(solid,normal_profs,faces,tf,t,r,out,material)
+ local_checks=check_local_profiles(profs,edges,tf,t,r,bd) if general else []
+ checks.extend(local_checks)
+ if local_checks:
+  report['drawing_convention']={'name':'repeated transverse details and corroborated local edge profiles',
+    'validation_scope':'Transverse documented chains are checked against actual BREP cuts. Side profiles use local edge lengths and relative rotations, not full plane cuts.',
+    'reference':'Convention confirmed by the customer against the reconstructed folded panel.'}
+  dump(out/'local_profile_checks.json',local_checks)
+ unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out)
  report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=k,allowance=ba,corner_contacts=g.partition.contacts)
  if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or unfolding tolerances failed. Inspect validation results.')
  for c in checks:
-  if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
+  if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and not local_checks and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
  if extensions and not overrides.get('accept_relief_extensions'):
   issue('RELIEF_EXTENSION','Draft reconstruction extends '+', '.join(f"{e['bend_id']} across a {max(e['endpoint_gaps_mm']):g} mm endpoint gap" for e in extensions)+'. This exceeds the standard 3 mm rule. Inspect the drawing and explicitly approve these endpoint extensions before final export.')
  dump(out/'viewer.json',viewer_data(faces,trimmed,edges,tf,t,r,bd));paint_glb(solid,tf,edges,t,r,out/'panel.glb')

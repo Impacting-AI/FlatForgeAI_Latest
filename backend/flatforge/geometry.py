@@ -419,6 +419,10 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     # glTF metres; STEP and all reports use millimetres. Z remains CAD up.
     mesh.apply_scale(.001);scene=trimesh.Scene();scene.add_geometry(mesh,node_name='panel',geom_name='panel');scene.metadata={'units':'metres','source_units':'mm','status':'engineering reconstruction; see validation report'}
     (out/'panel.glb').write_bytes(scene.export(file_type='glb'))
+    # Tessellation updates OCC triangulation caches and can invalidate a
+    # subsequent in-memory check despite a valid saved BREP. Validate and use
+    # the actual exported STEP for all downstream section/unfold operations.
+    fused=cq.importers.importStep(str(out/'panel.step')).val()
     from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_Box
     ob=Bnd_Box();BRepBndLib.AddOptimal_s(fused.wrapped,ob,False,False);bounds=ob.Get();bmin=list(bounds[:3]);bmax=list(bounds[3:]);bsize=[v-u for u,v in zip(bmin,bmax)]

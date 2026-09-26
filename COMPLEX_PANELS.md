@@ -1,80 +1,95 @@
-# Complex panel DXF diagnostic (25 September 2026)
+# Complex panel support — 26 September 2026
 
-Applies to the four supplied **PN_NM** files (the message called them PN_PM).
-Their source drawings are not committed to this public repository.
+## Approved reference and current results
 
-## Findings
+The customer confirmed the delivered PN_NM_149 STEP matches the expected
+folded panel. The app now derives that model without a panel-name lookup,
+fixed coordinates, fixed entity handles, face-number table, or review overrides.
+The automatic and approved solids have zero symmetric BREP difference volume
+in the OpenCascade comparison. STEP serialization differs in insignificant
+floating-point values; the geometry matches.
 
-All four files contain KIFOF and CONTOR. Their section walls are on the
-Hebrew **חיפוי** layer instead of HAT, with painted-face triangles in `Zeva`
-INSERTs. All KIFOF entities participate in a connected fold tree after joint
-noding of the axes: 135 has 21 axes/22 faces, 145 has 14/17, 148 has 19/22,
-149 has 23/28. Several axes describe disconnected flange tabs, so a line is
-not always identical to one physical bend. None of these counts establishes
-the three-dimensional fold directions by itself.
+| Drawing | Current result using t=2, r=2, BD90=4 mm |
+| --- | --- |
+| PN_NM_149 | PASS: 28 faces, 27 hinges; 729.164780 × 1315.027705 × 400.080227 mm; valid single-solid STEP; unfolded symmetric difference 0.012572%. |
+| PN_NM_145 | NEEDS_REVIEW: closest normal chain still differs by 1.922 mm near a 30.466-degree bend. |
+| PN_NM_148 | NEEDS_REVIEW: normal-chain errors of 2.048 and 0.850 mm; side correspondence remains unresolved. |
+| PN_NM_135 | NEEDS_REVIEW: remaining local/projected profiles do not meet the new matching conditions. |
 
-| File | Original error | Drawing evidence and remaining constraint |
-| --- | --- | --- |
-| PN_NM_135 | Orthogonal axes only | Contains approximately 0.34° and 2.50° plan-axis deviations, as well as truly perpendicular axes. Four section profiles recovered; one matches a unique normal cut within 0.334 mm. The other three are projected details crossing axes that are not parallel; they cannot be treated as normal cross sections. |
-| PN_NM_145 | Missing HAT | The HAT layer is empty, but two complete painted section profiles exist on חיפוי. One section matches exactly. The other has a 30.466° turn and its closest compatible cut has **1.922 mm** strip-length error using t=2, r=2, BD90=4. There is no reliable 90°-bend deduction to apply blindly at this turn. |
-| PN_NM_148 | Unsupported CONTOR DIMENSION | CONTOR handle **AA** is an annotation, not cutting geometry; it is now excluded and reported. Angled axes include approximately 30.34° and 59.66° orientations. Four sections recovered; one includes two 60° turns, with the closest normal cut at **2.048 mm** error under the current material calibration. Two long views cross nonparallel axes; another normal view has 0.850 mm error. |
-| PN_NM_149 | Orthogonal axes only | Contains the same angled end arrangement, with 23 axes creating 27 hinge edges. Four profiles recovered; the lower profile has one unique normal cut with 0.018 mm residual. The upper profile has **three distinct** geometrically equivalent candidate hinge chains; it has no unique source cut marker. The other two views cross nonparallel axes. |
+This release does not promise conversion of every possible complex drawing.
+The remaining three files are not fixed or silently marked PASS. Reconcile
+their drawing correspondence and non-90-degree material calibration first.
+Raw customer drawings and their STEP files are not published in this repository.
 
-## What changed
+## Drawing conventions implemented
 
-- Recognize the actual section-layer convention and read mirrored block markers
-  in world coordinates; report both with entity provenance.
-- Ignore documented annotation types on CONTOR while still rejecting unknown
-  entities that could change material boundaries.
-- Node angled hinge arrangements together, recover the underlying analytic
-  support for BREP plate-to-bend joins, and preserve the established
-  orthogonal construction path for older drawings.
-- Support signed bends of arbitrary measured angle with constant K derived
-  from the 90° calibration, and expose the actual axis/allowance in the 3D
-  viewer and neutral-surface unfolding.
-- Match a section only when the full face chain, all flat strip lengths, marker
-  orientation, and every hinge's normal direction agree. Report numerical
-  residuals and ambiguity otherwise. An ambiguous or projected section never
-  supplies automatic signed angles or a downloadable STEP.
+CONTOR supplies cutting geometry; recognized annotations such as DIMENSION
+are excluded with provenance. Each KIFOF LINE is one axis. The partitioner
+nodes oblique axes and recovers analytic supports for BREP joins. One continuous
+axis can bound multiple child faces. HAT and the explicit Hebrew alias חיפוי
+supply paired section walls. Zeva triangle markers use world coordinates,
+including mirrored INSERTs, to establish paint orientation.
 
-## Limitations and required evidence
+detail_mapping.py extends normal-section matching:
 
-All four customer examples currently remain **NEEDS_REVIEW**. None has a
-validated, generated STEP from this change. Replacing the old exception with a
-model made from guessed fold directions would be a regression in engineering
-integrity. A general projected-section solver needs explicit cut-plane
-positions/directions tied to each drawing view, measured angle/BD behaviour
-for non-90° bends, and an independent folded reference for verification.
-PN_NM_145 and PN_NM_148 additionally need the measured bend-parameter
-convention reconciled with the dimension residuals above. A 100% accuracy
-guarantee for *any* DXF is impossible when dimensions conflict or the section
-to hinge correspondence is ambiguous.
+1. A repeated transverse detail must have dimensionally matching face chains,
+   the same continuous source axes at both sides of each parent row, disjoint
+   hinge instances, and connected intervening parent faces. All instances
+   retain individual source-profile vertices and signed rotations.
+2. Local edge profiles are searched along root-to-leaf paths of the derived
+   fold tree. Parallel strips use perpendicular hinge spacing. Nonparallel
+   hinges on the main face use an actual connecting boundary segment.
+3. Every segment must match within 0.5 mm. Two independently painted profiles
+   must corroborate the same complete hinge chain and rotations before local
+   detail matching supplies any angle. Conflicts and uncorroborated views stop.
+4. Signed turns come from the painted source profile and are applied about
+   each hinge in its parent-local frame. Non-90-degree values are retained.
 
-The extraction SVG and `report.json` include the recovered face graph,
-profile vertices and handles, paint marker, candidate count, nearest
-candidate flat lengths, and the exact reason the STEP was withheld.
+The normal-lane optimiser minimises the maximum strip error, matching the
+acceptance criterion. Reports distinguish ambiguity, missing chains,
+non-normal chains and dimensional mismatch, with source handles and residuals.
 
-Regression command with customer files in a local (untracked) directory:
+## Validation scope
+
+Transverse documented chains are tested against actual cuts of the reimported
+STEP. Local side details use local edge dimensions and relative rotations;
+they are explicitly labelled local_edge_profile, not full-plane sections.
+Other sheet regions can intersect a transverse plane. Full-plane comparison
+results are retained, while the customer-confirmed local-detail convention
+validates the documented chains instead of requiring an isolated whole plane.
+Actual fused-solid unfolding remains a separate 0.5% conservation gate.
+
+The exported STEP is reimported before downstream checks. This avoids basing
+CAD validity on mutable in-memory triangulation caches after GLB tessellation.
+
+## DWG and deployment
+
+DWG follows the existing ODA conversion stage and then exactly the same DXF
+pipeline. ODA must already be installed on the CAD worker and configured with
+ODA_FILE_CONVERTER (and ODA_XVFB=1 when required). No replacement DWG
+converter or new production dependency is introduced. Real DWG conversion
+was not exercised in this change: supplied fixtures are DXFs.
+
+After updating the repository, rebuild/restart the API, worker and frontend
+using the existing deployment method. For the supplied Docker setup:
 
 ```sh
+docker compose up --build -d
+```
+
+Reprocess existing panels (or upload them again); stored results are not
+retroactively regenerated by a code update. Keep the confirmed material
+defaults. Invalid saved panel settings are reported, never silently replaced.
+
+## Regression tests
+
+```sh
+python -m pip install -r backend/requirements-dev.txt
 FLATFORGE_REGRESSION_DXF_DIR=/path/to/dxfs PYTHONPATH=backend python -m pytest backend/tests -q
 ```
-# Re-upload investigation (2026-09-25)
 
-The three re-uploaded files `PN_NM_145(1).dxf`, `PN_NM_148(1).dxf`
-and `PN_NM_149(1).dxf` have exactly the same SHA-256 hashes as their
-previous copies. No drawing repair has been made or presumed.
-
-The lane optimiser now minimises the maximum absolute strip residual,
-matching the 0.5 mm acceptance criterion. The former least-squares objective
-could reject a feasible lane. This fix does **not** resolve these three files:
-145 still has a 1.922 mm normal-chain mismatch; 148 has 2.048 and 0.850 mm
-normal-chain mismatches plus non-normal chains; 149 has three matching upper
-chains and two unresolved non-normal chains. No validated STEP is available.
-
-Reports now distinguish `AMBIGUOUS_CHAIN`, `NO_CHAIN`, `NON_NORMAL_CHAIN`
-and `STRIP_LENGTH_MISMATCH`. Each nearest candidate includes per-segment
-source handles, observed/required strip lengths, signed residual and tolerance
-result. These are candidate diagnostics, not proof the drawing is incorrect.
-Invalid-K reports include the panel's actual settings and computed K so a
-settings problem can be reproduced without guessing from a screenshot.
+Tests cover automatic 149 conversion, its accepted size and volume, actual
+section/unfold checks, a 37-degree rotated/renamed/re-handled copy, missing
+corroboration, conflicting lengths, previous panels, and API upload → isolated
+worker → viewer/STEP/project exports without a review call or panel overrides.
+Customer-fixture tests skip explicitly when their source files are unavailable.

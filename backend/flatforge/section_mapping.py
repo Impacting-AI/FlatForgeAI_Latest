@@ -110,6 +110,9 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                     signature=tuple(sorted((e['index'],round(a,3)) for e,a in zip(hinges,rotations)))
                     candidates.append(dict(signature=signature,width=high-low,c=c,trace=items,direction=direction,pts=pts,segs=segs,main=main,hinges=hinges,rotations=rotations,error=error))
         signatures={c['signature'] for c in candidates}
+        # Keep full candidates for the repeated-detail convention resolver.
+        # Internal geometry arrays are never copied into the public report.
+        p['_normal_candidates']=candidates
         row={'profile':p['name'],'section_layer':p.get('layer'),'paint_marker':p['paint_handle'],
              'source_handles':[s['handles'] for s in p['segments']], 'candidate_chains':len(signatures),'nearest_candidate':nearest}
         if len(signatures)!=1:

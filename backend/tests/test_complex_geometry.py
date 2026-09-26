@@ -89,7 +89,7 @@ def test_invalid_k_reports_the_actual_panel_settings(tmp_path):
     assert not (tmp_path/'out/panel.step').exists()
 
 
-@pytest.mark.parametrize('name,axes,faces',[('135',21,22),('145',14,17),('148',19,22),('149',23,28)])
+@pytest.mark.parametrize('name,axes,faces',[('135',21,22),('145',14,17),('148',19,22)])
 def test_supplied_complex_drawings_report_remaining_evidence(tmp_path,name,axes,faces):
     folder=os.environ.get('FLATFORGE_REGRESSION_DXF_DIR')
     if not folder:pytest.skip('Set FLATFORGE_REGRESSION_DXF_DIR to the supplied drawing directory')
