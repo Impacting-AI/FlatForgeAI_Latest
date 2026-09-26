@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Evidence-driven orthogonal sheet reconstruction.
-Supported convention: CONTOR blank, single KIFOF axes, double-line HAT sections,
+"""Evidence-driven sheet reconstruction with arbitrary straight hinge axes.
+Supported convention: CONTOR blank, single KIFOF axes, double-wall sections,
 A-STRS-1 section markers, Zeva triangular paint marks. No panel coordinates or
 bend IDs are embedded. Unsupported/ambiguous patterns raise explicit errors.
 Dependencies: ezdxf, numpy, shapely, cadquery, trimesh, matplotlib.
@@ -10,22 +10,54 @@ from pathlib import Path
 import numpy as np
 import ezdxf
 from ezdxf import path as dxfpath
-from shapely import set_precision
+from shapely import set_precision, union_all
 from shapely.geometry import Polygon,LineString,Point,box
 from shapely.ops import unary_union,polygonize
 from shapely.affinity import translate
 
 GRID=.001
 ENDPOINT_SNAP=.05
+ORTHOGONAL_TOL=1e-5
+
+def section_layer(doc):
+    """Explicit drawing conventions, never guess a layer from similar geometry."""
+    populated={e.dxf.layer for e in doc.modelspace() if e.dxftype() in ('LINE','LWPOLYLINE','POLYLINE')}
+    candidates=[name for name in ('HAT','חיפוי') if name in populated]
+    if len(candidates)>1:
+        raise ValueError('Both HAT and חיפוי contain geometry; select one section convention in CAD')
+    return candidates[0] if candidates else None
+
+def line_frame(a,b):
+    """Canonical unit support: +Y for vertical lines, otherwise positive X."""
+    if np.linalg.norm(b-a)<GRID:raise ValueError('Zero-length bend or section line')
+    u=unit(b-a)
+    if abs(u[0])<ORTHOGONAL_TOL:u=np.array([0.,1.])
+    elif abs(u[1])<ORTHOGONAL_TOL:u=np.array([1.,0.])
+    elif u[0]<0:u=-u
+    n=np.array([-u[1],u[0]])
+    c=float(np.dot((a+b)/2,n))
+    return u,n,c
+
+def support(e):
+    if 'u' in e:return e['u'],e['normal'],e['offset']
+    u=np.eye(2)[e['dim']];n=np.array([-u[1],u[0]])
+    return u,n,e['c']*n[1-e['dim']]
+
+def hinge_span(e):
+    u,n,c=support(e)
+    points=np.array(e['geom'].coords) if e['geom'].geom_type=='LineString' else np.vstack([p.coords for p in e['geom'].geoms if p.geom_type=='LineString'])
+    values=points@u
+    return float(values.min()),float(values.max())
 
 def section_lines(doc):
     """Read explicit HAT walls, including straight polyline segments, with provenance."""
+    layer=section_layer(doc)
     for e in doc.modelspace():
-        if e.dxf.layer!='HAT':continue
+        if e.dxf.layer!=layer:continue
         if e.dxftype()=='LINE':yield e
         elif e.dxftype() in ['LWPOLYLINE','POLYLINE']:
             for i,v in enumerate(e.virtual_entities()):
-                if v.dxftype()!='LINE':raise ValueError(f'Curved HAT wall at {e.dxf.handle}; curved-profile interpretation requires review')
+                if v.dxftype()!='LINE':raise ValueError(f'Curved section wall at {e.dxf.handle}; curved-profile interpretation requires review')
                 v.dxf.handle=f'{e.dxf.handle}:{i}'
                 yield v
 
@@ -35,6 +67,8 @@ def unit(a):return a/np.linalg.norm(a)
 def read_drawing(filename):
     doc=ezdxf.readfile(filename);ms=doc.modelspace()
     read_drawing.repairs=[]
+    read_drawing.annotations=[]
+    oblique=any(min(abs(unit(vec(e.dxf.end)-vec(e.dxf.start))))>ORTHOGONAL_TOL for e in ms.query('LINE[layer=="KIFOF"]') if np.linalg.norm(vec(e.dxf.end)-vec(e.dxf.start))>GRID)
     outlines=[(e,Polygon([tuple(p)[:2] for p in dxfpath.make_path(e).flattening(.005)])) for e in ms.query('LWPOLYLINE[layer=="CONTOR"]')]
     if not outlines:raise ValueError('CONTOR must contain a closed LWPOLYLINE outline')
     outer_e,outer=max(outlines,key=lambda ep:ep[1].area)
@@ -42,44 +76,85 @@ def read_drawing(filename):
     normalized=[]
     for e,p in outlines:
         if not e.closed:raise ValueError(f'CONTOR contains an open outline at {e.dxf.handle}')
-        points=np.round(np.array(p.exterior.coords)-origin,3)
+        points=np.array(p.exterior.coords)-origin
+        if not oblique or not p.is_valid:points=np.round(points,3)
         clean=Polygon(points)
         if not clean.is_valid:raise ValueError(f'CONTOR contains an invalid outline at {e.dxf.handle}, even after {GRID} mm coordinate normalization')
         if not p.is_valid:read_drawing.repairs.append({'kind':'coordinate_precision','handle':e.dxf.handle,'grid_mm':GRID,'reason':'Floating point duplicate/backtracking vertices removed by coordinate rounding'})
         normalized.append((e,clean))
     outlines=normalized;outer=next(p for e,p in outlines if e is outer_e)
     if any(e is not outer_e and not outer.covers(p) for e,p in outlines):raise ValueError('Multiple outer panels or intersecting contours: upload one panel per drawing')
-    outer=set_precision(outer,GRID)
+    if not oblique:outer=set_precision(outer,GRID)
     holes=[]
     for e in ms:
         if e.dxf.layer!='CONTOR' or e is outer_e:continue
+        if e.dxftype() in ('DIMENSION','TEXT','MTEXT','LEADER','MLEADER'):
+            read_drawing.annotations.append({'handle':e.dxf.handle,'type':e.dxftype(),'layer':'CONTOR','role':'annotation; excluded from cutting geometry'})
+            continue
         if e.dxftype() not in ['LWPOLYLINE','CIRCLE']:raise ValueError('Unsupported CONTOR entity '+e.dxftype())
         ps=[vec(p)-origin for p in dxfpath.make_path(e).flattening(.005)]
         holes.append(Polygon(ps))
-    blank=set_precision(outer.difference(unary_union(holes)),GRID)
+    blank=outer.difference(unary_union(holes))
+    if not oblique:blank=set_precision(blank,GRID)
     lines=[]
     for i,e in enumerate(sorted(ms.query('LINE[layer=="KIFOF"]'),key=lambda e:int(e.dxf.handle,16)),1):
         a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin;u=unit(b-a)
-        if min(abs(u[0]),abs(u[1]))>1e-5:raise ValueError('This implementation supports orthogonal axes only')
+        u,n,offset=line_frame(a,b)
         dim=int(abs(u[1])>abs(u[0]));c=float((a[1-dim]+b[1-dim])/2)
-        lines.append(dict(id=f'C{i:02}',handle=e.dxf.handle,a=np.round(a,3),b=np.round(b,3),dim=dim,c=round(c,3)))
+        # Keep oblique supports precise; independent endpoint rounding rotates
+        # the support and breaks collinear joints on large-coordinate drawings.
+        orthogonal=min(abs(u))<ORTHOGONAL_TOL
+        if orthogonal:
+            a,b=np.round(a,3),np.round(b,3);u,n,offset=line_frame(a,b)
+        lines.append(dict(id=f'C{i:02}',handle=e.dxf.handle,a=a,b=b,dim=dim,c=round(c,3),u=u,normal=n,offset=offset,orthogonal=orthogonal))
     # Resolve only sub-tolerance corner mismatch; keep every adjustment auditable.
     coords=np.array(outer.exterior.coords)
     for i,q in enumerate(coords):
         for l in lines:
-            dim=l['dim'];other=1-dim;dist=abs(q[other]-l['c'])
-            if GRID<dist<=ENDPOINT_SNAP and min(l['a'][dim],l['b'][dim])-3<=q[dim]<=max(l['a'][dim],l['b'][dim])+3:
+            u,n,c=support(l);signed=float(q@n-c);dist=abs(signed);v=float(q@u)
+            if GRID<dist<=ENDPOINT_SNAP and min(l['a']@u,l['b']@u)-3<=v<=max(l['a']@u,l['b']@u)+3:
                 read_drawing.repairs.append({'kind':'contour_to_axis_snap','bend_id':l['id'],'handle':l['handle'],'from':q.tolist(),'distance_mm':float(dist)})
-                q[other]=l['c']
+                q-=signed*n
     adjusted=Polygon(coords)
     if not adjusted.is_valid:raise ValueError('Endpoint normalization would invalidate CONTOR; review drawing')
-    outer=set_precision(adjusted,GRID);blank=set_precision(outer.difference(unary_union(holes)),GRID)
+    outer=adjusted if oblique else set_precision(adjusted,GRID)
+    blank=outer.difference(unary_union(holes))
+    if not oblique:blank=set_precision(blank,GRID)
     return doc,origin,outer,blank,lines
 
 def partition(outer,blank,lines,relief):
     partition.contacts=[]
-    cutters=[set_precision(LineString([l['a']-l.get('relief_extension',relief)*unit(l['b']-l['a']),l['b']+l.get('relief_extension',relief)*unit(l['b']-l['a'])]).intersection(outer),GRID) for l in lines]
-    faces=[p for p in polygonize(unary_union([outer.boundary,*cutters])) if outer.covers(p.representative_point())]
+    cutters=[LineString([l['a']-l.get('relief_extension',relief)*unit(l['b']-l['a']),l['b']+l.get('relief_extension',relief)*unit(l['b']-l['a'])]) for l in lines]
+    # Preserve the proven 90-degree arrangement exactly. Oblique intersections
+    # need joint noding; individually clipping them creates false slivers.
+    oblique=any(not l.get('orthogonal',True) for l in lines)
+    if oblique:arrangement=union_all([outer.boundary,*cutters],grid_size=GRID)
+    else:arrangement=unary_union([outer.boundary,*[set_precision(c.intersection(outer),GRID) for c in cutters]])
+    faces=[p for p in polygonize(arrangement) if outer.covers(p.representative_point())]
+    if oblique:
+        # Snap-round only the arrangement topology, then recover its vertices
+        # on the original analytic supports for exact BREP mating surfaces.
+        boundary=list(outer.exterior.coords)
+        segments=[(np.array(a),np.array(b)) for a,b in zip(boundary,boundary[1:])]
+        segments += [(np.array(c.coords[0]),np.array(c.coords[-1])) for c in cutters]
+        cache={}
+        def recover(q):
+            key=tuple(q)
+            if key in cache:return cache[key]
+            q=np.array(q);near=[]
+            for a,b in segments:
+                if LineString([a,b]).distance(Point(q))>.002:continue
+                u,n,c=line_frame(a,b);near.append((u,n,c))
+            pairs=[(abs(cross(a[0],b[0])),i,j) for i,a in enumerate(near) for j,b in enumerate(near[i+1:],i+1)]
+            if pairs and max(pairs)[0]>1e-5:
+                _,i,j=max(pairs);a,b=near[i],near[j]
+                restored=np.linalg.solve(np.array([a[1],b[1]]),[a[2],b[2]])
+                if np.linalg.norm(restored-q)>.004:raise ValueError('Analytic hinge-junction recovery exceeds the topology tolerance')
+                q=restored
+            elif near:q=q-near[0][1]*(q@near[0][1]-near[0][2])
+            cache[key]=tuple(q);return cache[key]
+        faces=[Polygon([recover(q) for q in p.exterior.coords]) for p in faces]
+        if any(not p.is_valid for p in faces):raise ValueError('Analytic hinge-junction recovery produced an invalid face')
     faces.sort(key=lambda p:(-p.area,p.bounds)); edges=[]
     for i,p in enumerate(faces):
         for j in range(i+1,len(faces)):
@@ -89,8 +164,9 @@ def partition(outer,blank,lines,relief):
             if not source:
                 partition.contacts.append(dict(faces=[i,j],length_mm=shared.length,geometry=shared.wkt))
                 continue
-            if len({(l['dim'],l['c']) for l in source})!=1:raise ValueError('Multiple hinge supports on shared boundary')
-            edges.append(dict(faces=(i,j),source=source,geom=shared,dim=source[0]['dim'],c=source[0]['c']))
+            u,n,c=support(source[0])
+            if any(abs(cross(u,support(l)[0]))>1e-7 or abs(c-support(l)[2])>.002 for l in source):raise ValueError('Multiple hinge supports on shared boundary')
+            edges.append(dict(faces=(i,j),source=source,geom=shared,dim=source[0]['dim'],c=source[0]['c'],u=u,normal=n,offset=c))
     adj=collections.defaultdict(list)
     for n,e in enumerate(edges):
         for f in e['faces']:adj[f].append(n)
@@ -108,27 +184,26 @@ def profiles(doc,origin,t):
     for e in section_lines(doc):
         a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin
         if np.linalg.norm(b-a)<t+0.01:continue # end caps, never bend skeletons
-        u=unit(b-a);dim=int(abs(u[1])>abs(u[0]))
-        if min(abs(u[0]),abs(u[1]))>1e-5:raise ValueError('Oblique HAT line is unsupported')
-        ls.append(dict(a=a,b=b,dim=dim,c=(a[1-dim]+b[1-dim])/2,lo=min(a[dim],b[dim]),hi=max(a[dim],b[dim]),handle=e.dxf.handle))
+        u,n,c=line_frame(a,b);dim=int(abs(u[1])>abs(u[0]))
+        ls.append(dict(a=a,b=b,dim=dim,u=u,normal=n,c=c,lo=min(a@u,b@u),hi=max(a@u,b@u),handle=e.dxf.handle))
     paired=set();sk=[]
     for i,l in enumerate(ls):
         if i in paired:continue
         choices=[]
         for j,m in enumerate(ls):
-            if i==j or j in paired or l['dim']!=m['dim']:continue
+            if i==j or j in paired or abs(cross(l['u'],m['u']))>1e-4:continue
             overlap=min(l['hi'],m['hi'])-max(l['lo'],m['lo'])
-            if abs(abs(l['c']-m['c'])-t)<.01 and overlap>0 and abs(l['lo']-m['lo'])<=t+.01 and abs(l['hi']-m['hi'])<=t+.01:
+            if abs(abs(l['c']-m['c'])-t)<.05 and overlap>0 and abs(l['lo']-m['lo'])<=t+.05 and abs(l['hi']-m['hi'])<=t+.05:
                 choices.append(j)
         if len(choices)!=1:raise ValueError(f'HAT pair ambiguity at {l["handle"]}: {len(choices)} matches')
         j=choices[0];m=ls[j];paired.update([i,j]);dim=l['dim'];c=(l['c']+m['c'])/2
-        a=np.zeros(2);b=np.zeros(2);a[1-dim]=b[1-dim]=c;a[dim]=(l['lo']+m['lo'])/2;b[dim]=(l['hi']+m['hi'])/2
-        sk.append(dict(a=a,b=b,dim=dim,c=c,handles=[l['handle'],m['handle']]))
+        a=l['normal']*c+l['u']*(l['lo']+m['lo'])/2;b=l['normal']*c+l['u']*(l['hi']+m['hi'])/2
+        sk.append(dict(a=a,b=b,dim=dim,c=c,u=l['u'],normal=l['normal'],handles=[l['handle'],m['handle']],wall_spacing_mm=abs(l['c']-m['c']),parallel_error_deg=math.degrees(math.asin(abs(cross(l['u'],m['u']))))))
     links=collections.defaultdict(list);joints={};repairs=[]
     for i,l in enumerate(sk):
         for j,m in enumerate(sk[i+1:],i+1):
-            if l['dim']==m['dim']:continue
-            q=np.zeros(2);q[1-l['dim']]=l['c'];q[1-m['dim']]=m['c']
+            if abs(cross(l['u'],m['u']))<1e-6:continue
+            q=np.linalg.solve(np.array([l['normal'],m['normal']]),np.array([l['c'],m['c']]))
             dl=min(np.linalg.norm(q-l[k]) for k in ['a','b']);dm=min(np.linalg.norm(q-m[k]) for k in ['a','b'])
             if max(dl,dm)<=t+.5:
                 links[i].append(j);links[j].append(i);joints[i,j]=joints[j,i]=q
@@ -151,18 +226,28 @@ def profiles(doc,origin,t):
         pn=max([sk[seq[-1]]['a'],sk[seq[-1]]['b']],key=lambda p:np.linalg.norm(p-joints[seq[-1],seq[-2]]))
         pts=np.array([p0,*[joints[i,j] for i,j in zip(seq,seq[1:])],pn])
         main=int(np.argmax(np.linalg.norm(np.diff(pts,axis=0),axis=1)))
-        result.append(dict(points=pts,segments=[sk[i] for i in seq],main=main))
+        result.append(dict(points=pts,segments=[sk[i] for i in seq],main=main,layer=section_layer(doc)))
     markers=[]
     for e in doc.modelspace().query('INSERT'):
         polys=[v for v in e.virtual_entities() if v.dxftype()=='LWPOLYLINE' and len(v)==3]
         for v in polys:
-            ps=np.array([vec(p)-origin for p in v.get_points()]);markers.append((e.dxf.handle,ps))
+            # Mirrored INSERTs yield polylines with negative OCS extrusion.
+            # Raw get_points() mirrors X a second time; use world vertices.
+            ps=np.array([vec(p)-origin for p in v.vertices_in_wcs()]);markers.append((e.dxf.handle,ps))
     labels=[(re.sub(r'%%[uU]','',e.dxf.text),vec(e.dxf.insert)-origin) for e in doc.modelspace().query('TEXT') if re.fullmatch(r'(?:%%[uU])?([A-Za-z])-\1',e.dxf.text)]
     for n,p in enumerate(result):
         pts=p['points'];main=p['main'];seg=LineString(pts[main:main+2])
+        if not markers:raise ValueError('No triangular painted-face marker accompanies the section profiles')
         h,triangle=min(markers,key=lambda hp:seg.distance(Polygon(hp[1])))
+        if seg.distance(Polygon(triangle))>max(10.,5*t):
+            # A folded profile can have a longer flange than its marked parent.
+            # The paint marker, not segment length, establishes that reference.
+            _,main,h,triangle=min((LineString(pts[k:k+2]).distance(Polygon(tri)),k,handle,tri) for k in range(len(pts)-1) for handle,tri in markers)
+            seg=LineString(pts[main:main+2]);p['main']=main
         ds=[seg.distance(Point(q)) for q in triangle];tip=triangle[int(np.argmin(ds))];centroid=triangle.mean(axis=0)
-        normal=centroid-tip;normal=normal-unit(pts[main+1]-pts[main])*np.dot(normal,unit(pts[main+1]-pts[main]));normal=unit(normal)
+        normal=centroid-tip;normal=normal-unit(pts[main+1]-pts[main])*np.dot(normal,unit(pts[main+1]-pts[main]))
+        if np.linalg.norm(normal)<1e-6 or seg.distance(Polygon(triangle))>max(10.,5*t):raise ValueError(f'Section paint marker {h} cannot orient wall {p["segments"][main]["handles"]}: distance {seg.distance(Polygon(triangle)):.3f} mm, normal magnitude {np.linalg.norm(normal):.6f}')
+        normal=unit(normal)
         p.update(paint_normal=normal,paint_handle=h,main_dim=int(abs(pts[main+1,1]-pts[main,1])>abs(pts[main+1,0]-pts[main,0])))
         if p['main_dim']==0 and labels:
             name,loc=min(labels,key=lambda lp:LineString(pts).distance(Point(lp[1])))
@@ -262,17 +347,26 @@ def lift(p):return np.array([p[0],p[1],0.])
 def apply_tf(tf,p):return tf[0]@np.array(p)+tf[1]
 
 def transforms(faces,edges,order,t,r,bd):
-    ba=2*(r+t)-bd;rm=r+t/2;tf={0:(np.eye(3),np.zeros(3))}
+    rm=r+t/2;tf={0:(np.eye(3),np.zeros(3))}
     for child in order[1:]:
-        e=next(e for e in edges if e['child']==child);parent=e['parent'];dim=e['dim'];other=1-dim
-        axis=np.zeros(3);axis[dim]=1
-        d=np.zeros(3);d[other]=np.sign(faces[child].representative_point().coords[0][other]-e['c'])
-        h=np.zeros(3);h[other]=e['c'];angle=math.radians(e['angle']);R=rotation(axis,angle)
+        e=next(e for e in edges if e['child']==child);parent=e['parent']
+        u,n,c=support(e);axis=lift(u);h=lift(n*c)
+        d=lift(n)*np.sign(np.array(faces[child].representative_point().coords[0])@n-c)
+        angle=math.radians(e['angle']);ba=bend_allowance(t,r,bd,e['angle']);R=rotation(axis,angle)
         tangent=h-d*ba/2;w=np.cross(axis,d)*np.sign(angle);center=tangent+rm*w
         end=center-rm*(R@w);shift=end-R@(h+d*ba/2)
         rp,tp=tf[parent];tf[child]=(rp@R,rp@shift+tp)
-        e.update(axis=axis,d=d,hinge=h,tangent=tangent,center=center,w=w,R=R)
+        e.update(axis=axis,d=d,hinge=h,tangent=tangent,center=center,w=w,R=R,allowance=ba)
     return tf
+
+def bend_allowance(t,r,bd,angle):
+    """BD is the 90-degree calibration; constant K gives BA at other angles."""
+    if not 0<abs(angle)<180:raise ValueError('Bend rotation must be between 0 and 180 degrees')
+    return (2*(r+t)-bd)*abs(angle)/90.
+
+def bend_strip(e,half_width,extension=0.):
+    u,n,c=support(e);lo,hi=hinge_span(e);h=n*c
+    return Polygon([h+u*(lo-extension)-n*half_width,h+u*(hi+extension)-n*half_width,h+u*(hi+extension)+n*half_width,h+u*(lo-extension)+n*half_width])
 
 def poly_parts(g):
     if g.is_empty:return []
@@ -281,15 +375,17 @@ def poly_parts(g):
 
 def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     import cadquery as cq
-    ba=2*(r+t)-bd;parts=[];flat_trimmed=[];bend_records=[]
+    parts=[];flat_trimmed=[];bend_records=[]
     for i,p in enumerate(material):
         adjacent=[e for e in edges if i in e['faces']]
+        # Keep topology on GRID, but do not snap analytic oblique tangent
+        # cuts back to that grid: doing so tilts the plate/bend mating edge.
+        if any(min(abs(support(e)[0]))>ORTHOGONAL_TOL for e in adjacent):p=set_precision(p,0)
         # Finite tangent-zone removal, not an infinite half-plane: a face may
         # have a re-entrant wing beyond another face's hinge support.
         strips=[]
         for e in adjacent:
-            dim=e['dim'];g=e['geom'];bb=g.bounds;lo=bb[dim]-relief;hi=bb[dim+2]+relief;c=e['c']
-            strips.append(box(lo,c-ba/2,hi,c+ba/2) if dim==0 else box(c-ba/2,lo,c+ba/2,hi))
+            strips.append(bend_strip(e,e['allowance']/2,relief))
         trimmed=p.difference(unary_union(strips));flat_trimmed.append(trimmed)
         for poly in poly_parts(trimmed):
             def wire(coords):
@@ -299,7 +395,7 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
             if not solid.isValid():raise ValueError('Invalid planar plate BREP')
             parts.append(solid)
     for e in edges:
-        dim=e['dim'];bb=e['geom'].bounds;lo,hi=bb[dim],bb[dim+2];axis=e['axis'];w=e['w'];center=e['center']+axis*lo;angle=math.radians(e['angle'])
+        lo,hi=hinge_span(e);ba=e['allowance'];axis=e['axis'];w=e['w'];center=e['center']+axis*lo;angle=math.radians(e['angle'])
         parenttf=tf[e['parent']]
         def pt(rad,a):return cq.Vector(*apply_tf(parenttf,center-rad*(rotation(axis,a)@w)))
         edges_wire=[cq.Edge.makeThreePointArc(pt(r,0),pt(r,angle/2),pt(r,angle)),cq.Edge.makeLine(pt(r,angle),pt(r+t,angle)),cq.Edge.makeThreePointArc(pt(r+t,angle),pt(r+t,angle/2),pt(r+t,0)),cq.Edge.makeLine(pt(r+t,0),pt(r,0))]
@@ -323,6 +419,10 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     # glTF metres; STEP and all reports use millimetres. Z remains CAD up.
     mesh.apply_scale(.001);scene=trimesh.Scene();scene.add_geometry(mesh,node_name='panel',geom_name='panel');scene.metadata={'units':'metres','source_units':'mm','status':'engineering reconstruction; see validation report'}
     (out/'panel.glb').write_bytes(scene.export(file_type='glb'))
+    # Tessellation updates OCC triangulation caches and can invalidate a
+    # subsequent in-memory check despite a valid saved BREP. Validate and use
+    # the actual exported STEP for all downstream section/unfold operations.
+    fused=cq.importers.importStep(str(out/'panel.step')).val()
     from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_Box
     ob=Bnd_Box();BRepBndLib.AddOptimal_s(fused.wrapped,ob,False,False);bounds=ob.Get();bmin=list(bounds[:3]);bmax=list(bounds[3:]);bsize=[v-u for u,v in zip(bmin,bmax)]
@@ -335,13 +435,14 @@ def check_sections(solid,profs,faces,tf,t,r,out,material=None):
     summaries=[];details=[];plots=[]
     for p in profs:
         trace=p['trace'];dim=p['main_dim'];cut=p['cut_coordinate'];main=p['main'];mainface=trace[main][2]
-        q=np.zeros(3);q[1-dim]=cut;q[dim]=(trace[main][0]+trace[main][1])/2
-        origin=apply_tf(tf[mainface],q);normal=tf[mainface][0][:,1-dim]
+        direction=np.asarray(p.get('cut_direction',np.eye(2)[dim]));cutnormal=np.array([-direction[1],direction[0]]) if 'cut_direction' in p else np.eye(2)[1-dim]
+        q=lift(cutnormal*cut+direction*(trace[main][0]+trace[main][1])/2)
+        origin=apply_tf(tf[mainface],q);normal=tf[mainface][0]@lift(cutnormal)
         plane=gp_Pln(gp_Pnt(*origin),gp_Dir(*normal));op=BRepAlgoAPI_Section(solid.wrapped,plane,False);op.Build()
         section=cq.Shape.cast(op.Shape());se=section.Edges();linear=[e for e in se if e.geomType()=='LINE']
         dirs=[];mids=[];tangent_ends=[];misses=[];openings={}
         for index,(a,b,face) in enumerate(trace):
-            R,T=tf[face];di=R[:,dim];nn=R[:,2];q=np.zeros(3);q[dim]=(a+b)/2;q[1-dim]=cut;mid=apply_tf(tf[face],q)
+            R,T=tf[face];di=R@lift(direction);nn=R[:,2];q=lift(cutnormal*cut+direction*(a+b)/2);mid=apply_tf(tf[face],q)
             spans=[]
             for side in [-1,1]:
                 lineorigin=mid+side*t/2*nn;matches=[]
@@ -358,7 +459,7 @@ def check_sections(solid,profs,faces,tf,t,r,out,material=None):
                         if aa-hi>.03:
                             # A hole crossing is legitimate only when the input
                             # CONTOR independently predicts the same missing span.
-                            qa=q[:2].copy();qb=qa.copy();qa[dim]+=hi;qb[dim]+=aa
+                            qa=q[:2]+direction*hi;qb=q[:2]+direction*aa
                             gap=LineString([qa,qb]);void=faces[face].difference(material[face]) if material is not None else Polygon()
                             if gap.difference(void.buffer(.03)).length<=.001:
                                 openings[(index,round(hi,3),round(aa,3))]={'segment':index+1,'width_mm':aa-hi,'source':'CONTOR opening intersected by section plane'}
@@ -366,7 +467,7 @@ def check_sections(solid,profs,faces,tf,t,r,out,material=None):
                         hi=max(hi,bb)
                     if material is not None:
                         def flat_interval(aa,bb):
-                            qa=q[:2].copy();qb=qa.copy();qa[dim]+=aa;qb[dim]+=bb
+                            qa=q[:2]+direction*aa;qb=q[:2]+direction*bb
                             return LineString([qa,qb])
                         observed=unary_union([flat_interval(aa,bb) for aa,bb in matches])
                         required=flat_interval(lo,hi).intersection(material[face])
@@ -440,7 +541,7 @@ def sampled_wire(wire):
 
 def unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out):
     from OCP.BRepAdaptor import BRepAdaptor_Surface
-    ba=2*(r+t)-bd;pieces=[];counts=collections.Counter()
+    pieces=[];counts=collections.Counter()
     for face in solid.Faces():
         typ=face.geomType()
         if typ not in ['PLANE','CYLINDER']:continue
@@ -459,11 +560,11 @@ def unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out):
                 R,T=tf[e['parent']];ga=R@e['axis'];gc=R@e['center']+T
                 desired=r+t/2-t/2*e['w'][2]
                 if abs(radius-desired)>.005 or abs(np.dot(axis,ga))<1-1e-6 or np.linalg.norm(np.cross(loc-gc,ga))>.005:continue
-                angle=math.radians(e['angle']);start=-R@e['w'];dim=e['dim'];other=1-dim
+                angle=math.radians(e['angle']);start=-R@e['w'];ba=e['allowance']
                 def unwrap(pts):
                     off=pts-gc;long=off@ga;radial=off-long[:,None]*ga
                     ph=np.arctan2(np.cross(np.tile(start,(len(pts),1)),radial)@ga,radial@start)
-                    q=np.empty((len(pts),2));q[:,dim]=long;q[:,other]=e['c']+e['d'][other]*(ba*ph/angle-ba/2)
+                    q=e['hinge'][:2]+long[:,None]*e['axis'][:2]+(ba*ph/angle-ba/2)[:,None]*e['d'][:2]
                     return q
                 po=Polygon(unwrap(outer3),[unwrap(h) for h in holes3])
                 if not po.is_valid:po=po.buffer(0)

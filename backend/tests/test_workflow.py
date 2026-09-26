@@ -1,5 +1,6 @@
 """Real API/worker regression. No mocked CAD: imports the exported STEP again."""
 import os,tempfile,json,hashlib,zipfile,io
+import pytest
 from pathlib import Path
 os.environ['FLATFORGE_DATA']=tempfile.mkdtemp(prefix='ff-test-')
 os.environ['FLATFORGE_API_KEY']='test-only-key-never-use-in-production'
@@ -45,3 +46,26 @@ def test_upload_review_worker_exports_and_persistence():
   assert again.status_code==200
   assert hashlib.sha256(step.content).hexdigest()==hashlib.sha256(again.content).hexdigest()
   assert c.get('/panels/'+p['id']+'/log').json()['jobs'][0]['status']=='DONE'
+
+
+def test_complex_upload_completes_without_review_or_panel_overrides():
+ folder=os.getenv('FLATFORGE_REGRESSION_DXF_DIR')
+ if not folder:pytest.skip('Supply original customer DXFs')
+ with TestClient(app) as c:
+  c.headers['X-Flatforge-Key']=os.environ['FLATFORGE_API_KEY']
+  settings={'thickness':2,'radius':2,'deduction':4,'input_type':'flat_pattern'}
+  assert c.put('/settings',json=settings).status_code==200
+  project=c.post('/projects',json={'name':'Approved complex convention','client':'Regression'}).json()
+  with (Path(folder)/'PN_NM_149.dxf').open('rb') as f:
+   upload=c.post('/projects/'+project['id']+'/upload',files=[('files',('renamed-panel.dxf',f,'application/dxf'))])
+  assert upload.status_code==202
+  panel=upload.json()['panels'][0]
+  worker.process(worker.claim())
+  p=c.get('/panels/'+panel['id']).json()
+  assert p['status']=='PASS',p['report']
+  assert p['overrides']=={}
+  assert p['settings']==settings
+  assert p['report']['physical_bends']==27
+  for filename in ('panel.step','panel.glb','viewer.json','fold_table.csv','report.json'):
+   assert c.get('/panels/'+p['id']+'/files/'+filename).status_code==200
+  assert c.get('/projects/'+project['id']+'/export').status_code==200
