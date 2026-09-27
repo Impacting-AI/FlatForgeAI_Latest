@@ -7,8 +7,17 @@ from shapely.geometry import Point,LineString
 from . import geometry as g
 from . import dwg
 from .detail_mapping import map_details, normal_instances, check_local_profiles
+from .review import prepare_review, geometry_payload
 DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
-def dump(path,obj):path.write_text(json.dumps(obj,indent=2,default=lambda x:x.tolist() if isinstance(x,np.ndarray) else float(x)))
+def dump(path,obj):
+ def clean(x):
+  if isinstance(x,np.ndarray):return clean(x.tolist())
+  if isinstance(x,dict):return {k:clean(v) for k,v in x.items()}
+  if isinstance(x,(list,tuple)):return [clean(v) for v in x]
+  if isinstance(x,(float,np.floating)) and not math.isfinite(x):return None
+  if isinstance(x,np.generic):return x.item()
+  return x
+ path.write_text(json.dumps(clean(obj),indent=2,allow_nan=False))
 def thickness_evidence(doc):
  lines=[]
  for e in g.section_lines(doc):
@@ -110,6 +119,7 @@ def paint_glb(solid,tf,edges,t,r,path):
 def run(config):
  source=Path(config['source']);out=Path(config['output']);out.mkdir(parents=True,exist_ok=True)
  settings={**DEFAULTS,**config.get('settings',{})};overrides=config.get('overrides',{});issues=[];report={'settings':settings,'issues':issues,'status':'FAILED'}
+ preview_requested=bool(overrides.get('build_review_model'))
  def checkpoint(phase,message):
   report['phase_message']=message
   print(message,flush=True)
@@ -181,21 +191,29 @@ def run(config):
   issue('SECTION_EVIDENCE',str(exc));return finish('NEEDS_REVIEW')
  report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
  general=section_layer!='HAT' or any(not l['orthogonal'] for l in lines) or any(abs(g.unit(a)@g.unit(b))>math.sin(math.radians(.01)) for p in profs for a,b in zip(np.diff(p['points'],axis=0),np.diff(p['points'],axis=0)[1:]))
+ report['review_geometry']=geometry_payload(faces,edges,material)
  if general:
   mapped=map_details(faces,outer,edges,profs,t,r,bd)
+  catalog,review_errors=prepare_review(faces,outer,edges,profs,mapped,t,r,bd,overrides.get('section_choices',{}))
+  report['review_catalog']=catalog
+  report['review_geometry']=geometry_payload(faces,edges,material)
+  for message in review_errors:issue('REVIEW_CONFLICT',message)
   report['section_mapping']=mapped
-  report['unresolved_bends']=map_review(edges,{})
-  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':False} for e in edges]
+  report['unresolved_bends']=map_review(edges,overrides.get('bend_angles',{}))
+  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
+  if review_errors:return finish('NEEDS_REVIEW')
   report['bend_parameter_model']={'deduction_reference_angle_deg':90,'k_factor':k,'other_angles':'constant K derived from the 90-degree calibration'}
   unresolved=[m for m in mapped if m['status']!='PASS']
   if unresolved:
-   report['unmapped_hinges']=report.pop('unresolved_bends')
    reasons='; '.join(f"{m['profile']}: {m['reason']}" for m in unresolved)
    issue('SECTION_CORRESPONDENCE',f'{len(unresolved)} section profiles need review. {reasons}',profiles=[m['profile'] for m in unresolved])
-   return finish('NEEDS_REVIEW')
+   if not preview_requested:return finish('NEEDS_REVIEW')
  deduction=infer_deduction(faces,outer,profs,t) if not general else {'value':bd,'confidence':'settings_validated_against_sections','source':'Section and local-detail strip dimensions matched using the panel bend parameters; no independent deduction measurement'}
+ if general and unresolved:
+  deduction.update(confidence='settings_pending_review',source='Saved panel parameter; unresolved sections do not validate this deduction.')
  report['deduction_evidence']=deduction
  report['input_evidence']={'classification':'flat_pattern_supported' if deduction['value'] is not None else 'not_proven','reason':'Matched section / flat-strip dimensions' if deduction['value'] is not None else 'Input interpretation requires user confirmation'}
+ if general and unresolved:report['input_evidence']={'classification':'not_proven','reason':'Review reconstruction uses the selected flat-pattern setting; section correspondence is unresolved.'}
  if deduction['value'] is not None and abs(deduction['value']-bd)>.5:
   issue('DEDUCTION',f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm.",field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
  if (evidence['value'] is None or deduction['value'] is None) and not overrides.get('confirm_parameters'):
@@ -216,10 +234,14 @@ def run(config):
  checkpoint('BUILDING','Section mapping complete. Building and validating the folded solid…')
  tf=g.transforms(faces,edges,order,t,r,bd);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
  if not stats['valid'] or stats['solid_count']!=1:raise ValueError('CAD validation failed: expected one valid connected solid.')
- normal_profs=normal_instances(profs) if general else profs
- checks,details=g.check_sections(solid,normal_profs,faces,tf,t,r,out,material)
+ normal_profs=[p for p in normal_instances(profs) if 'trace' in p] if general else profs
+ checks,details=g.check_sections(solid,normal_profs,faces,tf,t,r,out,material) if normal_profs else ([],[])
  local_checks=check_local_profiles(profs,edges,tf,t,r,bd) if general else []
  checks.extend(local_checks)
+ if general:
+  checks.extend({'profile':p['name'],'chain_status':'NOT_CHECKED','full_plane_status':'NOT_CHECKED',
+                 'max_length_error_mm':None,'max_turn_error_deg':None,'validation_scope':'unresolved'}
+                for p in profs if 'trace' not in p and 'instances' not in p and 'local_chain' not in p)
  if local_checks:
   report['drawing_convention']={'name':'repeated transverse details and corroborated local edge profiles',
     'validation_scope':'Transverse documented chains are checked against actual BREP cuts. Side profiles use local edge lengths and relative rotations, not full plane cuts.',
@@ -242,6 +264,10 @@ def run(config):
  if dwg.available():
   try:shutil.copyfile(dwg.convert(out/'flat.dxf',out/'dwg-export','DWG'),out/'flat.dwg')
   except Exception as e:report['dwg_export_warning']=str(e)
+ if issues and preview_requested:
+  shutil.copyfile(out/'panel.step',out/'review_model.step')
+  report['review_model']={'status':'UNVALIDATED','file':'review_model.step',
+    'message':'Explicit review reconstruction. Unresolved or failed drawing checks remain; this export is not a validated manufacturing model.'}
  return finish('NEEDS_REVIEW' if issues else 'PASS')
 if __name__=='__main__':
  config=json.loads(Path(sys.argv[1]).read_text())

@@ -94,6 +94,7 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                     actual=np.array([b-a for a,b,_ in items]);error=float(max(abs(actual-expected)))
                     normal_cut=all(abs(g.support(e)[0]@direction)<1e-5 for e in hinges)
                     record={'max_strip_error_mm':error,'faces':[i[2] for i in items],
+                            'reversed':reverse,
                             'hinges':[e['index'] for e in hinges], 'normal_to_all_hinges':normal_cut,
                             'observed_flat_lengths_mm':actual.tolist(),'required_flat_lengths_mm':expected.tolist(),
                             'profile_lengths_mm':lengths.tolist(),'turn_angles_deg':angles.tolist(),

@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+import math
 from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
 from .db import init, Session, Project, Panel, Job, Setting
@@ -42,7 +43,16 @@ class ProjectInput(BaseModel):
 class ReviewInput(BaseModel):
  model_config=ConfigDict(extra='forbid')
  settings:Parameters|None=None
- bend_angles:dict[str,Literal[-90,90]]=Field(default_factory=dict)
+ bend_angles:dict[str,float|None]=Field(default_factory=dict)
+ section_choices:dict[str,str]|None=None
+ build_review_model:bool=False
+ expected_revision:int|None=None
+ @field_validator('bend_angles')
+ @classmethod
+ def valid_bend_angles(cls,value):
+  if any(a is not None and (not math.isfinite(a) or not 0<abs(a)<180) for a in value.values()):
+   raise ValueError('Signed angles must be finite, non-zero and between -180 and 180 degrees.')
+  return value
  confirm_parameters:bool=False;accept_partial_sections:bool=False
  accept_relief_extensions:bool=False
 class MeasurementInput(BaseModel):
@@ -113,9 +123,19 @@ def review(id:str,body:ReviewInput):
  with Session.begin() as s:
   p=lock_panel(s,id)
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
+  if body.expected_revision is not None and body.expected_revision!=p.revision:raise HTTPException(409,'Drawing revision changed. Refresh before saving decisions.')
+  if (body.section_choices is not None or body.build_review_model) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
   report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}
   if set(body.bend_angles)-allowed:raise HTTPException(422,'Unknown bend key in review decision')
-  overrides=json.loads(p.overrides);overrides['bend_angles']={**overrides.get('bend_angles',{}),**body.bend_angles}
+  selections={r['profile']:{c['id'] for c in r['candidates']} for r in report.get('review_catalog',[])}
+  if body.section_choices is not None and any(name not in selections or key not in selections[name] for name,key in body.section_choices.items()):raise HTTPException(422,'Unknown section candidate; refresh the drawing review.')
+  overrides=json.loads(p.overrides);angles=overrides.get('bend_angles',{}).copy()
+  for key,value in body.bend_angles.items():
+   if value is None:angles.pop(key,None)
+   else:angles[key]=value
+  overrides['bend_angles']=angles
+  if body.section_choices is not None:overrides['section_choices']=body.section_choices
+  overrides['build_review_model']=body.build_review_model
   if body.confirm_parameters:overrides['confirm_parameters']=True
   if body.accept_partial_sections:overrides['accept_partial_sections']=True
   if body.accept_relief_extensions:overrides['accept_relief_extensions']=True

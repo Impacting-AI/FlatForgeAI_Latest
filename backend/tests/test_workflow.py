@@ -69,3 +69,40 @@ def test_complex_upload_completes_without_review_or_panel_overrides():
   for filename in ('panel.step','panel.glb','viewer.json','fold_table.csv','report.json'):
    assert c.get('/panels/'+p['id']+'/files/'+filename).status_code==200
   assert c.get('/projects/'+project['id']+'/export').status_code==200
+
+
+def test_drawing_review_revision_persistence_and_export_gate(tmp_path):
+ from test_geometry_review import conflicting_channel
+ source=tmp_path/'conflict.dxf';conflicting_channel(source)
+ with TestClient(app) as c:
+  c.headers['X-Flatforge-Key']=os.environ['FLATFORGE_API_KEY']
+  settings={'thickness':2,'radius':2,'deduction':4,'input_type':'flat_pattern'}
+  assert c.put('/settings',json=settings).status_code==200
+  project=c.post('/projects',json={'name':'Geometry review','client':'Regression'}).json()
+  with source.open('rb') as f:
+   upload=c.post('/projects/'+project['id']+'/upload',files=[('files',('conflict.dxf',f,'application/dxf'))])
+  p=upload.json()['panels'][0];worker.process(worker.claim())
+  url='/panels/'+p['id'];p=c.get(url).json()
+  assert p['status']=='NEEDS_REVIEW'
+  row=p['report']['review_catalog'][0];candidate=row['candidates'][0]
+  choices={row['profile']:candidate['id']}
+  assert c.post(url+'/review',json={'section_choices':choices}).status_code==422
+  assert c.post(url+'/review',json={'expected_revision':p['revision']-1,'section_choices':choices}).status_code==409
+  assert c.post(url+'/review',json={'expected_revision':p['revision'],'section_choices':{row['profile']:'unknown'}}).status_code==422
+  key=candidate['folds'][0]['key'];angle=candidate['folds'][0]['angle']
+  payload={'expected_revision':p['revision'],'section_choices':choices,'bend_angles':{key:angle},'build_review_model':True,'confirm_parameters':True}
+  assert c.post(url+'/review',json=payload).status_code==202
+  worker.process(worker.claim());p=c.get(url).json()
+  assert p['status']=='NEEDS_REVIEW',p['report']
+  assert p['overrides']['section_choices']==choices
+  assert p['overrides']['bend_angles'][key]==angle
+  assert p['report']['review_model']['status']=='UNVALIDATED'
+  assert c.get(url+'/files/panel.step').status_code==409
+  assert c.get(url+'/files/review_model.step').status_code==200
+  assert c.get('/projects/'+project['id']+'/export').status_code==409
+  assert c.post(url+'/review',json={'expected_revision':p['revision'],'bend_angles':{key:None},'section_choices':{},'build_review_model':False}).status_code==202
+  worker.process(worker.claim());p=c.get(url).json()
+  assert key not in p['overrides']['bend_angles']
+  assert p['overrides']['section_choices']=={}
+  assert c.get(url+'/files/review_model.step').status_code==404
+  assert c.get('/bootstrap').json()['settings']==settings

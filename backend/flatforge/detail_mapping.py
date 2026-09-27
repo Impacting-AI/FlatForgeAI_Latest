@@ -76,7 +76,7 @@ def boundary_lengths(face,a,b):
     return options
 
 
-def local_candidates(p,faces,edges,t,r,bd):
+def local_candidates(p,faces,edges,t,r,bd,tolerance=.5):
     lookup={frozenset(e['faces']):e for e in edges};adj={i:[] for i in range(len(faces))}
     for e in edges:
         a,b=e['faces'];adj[a].append(b);adj[b].append(a)
@@ -105,7 +105,7 @@ def local_candidates(p,faces,edges,t,r,bd):
             if not valid:continue
             for length,segment in boundary_lengths(faces[root],hinges[main-1],hinges[main]):
                 lengths=np.array([length if x is None else x for x in actual]);error=float(max(abs(lengths-expected)))
-                if error>.5:continue
+                if error>tolerance:continue
                 rotations=[]
                 for e,a,f0,f1 in zip(hinges,turns,chain,chain[1:]):
                     u,n,c=g.support(e)
