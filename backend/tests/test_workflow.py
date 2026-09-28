@@ -48,7 +48,7 @@ def test_upload_review_worker_exports_and_persistence():
   assert c.get('/panels/'+p['id']+'/log').json()['jobs'][0]['status']=='DONE'
 
 
-def test_complex_upload_completes_without_review_or_panel_overrides():
+def test_complex_upload_stops_for_corner_angle_confirmation():
  folder=os.getenv('FLATFORGE_REGRESSION_DXF_DIR')
  if not folder:pytest.skip('Supply original customer DXFs')
  with TestClient(app) as c:
@@ -62,13 +62,14 @@ def test_complex_upload_completes_without_review_or_panel_overrides():
   panel=upload.json()['panels'][0]
   worker.process(worker.claim())
   p=c.get('/panels/'+panel['id']).json()
-  assert p['status']=='PASS',p['report']
+  assert p['status']=='NEEDS_REVIEW',p['report']
   assert p['overrides']=={}
   assert p['settings']==settings
   assert p['report']['physical_bends']==27
-  for filename in ('panel.step','panel.glb','viewer.json','fold_table.csv','report.json'):
-   assert c.get('/panels/'+p['id']+'/files/'+filename).status_code==200
-  assert c.get('/projects/'+project['id']+'/export').status_code==200
+  assert len(p['report']['corner_angle_candidates'])==2
+  assert c.get('/panels/'+p['id']+'/files/viewer.json').status_code==200
+  assert c.get('/panels/'+p['id']+'/files/panel.step').status_code==404
+  assert c.get('/projects/'+project['id']+'/export').status_code==409
 
 
 def test_drawing_review_revision_persistence_and_export_gate(tmp_path):

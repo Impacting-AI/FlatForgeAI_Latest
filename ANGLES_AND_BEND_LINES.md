@@ -94,3 +94,11 @@ There are no new runtime dependencies or database migrations. After merging,
 update the checkout and rebuild the frontend, API and worker using the existing
 deployment process. Rebuild affected drawings to refresh their solid and viewer
 metadata. ODA conversion remains the existing configured DWG-to-DXF adapter.
+
+## Subsequent corner-reference clarification
+
+The later supplied failure/reference images and PN_NM_149(2).dxf establish a
+corner-continuation conflict that the original angle-support change did not
+resolve. See CORNER_ANGLE_REVIEW.md for the measured candidates, review gate and
+remaining source-profile conflict. The earlier missing-image limitation above
+describes the evidence available at that time.

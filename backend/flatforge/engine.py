@@ -8,6 +8,7 @@ from . import geometry as g
 from . import dwg
 from .detail_mapping import map_details, normal_instances, check_local_profiles
 from .review import prepare_review, geometry_payload
+from .corner_review import continuation_candidates
 DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
 def dump(path,obj):
  def clean(x):
@@ -265,7 +266,20 @@ def run(config):
   issue('DEDUCTION',f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm.",field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
  if (evidence['value'] is None or deduction['value'] is None) and not overrides.get('confirm_parameters'):
   issue('EVIDENCE','Drawing does not establish thickness or deduction reliably. Confirm the panel parameters before conversion.');return finish('NEEDS_REVIEW')
- unknown=map_review(edges,overrides.get('bend_angles',{}));report['unresolved_bends']=unknown
+ unknown=map_review(edges,overrides.get('bend_angles',{}))
+ corners=continuation_candidates(faces,edges,order,t,r,bd)
+ report['corner_angle_candidates']=corners
+ pending={c['key']:c for c in corners if c['requires_confirmation']}
+ if pending:
+  for e in edges:
+   if e['review_key'] in pending:
+    e['angle_candidates']=[c for c in corners if c['key']==e['review_key']]
+    e.pop('angle',None)
+  unknown=map_review(edges,overrides.get('bend_angles',{}))
+  for row in unknown:
+   if row['key'] in pending:row['reason']=pending[row['key']]['reason']
+  issue('CORNER_ANGLE_CONFLICT','Section angles and possible flange continuation disagree. Confirm the highlighted signed bend rotations before generating a folded solid.')
+ report['unresolved_bends']=unknown
  if not general:report['section_mapping']=[{'profile':p['name'],'cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping')} for p in profs]
  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
  if unknown:
