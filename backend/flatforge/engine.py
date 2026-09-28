@@ -137,6 +137,9 @@ def paint_glb(solid,tf,edges,t,r,path):
 def run(config):
  source=Path(config['source']);out=Path(config['output']);out.mkdir(parents=True,exist_ok=True)
  settings={**DEFAULTS,**config.get('settings',{})};overrides=config.get('overrides',{});issues=[];report={'settings':settings,'issues':issues,'status':'FAILED'}
+ tolerance=float(overrides.get('strip_tolerance_mm',.5))
+ if not math.isfinite(tolerance) or tolerance<=0:raise ValueError('Strip tolerance must be a finite positive value in mm')
+ report['strip_tolerance_mm']=tolerance
  preview_requested=bool(overrides.get('build_review_model'));edges=None
  def checkpoint(phase,message):
   report['phase_message']=message
@@ -224,7 +227,7 @@ def run(config):
  if not general:
   trial=copy.deepcopy(profs)
   try:
-   mapped=g.map_sections(doc,origin,faces,outer,edges,trial,t,r,bd);profs=trial
+   mapped=g.map_sections(doc,origin,faces,outer,edges,trial,t,r,bd,tolerance);profs=trial
   except ValueError as exc:
    # Keep explicit section-marker mapping when it succeeds; otherwise expose
    # generic correspondence and overrides instead of a terminal legacy error.
@@ -237,8 +240,8 @@ def run(config):
     general=True
     for e in edges:e.pop('angle',None);e.pop('evidence',None)
  if general:
-  mapped=map_details(faces,outer,edges,profs,t,r,bd)
-  catalog,review_errors=prepare_review(faces,outer,edges,profs,mapped,t,r,bd,overrides.get('section_choices',{}))
+  mapped=map_details(faces,outer,edges,profs,t,r,bd,tolerance)
+  catalog,review_errors=prepare_review(faces,outer,edges,profs,mapped,t,r,bd,overrides.get('section_choices',{}),tolerance)
   report['review_catalog']=catalog
   report['review_geometry']=geometry_payload(faces,edges,material)
   for message in review_errors:issue('REVIEW_CONFLICT',message)
@@ -274,8 +277,8 @@ def run(config):
  tf=g.transforms(faces,edges,order,t,r,bd);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
  if not stats['valid'] or stats['solid_count']!=1:raise ValueError('CAD validation failed: expected one valid connected solid.')
  normal_profs=[p for p in normal_instances(profs) if 'trace' in p] if general else profs
- checks,details=g.check_sections(solid,normal_profs,faces,tf,t,r,out,material) if normal_profs else ([],[])
- local_checks=check_local_profiles(profs,edges,tf,t,r,bd) if general else []
+ checks,details=g.check_sections(solid,normal_profs,faces,tf,t,r,out,material,tolerance) if normal_profs else ([],[])
+ local_checks=check_local_profiles(profs,edges,tf,t,r,bd,tolerance) if general else []
  checks.extend(local_checks)
  if general:
   checks.extend({'profile':p['name'],'chain_status':'NOT_CHECKED','full_plane_status':'NOT_CHECKED',

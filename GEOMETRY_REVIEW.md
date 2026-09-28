@@ -36,7 +36,7 @@ IDs are rejected by the API rather than applied to different geometry.
 ## Implementation
 
 - `section_mapping.py` preserves orientation with nearest-cut diagnostics.
-- `detail_mapping.py` keeps the automatic 0.5 mm matching limit. Review proposal
+- `detail_mapping.py` defaults to a 0.5 mm matching limit, with a panel-specific override. Review proposal
   enumeration can expose candidates outside that limit without accepting them.
 - `review.py` derives stable candidate IDs from chain topology and signed
   rotations. Candidates are ranked by residual, not automatically accepted.
@@ -94,3 +94,17 @@ Regression coverage includes arbitrary signed angles, invalid-angle rejection,
 selected-chain persistence, stale revision and candidate rejection, real CAD
 worker execution, review STEP import as a valid solid, failed-check preservation,
 validated export blocking, override reset and unchanged global defaults.
+
+## Per-panel strip tolerance
+
+In **Drawing Review → Panel parameters**, edit **Strip tolerance (mm) · this
+panel only**, then choose **Save & rebuild panel**. For example, 0.7 mm allows
+an otherwise consistent 0.672 mm strip mismatch. The default and reset value
+are 0.5 mm. The saved value survives refresh/rebuild and is recorded as
+`strip_tolerance_mm` in the validation report. Replacing the drawing clears it
+with the other panel decisions.
+
+This limit applies to section-chain strip matching and reconstructed section
+length checks, including local edge profiles. It does not change geometry,
+material defaults, angular limits, solid validity or unfolding-area limits.
+Increasing it does not resolve conflicting directions or ambiguous chains.

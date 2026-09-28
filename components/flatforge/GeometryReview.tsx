@@ -31,6 +31,7 @@ function Profile({points}:{points:Point[]}){
 
 export default function GeometryReview({panel,choices,onChoices,angles,onAngles,disabled,onBuild}:{panel:Panel;choices:Record<string,string>;onChoices:(v:Record<string,string>)=>void;angles:Record<string,number|null>;onAngles:(v:Record<string,number|null>)=>void;disabled:boolean;onBuild:()=>void}){
  const [selected,setSelected]=useState('');const [section,setSection]=useState('');
+ const tolerance=panel.report.strip_tolerance_mm??.5;
  const catalog=panel.report.review_catalog??[];const geometry=panel.report.review_geometry;
  if(!geometry)return null;
  const current=catalog.find(s=>s.profile===section)??catalog[0];
@@ -48,7 +49,7 @@ export default function GeometryReview({panel,choices,onChoices,angles,onAngles,
      <option value="">Automatic interpretation</option>{current.candidates.map(c=><option key={c.id} value={c.id}>{c.kind==='normal_section'?'Normal section':'Local edge detail'} · {c.faces.map(f=>'F'+f).join(' → ')} · error {number(c.max_strip_error_mm)} mm</option>)}
     </select></label>
     {!current.candidates.length&&<p>No eligible chain was derived. Inspect the DXF or set the remaining hinge rotations explicitly for a review model.</p>}
-    {proposal&&<><p>{proposal.fits_tolerance?'Strip dimensions fit the 0.5 mm limit. Solid validation still runs.':'This chain exceeds tolerance. A review model may be inspected, but validated export remains blocked.'}</p><div style={{overflowX:'auto'}}><table className="calculation-table"><thead><tr><th>Face</th><th>Flat</th><th>Required flat</th><th>Difference</th></tr></thead><tbody>{proposal.segments.map(s=><tr key={s.segment}><td>F{s.face}</td><td>{number(s.flat_mm)}</td><td>{number(s.required_flat_mm)}</td><td style={{color:Math.abs(s.residual_mm)>.5?'#b44318':undefined}}>{number(s.residual_mm)}</td></tr>)}</tbody></table></div></>}
+    {proposal&&<><p>{proposal.fits_tolerance?`Strip dimensions fit the ${tolerance} mm limit. Solid validation still runs.`:'This chain exceeds tolerance. A review model may be inspected, but validated export remains blocked.'}</p><div style={{overflowX:'auto'}}><table className="calculation-table"><thead><tr><th>Face</th><th>Flat</th><th>Required flat</th><th>Difference</th></tr></thead><tbody>{proposal.segments.map(s=><tr key={s.segment}><td>F{s.face}</td><td>{number(s.flat_mm)}</td><td>{number(s.required_flat_mm)}</td><td style={{color:Math.abs(s.residual_mm)>tolerance?'#b44318':undefined}}>{number(s.residual_mm)}</td></tr>)}</tbody></table></div></>}
    </>:<p>Click a numbered hinge to inspect and edit its parent-local rotation.</p>}</div>
   </div>
   {selected&&<p>Positive hinge axis in the parent flat frame: ({geometry.hinges.find(h=>h.key===selected)?.axis.map(number).join(', ')}, 0). Parent and child are fixed by the extracted fold tree.</p>}

@@ -117,8 +117,8 @@ def local_candidates(p,faces,edges,t,r,bd,tolerance=.5):
     return found
 
 
-def map_details(faces,outer,edges,profiles,t,r,bd):
-    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd)
+def map_details(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
+    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance)
     pending=[]
     for p,row in zip(profiles,reports):
         if row['status']=='PASS':continue
@@ -138,7 +138,7 @@ def map_details(faces,outer,edges,profiles,t,r,bd):
                            matched_faces=[c['trace'][c['main']][2] for c in repeated],max_strip_error_mm=max(c['error'] for c in repeated))
                 row.pop('reason_code',None)
                 continue
-        candidates=local_candidates(p,faces,edges,t,r,bd)
+        candidates=local_candidates(p,faces,edges,t,r,bd,tolerance)
         signatures={c['signature'] for c in candidates}
         if len(signatures)==1:
             candidate=min(candidates,key=lambda c:(c['error'],c['chain'],c['boundary']))
@@ -160,7 +160,7 @@ def normal_instances(profiles):
     return [q for p in profiles if 'local_chain' not in p for q in p.get('instances',[p])]
 
 
-def check_local_profiles(profiles,edges,tf,t,r,bd):
+def check_local_profiles(profiles,edges,tf,t,r,bd,tolerance=.5):
     """Check signed relative rotations and local edge lengths, not plane cuts.
 
     Normal BREP cuts and actual fused-solid unfolding run independently. These
@@ -178,7 +178,7 @@ def check_local_profiles(profiles,edges,tf,t,r,bd):
         gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
         actual=c['flat_lengths']+np.r_[0,gains]+np.r_[gains,0]
         error=float(max(abs(actual-np.linalg.norm(np.diff(p['points'],axis=0),axis=1))))
-        rows.append({'profile':p['name'],'validation_scope':'local_edge_profile','chain_status':'PASS' if error<=.5 and max(errors)<=1 else 'FAIL',
+        rows.append({'profile':p['name'],'validation_scope':'local_edge_profile','chain_status':'PASS' if error<=tolerance and max(errors)<=1 else 'FAIL',
                      'full_plane_status':'NOT_APPLICABLE','max_length_error_mm':error,'max_turn_error_deg':max(errors),
                      'source_boundary':c['boundary'],'faces':c['chain'],
                      'method':'Local edge dimensions and fold-tree relative rotations; not a full BREP plane section'})

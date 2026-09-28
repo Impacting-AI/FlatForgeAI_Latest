@@ -288,7 +288,7 @@ def profile_turns(profile):
     turns=np.array([math.degrees(math.atan2(cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
     return np.where(abs(abs(turns)-90)<.01,np.sign(turns)*90,turns)
 
-def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
+def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,tolerance=.5):
     edge_lookup={frozenset(e['faces']):e for e in edges}
     results=[]
     for p in profs:
@@ -322,7 +322,7 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
             trace=section_trace(faces,outer,dim,c)
             if len(trace)!=len(lengths):continue
             err=max(abs((b-a)-target) for (a,b,_),target in zip(trace,flat_target))
-            if err<=.5:valid.append((err,-width,c,trace))
+            if err<=tolerance:valid.append((err,-width,c,trace))
         if not valid:raise ValueError(f'{p["name"]}: section vertex count or strip lengths do not match any cut; STOP chain')
         # Prefer widest equivalent lane; otherwise minimum geometric residual.
         err,nw,c,trace=min(valid,key=lambda v:(v[1],v[0],v[2]))
@@ -445,7 +445,7 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     ob=Bnd_Box();BRepBndLib.AddOptimal_s(fused.wrapped,ob,False,False);bounds=ob.Get();bmin=list(bounds[:3]);bmax=list(bounds[3:]);bsize=[v-u for u,v in zip(bmin,bmax)]
     return fused,flat_trimmed,dict(valid=fused.isValid(),solid_count=len(fused.Solids()),volume_mm3=fused.Volume(),pre_fuse_volume_mm3=raw_volume,fusion_volume_removed_mm3=raw_volume-fused.Volume(),bbox_mm=bsize,bbox_min_mm=bmin,bbox_max_mm=bmax,plate_flat_area=sum(p.area for p in flat_trimmed),bend_developed_area=sum(b['developed_area'] for b in bend_records))
 
-def check_sections(solid,profs,faces,tf,t,r,out,material=None):
+def check_sections(solid,profs,faces,tf,t,r,out,material=None,tolerance=.5):
     import cadquery as cq
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
     from OCP.gp import gp_Pln,gp_Pnt,gp_Dir
@@ -514,9 +514,9 @@ def check_sections(solid,profs,faces,tf,t,r,out,material=None):
             predicted=rotation(plane_turn_normal,theta)@paint
             actualpaint=tf[trace[i][2]][0][:,2]
             paint_errors.append(math.degrees(math.acos(float(np.clip(np.dot(predicted,actualpaint),-1,1)))))
-            details.append(dict(profile=p['name'],segment=i+1,face=f'F{trace[i][2]}',hat_virtual_midline_length_mm=float(expected[i]),solid_section_virtual_midline_length_mm=float(actual[i]),length_error_mm=float(abs(actual[i]-expected[i])),turn_error_deg=angle_errors[-1] if i<len(trace)-1 else '',paint_normal_error_deg=paint_errors[-1],status='PASS' if abs(actual[i]-expected[i])<=.5 and paint_errors[-1]<=1 and (i==len(trace)-1 or angle_errors[-1]<=1) else 'FAIL'))
+            details.append(dict(profile=p['name'],segment=i+1,face=f'F{trace[i][2]}',hat_virtual_midline_length_mm=float(expected[i]),solid_section_virtual_midline_length_mm=float(actual[i]),length_error_mm=float(abs(actual[i]-expected[i])),turn_error_deg=angle_errors[-1] if i<len(trace)-1 else '',paint_normal_error_deg=paint_errors[-1],status='PASS' if abs(actual[i]-expected[i])<=tolerance and paint_errors[-1]<=1 and (i==len(trace)-1 or angle_errors[-1]<=1) else 'FAIL'))
         radii=[e.radius() for e in se if e.geomType()=='CIRCLE'];radius_error=max([min(abs(v-r),abs(v-(r+t))) for v in radii],default=float('inf'))
-        status='PASS' if not misses and np.max(abs(actual-expected))<=.5 and max(angle_errors)<=1 and max(paint_errors)<=1 and radius_error<.001 else 'FAIL'
+        status='PASS' if not misses and np.max(abs(actual-expected))<=tolerance and max(angle_errors)<=1 and max(paint_errors)<=1 and radius_error<.001 else 'FAIL'
         summaries.append(dict(profile=p['name'],segments=len(trace),section_edges=len(se),max_length_error_mm=float(np.max(abs(actual-expected))),max_turn_error_deg=max(angle_errors),max_paint_normal_error_deg=max(paint_errors),circular_edges=len(radii),expected_circular_edges=2*(len(trace)-1),max_radius_error_mm=radius_error,missing_or_interrupted=misses,contour_openings=list(openings.values()),chain_status=status,full_plane_status='PASS' if status=='PASS' and len(radii)==2*(len(trace)-1) and len(se)==4*len(trace)+4*len(openings) else 'FAIL'))
         # Evidence image: real BREP section, registered to HAT by main-segment
         # midpoint/orientation only. No scaling or non-rigid fit is performed.

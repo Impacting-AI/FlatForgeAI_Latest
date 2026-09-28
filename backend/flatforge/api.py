@@ -47,6 +47,7 @@ class ReviewInput(BaseModel):
  section_choices:dict[str,str]|None=None
  build_review_model:bool=False
  expected_revision:int|None=None
+ strip_tolerance_mm:float|None=Field(default=None,gt=0,allow_inf_nan=False)
  @field_validator('bend_angles')
  @classmethod
  def valid_bend_angles(cls,value):
@@ -135,6 +136,7 @@ def review(id:str,body:ReviewInput):
    else:angles[key]=value
   overrides['bend_angles']=angles
   if body.section_choices is not None:overrides['section_choices']=body.section_choices
+  if body.strip_tolerance_mm is not None:overrides['strip_tolerance_mm']=body.strip_tolerance_mm
   overrides['build_review_model']=body.build_review_model
   if body.confirm_parameters:overrides['confirm_parameters']=True
   if body.accept_partial_sections:overrides['accept_partial_sections']=True

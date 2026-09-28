@@ -54,7 +54,7 @@ def directions(edges):
     return result
 
 
-def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
+def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
     lookup={frozenset(e['faces']):e for e in edges}
     reports=[]
     for number,p in enumerate(profiles,1):
@@ -100,10 +100,10 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                         'segment':i+1,'face':items[i][2],
                         'source_handles':segs[i]['handles'],
                         'observed_flat_mm':float(a),'required_flat_mm':float(b),
-                        'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=.5)
+                        'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=tolerance)
                     } for i,(a,b) in enumerate(zip(actual,expected))]
                     if nearest is None or error<nearest['max_strip_error_mm']:nearest=record
-                    if not normal_cut or error>.5:continue
+                    if not normal_cut or error>tolerance:continue
                     rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
                     signature=tuple(sorted((e['index'],round(a,3)) for e,a in zip(hinges,rotations)))
                     candidates.append(dict(signature=signature,width=high-low,c=c,trace=items,direction=direction,pts=pts,segs=segs,main=main,hinges=hinges,rotations=rotations,error=error))
@@ -125,7 +125,7 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                 reason='The closest chain crosses nonparallel hinges; its apparent section turns cannot be used as bend rotations.'
             else:
                 code='STRIP_LENGTH_MISMATCH'
-                reason=f"Closest normal chain exceeds the 0.5 mm strip tolerance (maximum {nearest['max_strip_error_mm']:.3f} mm). Check its segment diagnostics and bend parameters."
+                reason=f"Closest normal chain exceeds the {tolerance:g} mm strip tolerance (maximum {nearest['max_strip_error_mm']:.3f} mm). Check its segment diagnostics and bend parameters."
             row.update(status='NEEDS_REVIEW',reason_code=code,reason=reason)
             reports.append(row);continue
         candidate=min(candidates,key=lambda c:(-c['width'],c['error'],c['c'],c['signature']))

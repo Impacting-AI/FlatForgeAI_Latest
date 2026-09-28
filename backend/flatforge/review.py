@@ -11,7 +11,7 @@ def bend_key(e):
     return ':'.join(sorted(s['handle'] for s in e['source']))+f':F{e["parent"]}:F{e["child"]}'
 
 
-def prepare_review(faces,outer,edges,profiles,rows,t,r,bd,choices):
+def prepare_review(faces,outer,edges,profiles,rows,t,r,bd,choices,tolerance=.5):
     """Return reproducible proposals and apply only explicit selected IDs.
 
     Normal candidates can establish a physical cut. Local candidates explicitly
@@ -64,7 +64,7 @@ def prepare_review(faces,outer,edges,profiles,rows,t,r,bd,choices):
             expected=lengths-np.r_[0,gains]-np.r_[gains,0]
             actual=np.array([b-a for a,b,_ in c['trace']]) if c['kind']=='normal_section' else c['local']['flat_lengths']
             public.append({'id':key,'kind':c['kind'],'faces':c['chain'],'max_strip_error_mm':c['error'],
-                'fits_tolerance':c['error']<=.5,'points':c['points'],'direction':c.get('direction'),'coordinate':c.get('coordinate'),
+                'fits_tolerance':c['error']<=tolerance,'points':c['points'],'direction':c.get('direction'),'coordinate':c.get('coordinate'),
                 'folds':[{'key':bend_key(e),'bend_ids':[s['id'] for s in e['source']],
                           'angle':float(a),'vertex':i+1} for i,(e,a) in enumerate(zip(c['hinges'],c['angles']))],
                 'segments':[{'segment':i+1,'face':c['chain'][i],'drawing_mm':float(lengths[i]),
@@ -90,7 +90,7 @@ def prepare_review(faces,outer,edges,profiles,rows,t,r,bd,choices):
         if c['kind']=='normal_section':p.update(trace=c['trace'],cut_direction=c['direction'],cut_coordinate=c['coordinate'])
         else:p['local_chain']=c['local']
         p['review_mapping']=True
-        row.update(status='PASS' if c['error']<=.5 else 'NEEDS_REVIEW',method='user_selected_'+c['kind'],
+        row.update(status='PASS' if c['error']<=tolerance else 'NEEDS_REVIEW',method='user_selected_'+c['kind'],
                    max_strip_error_mm=c['error'],reason='User-selected correspondence; geometry checks remain mandatory.')
     for name in set(choices)-{p['name'] for p in profiles}:errors.append(f'Unknown profile: {name}')
     return catalog,errors
