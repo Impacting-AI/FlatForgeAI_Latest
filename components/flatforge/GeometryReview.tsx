@@ -52,12 +52,12 @@ export default function GeometryReview({panel,choices,onChoices,angles,onAngles,
    </>:<p>Click a numbered hinge to inspect and edit its parent-local rotation.</p>}</div>
   </div>
   {selected&&<p>Positive hinge axis in the parent flat frame: ({geometry.hinges.find(h=>h.key===selected)?.axis.map(number).join(', ')}, 0). Parent and child are fixed by the extracted fold tree.</p>}
-  <div style={{overflowX:'auto',maxHeight:360,marginTop:20}}><table className="calculation-table"><thead><tr><th>Hinge</th><th>Parent → child</th><th>Source / proposed angle</th><th>Override (degrees)</th><th/></tr></thead><tbody>{panel.report.bends?.map(b=><tr key={b.key} style={{background:selected===b.key?'#fff0dc':undefined}} onClick={()=>setSelected(b.key)}>
+  <div style={{overflowX:'auto',maxHeight:360,marginTop:20}}><table className="calculation-table"><thead><tr><th>Hinge</th><th>Parent → child</th><th>Source / proposed angle</th><th>Override (rotation °)</th><th/></tr></thead><tbody>{panel.report.bends?.map(b=><tr key={b.key} style={{background:selected===b.key?'#fff0dc':undefined}} onClick={()=>setSelected(b.key)}>
    <td><button type="button" onClick={()=>setSelected(b.key)}>{b.bend_ids.join('/')}</button></td><td>F{b.parent} → F{b.child}</td><td>{proposedAngles[b.key]??b.angle??'UNKNOWN'}{proposedAngles[b.key]!=null?' · selected section':''}</td>
    <td><Input aria-label={`Signed angle for ${b.bend_ids.join('/')} F${b.parent} to F${b.child}`} disabled={disabled} type="number" min={-179.999} max={179.999} step="any" placeholder="Use source angle" value={angles[b.key]??''} onChange={e=>onAngles({...angles,[b.key]:e.target.value===''?null:Number(e.target.value)})}/></td>
    <td><Button variant="ghost" disabled={disabled} onClick={()=>onAngles({...angles,[b.key]:null})}>Reset</Button></td>
   </tr>)}</tbody></table></div>
-  <p>Signs are rotations about the displayed hinge axis in the parent face’s frame. All unresolved hinges need a selected source chain or an explicit angle before a solid can be built.</p>
+  <p>Angles are signed rotations from flat about the displayed parent-local hinge axis. Included angle = 180° − |rotation|; for example, a 120° included corner needs a 60° rotation, with direction established by the drawing. All unresolved hinges need a selected source chain or an explicit angle before a solid can be built.</p>
   {invalid&&<p role="alert">Use finite, non-zero angles between −180° and +180°.</p>}
   <Button disabled={disabled||invalid} onClick={onBuild}>Save rules & build review model</Button>
   <p>A review STEP remains labelled unvalidated until all required checks pass. Global settings are unchanged.</p>

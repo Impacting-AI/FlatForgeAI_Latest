@@ -15,8 +15,7 @@ from .section_mapping import map_normal_sections
 
 def profile_values(p,t,r,bd):
     vectors=np.diff(p['points'],axis=0)
-    hand=g.cross(g.unit(vectors[p['main']]),p['paint_normal'])
-    angles=np.array([math.degrees(math.atan2(g.cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
+    angles=g.profile_turns(p)
     gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
     return angles,np.linalg.norm(vectors,axis=1)-np.r_[0,gains]-np.r_[gains,0]
 

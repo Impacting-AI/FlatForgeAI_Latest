@@ -186,6 +186,16 @@ def profiles(doc,origin,t):
         if np.linalg.norm(b-a)<t+0.01:continue # end caps, never bend skeletons
         u,n,c=line_frame(a,b);dim=int(abs(u[1])>abs(u[0]))
         ls.append(dict(a=a,b=b,dim=dim,u=u,normal=n,c=c,lo=min(a@u,b@u),hi=max(a@u,b@u),handle=e.dxf.handle))
+    def paired_end(l,m,end):
+        if abs(l[end]-m[end])<=t+.05:return True
+        # Wide-angle miter endpoints separate by t*tan(turn/2), not at most t.
+        # Accept that separation only when adjoining physical wall segments
+        # meet these endpoints and themselves form a thickness-spaced pair.
+        a=l['normal']*l['c']+l['u']*l[end]
+        b=m['normal']*m['c']+m['u']*m[end]
+        left=[v for v in ls if abs(cross(l['u'],v['u']))>1e-4 and min(np.linalg.norm(a-v[q]) for q in ('a','b'))<=.05]
+        right=[v for v in ls if abs(cross(m['u'],v['u']))>1e-4 and min(np.linalg.norm(b-v[q]) for q in ('a','b'))<=.05]
+        return any(abs(cross(v['u'],w['u']))<1e-4 and abs(abs(v['c']-w['c'])-t)<.05 for v in left for w in right)
     paired=set();sk=[]
     for i,l in enumerate(ls):
         if i in paired:continue
@@ -193,7 +203,7 @@ def profiles(doc,origin,t):
         for j,m in enumerate(ls):
             if i==j or j in paired or abs(cross(l['u'],m['u']))>1e-4:continue
             overlap=min(l['hi'],m['hi'])-max(l['lo'],m['lo'])
-            if abs(abs(l['c']-m['c'])-t)<.05 and overlap>0 and abs(l['lo']-m['lo'])<=t+.05 and abs(l['hi']-m['hi'])<=t+.05:
+            if abs(abs(l['c']-m['c'])-t)<.05 and overlap>0 and paired_end(l,m,'lo') and paired_end(l,m,'hi'):
                 choices.append(j)
         if len(choices)!=1:raise ValueError(f'HAT pair ambiguity at {l["handle"]}: {len(choices)} matches')
         j=choices[0];m=ls[j];paired.update([i,j]);dim=l['dim'];c=(l['c']+m['c'])/2
@@ -270,9 +280,15 @@ def section_trace(faces,outer,dim,coordinate):
     items.sort()
     return items
 
+def profile_turns(profile):
+    """Signed rotations from flat, not included angles between adjoining faces."""
+    vectors=np.diff(profile['points'],axis=0)
+    hand=cross(unit(vectors[profile['main']]),profile['paint_normal'])
+    if abs(abs(hand)-1)>1e-6:raise ValueError('Paint marker not normal to main section segment')
+    turns=np.array([math.degrees(math.atan2(cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
+    return np.where(abs(abs(turns)-90)<.01,np.sign(turns)*90,turns)
+
 def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
-    # Sharp midsurface setback minus half bend allowance. 90-degree rule.
-    ba=2*(r+t)-bd;gain=r+t/2-ba/2
     edge_lookup={frozenset(e['faces']):e for e in edges}
     results=[]
     for p in profs:
@@ -281,7 +297,9 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
             pts=pts[::-1];p['segments']=p['segments'][::-1];m=len(pts)-2-m
         p['points']=pts;p['main']=m
         lengths=np.linalg.norm(np.diff(pts,axis=0),axis=1)
-        flat_target=lengths-np.array([gain if i in [0,len(lengths)-1] else 2*gain for i in range(len(lengths))])
+        turns=profile_turns(p)
+        gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-bend_allowance(t,r,bd,a)/2 for a in turns])
+        flat_target=lengths-np.r_[0,gains]-np.r_[gains,0]
         if dim==0 and '-' in p['name']:
             letter=p['name'].split('-')[0];ts=[e for e in doc.modelspace().query('TEXT[layer=="A-STRS-1"]') if e.dxf.text==letter]
             polys=list(doc.modelspace().query('LWPOLYLINE[layer=="A-STRS-1"]'))
@@ -315,7 +333,7 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
         for k in range(len(trace)-1):
             left=trace[k][2];right=trace[k+1][2];key=frozenset([left,right])
             if key not in edge_lookup:raise ValueError('Section crosses an unassigned or non-hinge adjacency')
-            e=edge_lookup[key];v0=unit(pts[k+1]-pts[k]);v1=unit(pts[k+2]-pts[k+1]);delta=math.degrees(math.atan2(cross(v0,v1)*hand,np.dot(v0,v1)))
+            e=edge_lookup[key];v0=unit(pts[k+1]-pts[k]);v1=unit(pts[k+2]-pts[k+1]);delta=turns[k]
             # Canonical world hinge support points along +X or +Y.
             canonical_factor=1 if dim==1 else -1
             angle=delta*canonical_factor*(1 if e['parent']==left else -1)
@@ -335,7 +353,6 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
             e['angle']=signs.pop()
             e['evidence']=[dict(ev,correspondence='same original KIFOF LINE, separated flange tab') for v in matches for ev in v['evidence']]
     if any('angle' not in e for e in edges):raise ValueError('Unmapped hinge; no default direction is allowed')
-    if any(abs(abs(e['angle'])-90)>.001 for e in edges):raise ValueError('This implementation supports 90-degree bends only; no fallback angle allowed')
     return results
 
 def rotation(axis,angle):

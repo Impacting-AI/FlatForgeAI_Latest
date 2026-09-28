@@ -1,5 +1,5 @@
 """One isolated job. Evidence first; explicit review decisions precede solid generation."""
-import sys, json, math, io, csv, shutil, traceback, hashlib, collections, html
+import sys, json, math, copy, io, csv, shutil, traceback, hashlib, collections, html
 from pathlib import Path
 import numpy as np
 import ezdxf
@@ -84,9 +84,27 @@ def map_review(edges,overrides):
 
 def viewer_data(faces,material,edges,tf,t,r,bd):
  ba=2*(r+t)-bd
- return {'units':'mm','thickness':t,'radius':r,'deduction':bd,'allowance':ba,'k_factor':(ba/(math.pi/2)-r)/t,
-  'faces':[{'id':i,'polygons':[{'outer':list(p.exterior.coords),'holes':[list(h.coords) for h in p.interiors]} for p in g.poly_parts(material[i])],'rotation':tf[i][0],'translation':tf[i][1]} for i in range(len(faces))],
-  'bends':[{'id':e['index'],'name':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'axis':e['axis'],'d':e['d'],'hinge':e['hinge'],'allowance':e['allowance'],'coordinate':e['c'],'dim':e['dim'],'low':g.hinge_span(e)[0],'high':g.hinge_span(e)[1],'angle':e['angle'],'source':e['evidence']} for e in edges]}
+ bends=[]
+ for e in edges:
+  u,n,c=g.support(e);axis=g.lift(u);h=g.lift(n*c)
+  d=g.lift(n)*np.sign(np.array(faces[e['child']].representative_point().coords[0])@n-c)
+  angle=e.get('angle');allowance=g.bend_allowance(t,r,bd,angle) if angle is not None else 0.
+  lo,hi=g.hinge_span(e)
+  bend={'id':e['index'],'name':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],
+    'axis':axis,'d':d,'hinge':h,'allowance':allowance,'coordinate':e['c'],'dim':e['dim'],'low':lo,'high':hi,
+    'angle':angle,'included_angle':180-abs(angle) if angle is not None else None,
+    'status':'KNOWN' if angle is not None else 'NEEDS_REVIEW','source':e.get('evidence',[])}
+  # Both surfaces at each tangent to the bend, in the final solid's mm frame.
+  # These are graphics only; they are never added to the manufacturing BREP.
+  if tf is not None:
+   bend['folded_lines']=[{'face':face,'surface':side,'points':[g.apply_tf(tf[face],h+d*offset+axis*x+np.array([0,0,side*t/2])) for x in (lo,hi)]}
+     for face,offset in ((e['parent'],-allowance/2),(e['child'],allowance/2)) for side in (-1,1)]
+  bends.append(bend)
+ return {'units':'mm','mode':'folded' if tf is not None else 'flat_review','angle_convention':'signed rotation from flat; included angle = 180 - abs(rotation)',
+  'thickness':t,'radius':r,'deduction':bd,'allowance':ba,'k_factor':(ba/(math.pi/2)-r)/t,
+  'faces':[{'id':i,'polygons':[{'outer':list(p.exterior.coords),'holes':[list(h.coords) for h in p.interiors]} for p in g.poly_parts(material[i])],
+            **({'rotation':tf[i][0],'translation':tf[i][1]} if tf is not None else {})} for i in range(len(faces))],
+  'bends':bends}
 def paint_glb(solid,tf,edges,t,r,path):
  import trimesh
  from OCP.BRepAdaptor import BRepAdaptor_Surface
@@ -119,7 +137,7 @@ def paint_glb(solid,tf,edges,t,r,path):
 def run(config):
  source=Path(config['source']);out=Path(config['output']);out.mkdir(parents=True,exist_ok=True)
  settings={**DEFAULTS,**config.get('settings',{})};overrides=config.get('overrides',{});issues=[];report={'settings':settings,'issues':issues,'status':'FAILED'}
- preview_requested=bool(overrides.get('build_review_model'))
+ preview_requested=bool(overrides.get('build_review_model'));edges=None
  def checkpoint(phase,message):
   report['phase_message']=message
   print(message,flush=True)
@@ -127,6 +145,8 @@ def run(config):
   dump(out/'progress.tmp',{'phase':phase,'report':report});(out/'progress.tmp').replace(out/'progress.json')
  def issue(code,message,**extra):issues.append({'code':code,'message':message,**extra})
  def finish(status):
+  if status=='NEEDS_REVIEW' and edges and not (out/'viewer.json').exists():
+   dump(out/'viewer.json',viewer_data(faces,material,edges,None,settings['thickness'],settings['radius'],settings['deduction']))
   report['status']=status;report['review_decisions']=overrides;dump(out/'report.json',report)
   artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
   dump(out/'result.json',{'status':status,'report':report,'artifacts':artifacts});return report
@@ -168,10 +188,15 @@ def run(config):
  report['geometry_normalization']=g.read_drawing.repairs
  report['contour_annotations']=g.read_drawing.annotations
  report.update(flat_width=outer.bounds[2],flat_height=outer.bounds[3],flat_area=blank.area,bend_lines=len(lines),physical_bends=len(edges),faces=len(faces),source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),origin=origin.tolist())
+ report['review_geometry']=geometry_payload(faces,edges,material)
+ report['unresolved_bends']=map_review(edges,overrides.get('bend_angles',{}))
+ report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
  (out/'extraction.svg').write_text(extract_svg(outer,blank,lines,doc,origin));shutil.copyfile(source,out/'flat.dxf')
  extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
  checkpoint('EXTRACTING','Rendered numbered bend axes and contour. Checking drawing parameters…')
- if missing:issue('LAYERS','Missing or empty required layers: '+', '.join(missing)+'. The contour preview is available, but a folded model cannot be inferred without bend and section evidence.');return finish('NEEDS_REVIEW')
+ if missing:
+  issue('LAYERS','Missing or empty required layers: '+', '.join(missing)+'. A folded model cannot be inferred without bend and section evidence; explicit rotations can create an unvalidated review model.')
+  if not preview_requested or 'KIFOF' in missing:return finish('NEEDS_REVIEW')
  if unassigned:
   issue('UNASSIGNED_AXES','These bend entities do not bound a hinge after the 3 mm relief extension: '+', '.join(unassigned)+'. Check endpoint gaps and contour alignment; this alone does not prove an interior rib.');return finish('NEEDS_REVIEW')
  evidence=thickness_evidence(doc);report['thickness_evidence']=evidence
@@ -186,12 +211,31 @@ def run(config):
         thickness_mm=t,inside_radius_mm=r,deduction_90_mm=bd,calculated_k=k,
         deduction_range_exclusive_mm=[2*(r+t)-(math.pi/2)*(r+t),2*(r+t)-(math.pi/2)*r])
   return finish('NEEDS_REVIEW')
+ for e in edges:
+  for field in ('angle','evidence','confirmed'):e.pop(field,None)
  try:profs=g.profiles(doc,origin,t)
  except ValueError as exc:
-  issue('SECTION_EVIDENCE',str(exc));return finish('NEEDS_REVIEW')
+  issue('SECTION_EVIDENCE',str(exc))
+  if not preview_requested:return finish('NEEDS_REVIEW')
+  profs=[]
  report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
- general=section_layer!='HAT' or any(not l['orthogonal'] for l in lines) or any(abs(g.unit(a)@g.unit(b))>math.sin(math.radians(.01)) for p in profs for a,b in zip(np.diff(p['points'],axis=0),np.diff(p['points'],axis=0)[1:]))
+ general=not profs or section_layer!='HAT' or any(not l['orthogonal'] for l in lines) or any(abs(g.unit(a)@g.unit(b))>math.sin(math.radians(.01)) for p in profs for a,b in zip(np.diff(p['points'],axis=0),np.diff(p['points'],axis=0)[1:]))
  report['review_geometry']=geometry_payload(faces,edges,material)
+ if not general:
+  trial=copy.deepcopy(profs)
+  try:
+   mapped=g.map_sections(doc,origin,faces,outer,edges,trial,t,r,bd);profs=trial
+  except ValueError as exc:
+   # Keep explicit section-marker mapping when it succeeds; otherwise expose
+   # generic correspondence and overrides instead of a terminal legacy error.
+   report['legacy_mapping_review']=str(exc)
+   if str(exc)=='Unmapped hinge; no default direction is allowed':
+    # Matched documented chains remain valid; remaining tabs may have saved
+    # explicit rotations. Do not discard those chains during generic fallback.
+    profs=trial;mapped=[]
+   else:
+    general=True
+    for e in edges:e.pop('angle',None);e.pop('evidence',None)
  if general:
   mapped=map_details(faces,outer,edges,profs,t,r,bd)
   catalog,review_errors=prepare_review(faces,outer,edges,profs,mapped,t,r,bd,overrides.get('section_choices',{}))
@@ -209,20 +253,15 @@ def run(config):
    issue('SECTION_CORRESPONDENCE',f'{len(unresolved)} section profiles need review. {reasons}',profiles=[m['profile'] for m in unresolved])
    if not preview_requested:return finish('NEEDS_REVIEW')
  deduction=infer_deduction(faces,outer,profs,t) if not general else {'value':bd,'confidence':'settings_validated_against_sections','source':'Section and local-detail strip dimensions matched using the panel bend parameters; no independent deduction measurement'}
- if general and unresolved:
+ if general and (unresolved or not profs):
   deduction.update(confidence='settings_pending_review',source='Saved panel parameter; unresolved sections do not validate this deduction.')
  report['deduction_evidence']=deduction
  report['input_evidence']={'classification':'flat_pattern_supported' if deduction['value'] is not None else 'not_proven','reason':'Matched section / flat-strip dimensions' if deduction['value'] is not None else 'Input interpretation requires user confirmation'}
- if general and unresolved:report['input_evidence']={'classification':'not_proven','reason':'Review reconstruction uses the selected flat-pattern setting; section correspondence is unresolved.'}
+ if general and (unresolved or not profs):report['input_evidence']={'classification':'not_proven','reason':'Review reconstruction uses the selected flat-pattern setting; section correspondence is unresolved.'}
  if deduction['value'] is not None and abs(deduction['value']-bd)>.5:
   issue('DEDUCTION',f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm.",field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
  if (evidence['value'] is None or deduction['value'] is None) and not overrides.get('confirm_parameters'):
   issue('EVIDENCE','Drawing does not establish thickness or deduction reliably. Confirm the panel parameters before conversion.');return finish('NEEDS_REVIEW')
- try:
-  if not general:mapped=g.map_sections(doc,origin,faces,outer,edges,profs,t,r,bd)
- except ValueError as e:
-  if str(e)!='Unmapped hinge; no default direction is allowed':raise
-  mapped=[]
  unknown=map_review(edges,overrides.get('bend_angles',{}));report['unresolved_bends']=unknown
  if not general:report['section_mapping']=[{'profile':p['name'],'cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping')} for p in profs]
  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
