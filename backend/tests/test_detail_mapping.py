@@ -23,7 +23,7 @@ def map_file(path):
     return f,e,p,map_details(f,outer,e,p,2.,2.,4.)
 
 
-def test_complex_corner_requires_angle_review_then_builds(tmp_path):
+def test_complex_corner_retains_drawing_angles_and_allows_correction(tmp_path):
     import json
     import cadquery as cq
     r=run({'source':str(source()),'output':str(tmp_path/'initial')})
@@ -32,9 +32,10 @@ def test_complex_corner_requires_angle_review_then_builds(tmp_path):
     choices=r['corner_angle_candidates']
     assert len(choices)==2
     assert sorted(c['candidate_rotation_deg'] for c in choices)==pytest.approx([-59.6613411117,120.3386588883])
-    assert len(r['unresolved_bends'])==2
-    assert not (tmp_path/'initial/panel.step').exists()
-    # Re-selecting a section's apparent 90 degrees is not explicit angle review.
+    assert r['unresolved_bends']==[]
+    assert all(b['angle'] is not None for b in r['bends'])
+    assert (tmp_path/'initial/panel.step').exists()
+    # Re-selecting the section retains its measured angle without manual entry.
     target=choices[0]['key']
     row=next(row for row in r['review_catalog'] if any(target in [b['key'] for b in c['folds']] for c in row['candidates']))
     candidate=next(c for c in row['candidates'] if target in [b['key'] for b in c['folds']])

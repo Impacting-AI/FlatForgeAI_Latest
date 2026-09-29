@@ -40,5 +40,5 @@ def continuation_candidates(faces,edges,order,t,r,bd):
                     'adjacent_face':adjacent['child'],'plate_hinge':[s['id'] for s in seam['source']],
                     'junction_flat_mm':junction.tolist(),
                     'requires_confirmation':not any(ev.get('profile')=='USER CONFIRMED' for ev in target.get('evidence',[])),
-                    'reason':'Section rotation conflicts with a possible continuation of the adjoining flange. The drawing does not establish whether these faces must continue in the same plane. Confirm a signed rotation before building.'}
+                    'reason':'Section rotation conflicts with a possible continuation of the adjoining flange. The drawing does not establish whether these faces must continue in the same plane. The measured drawing rotation is retained; change it only if the intended corner requires this alternative.'}
     return [result[k] for k in sorted(result)]

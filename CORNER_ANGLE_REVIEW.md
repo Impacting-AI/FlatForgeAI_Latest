@@ -2,7 +2,9 @@
 
 The September 28 corner reference supersedes the earlier visual approval of
 the PN_NM_149 model. Previously, tests accepted the section-matched 90° result.
-Those tests now require the newly identified corner conflict to stop conversion.
+The September 29 correction preserves the drawing angle and generates an inspectable
+model. A possible flange continuation remains a manufacturing-review flag; it
+does not erase an angle established by section geometry.
 
 ## Findings from the new attachments
 
@@ -34,10 +36,11 @@ continuation is rotationally possible, its candidate is computed with:
 `atan2(axis · (parent_normal × target_normal), parent_normal · target_normal)`
 
 When that interpretation differs from the mapped angle by more than 1°, the
-app reports `CORNER_ANGLE_CONFLICT`. It does not assume every such joint is meant
-to be coplanar. It leaves the affected angle UNKNOWN and stops before folded
-CAD generation until the operator enters an explicit signed angle. Re-selecting
-a source section does not count as confirming this conflict.
+app reports `CORNER_CONTINUATION_CHECK`. The measured angle remains populated;
+no angle re-entry is required. A possible coplanar continuation is an alternative,
+not contradictory source evidence. Manufacturing export remains under review,
+but the folded preview is generated using the drawing angle. Actual conflicts
+between angular annotations and section geometry still require resolution.
 
 The implementation contains no panel filename, fixed coordinates, bend IDs or
 121° constant. Actual normal-section evidence still supplies arbitrary angles.
@@ -66,7 +69,7 @@ reconciled; raising strip tolerance cannot erase the angular conflict.
 
 Tests cover geometric candidates for several oblique angles, no extra conflict
 at an orthogonal corner, missing angles, rotated/renamed/rehandled drawings,
-explicit override reconstruction, section-selection bypass prevention and
+explicit override reconstruction, retention of measured angles and
 retention of the failed drawing check. Existing 90° samples remain regressions.
 
 This adds no runtime dependency or database migration. Merge the PR, rebuild

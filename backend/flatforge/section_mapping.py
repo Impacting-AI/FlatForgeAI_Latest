@@ -65,7 +65,7 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
             segs=p['segments'][::-1] if reverse else p['segments']
             main=len(pts)-2-p['main'] if reverse else p['main']
             vectors=np.diff(pts,axis=0);lengths=np.linalg.norm(vectors,axis=1)
-            angles=g.profile_turns(dict(points=pts,main=main,paint_normal=p['paint_normal']))
+            angles=g.profile_turns(dict(p,points=pts,segments=segs,main=main))
             if any(not 0<abs(a)<180 for a in angles):continue
             gain=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
             expected=lengths-np.r_[0,gain]-np.r_[gain,0]

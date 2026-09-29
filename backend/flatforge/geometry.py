@@ -286,7 +286,12 @@ def profile_turns(profile):
     hand=cross(unit(vectors[profile['main']]),profile['paint_normal'])
     if abs(abs(hand)-1)>1e-6:raise ValueError('Paint marker not normal to main section segment')
     turns=np.array([math.degrees(math.atan2(cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
-    return np.where(abs(abs(turns)-90)<.01,np.sign(turns)*90,turns)
+    turns=np.where(abs(abs(turns)-90)<.01,np.sign(turns)*90,turns)
+    for i in range(len(turns)):
+        handles=sorted(h for seg in profile.get('segments',[])[i:i+2] for h in seg['handles'])
+        labels=[a for a in profile.get('angle_dimensions',[]) if a['wall_handles']==handles and a['status']=='MATCHED']
+        if labels:turns[i]=np.sign(turns[i])*labels[0]['rotation_magnitude_deg']
+    return turns
 
 def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,tolerance=.5):
     edge_lookup={frozenset(e['faces']):e for e in edges}

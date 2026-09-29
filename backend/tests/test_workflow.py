@@ -48,7 +48,7 @@ def test_upload_review_worker_exports_and_persistence():
   assert c.get('/panels/'+p['id']+'/log').json()['jobs'][0]['status']=='DONE'
 
 
-def test_complex_upload_stops_for_corner_angle_confirmation():
+def test_complex_upload_keeps_measured_angles_with_corner_review():
  folder=os.getenv('FLATFORGE_REGRESSION_DXF_DIR')
  if not folder:pytest.skip('Supply original customer DXFs')
  with TestClient(app) as c:
@@ -68,7 +68,9 @@ def test_complex_upload_stops_for_corner_angle_confirmation():
   assert p['report']['physical_bends']==27
   assert len(p['report']['corner_angle_candidates'])==2
   assert c.get('/panels/'+p['id']+'/files/viewer.json').status_code==200
-  assert c.get('/panels/'+p['id']+'/files/panel.step').status_code==404
+  assert p['report']['unresolved_bends']==[]
+  assert all(b['angle'] is not None for b in p['report']['bends'])
+  assert c.get('/panels/'+p['id']+'/files/panel.step').status_code==409
   assert c.get('/projects/'+project['id']+'/export').status_code==409
 
 

@@ -62,7 +62,7 @@ dimensional/correspondence conflicts. PN_NM_135 has chains with no eligible
 proposal. The editor exposes available evidence and allows explicit hinge
 decisions for inspection; it does not certify those panels as accurate.
 
-The PN_NM_149 corner now requires explicit angle review under the newer reference; see CORNER_ANGLE_REVIEW.md.
+The PN_NM_149 corner remains flagged for inspection against the newer reference, but its measured drawing angle is retained and no re-entry is required. See CORNER_ANGLE_REVIEW.md and DRAWING_ANGLE_DETECTION.md.
 No customer source drawings are added to this repository. Actual DWG conversion
 still depends on the configured ODA installation; this change does not replace
 or install ODA.

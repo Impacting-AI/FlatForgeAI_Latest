@@ -9,6 +9,7 @@ from . import dwg
 from .detail_mapping import map_details, normal_instances, check_local_profiles
 from .review import prepare_review, geometry_payload
 from .corner_review import continuation_candidates
+from .angle_evidence import annotate_profiles, attach_hinge_dimensions
 DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
 def dump(path,obj):
  def clean(x):
@@ -75,6 +76,8 @@ def map_review(edges,overrides):
  for e in edges:
   key=':'.join(sorted(l['handle'] for l in e['source']))+f':F{e["parent"]}:F{e["child"]}';e['review_key']=key
   if key in overrides:
+   if 'angle' in e and not any(ev.get('profile')=='USER CONFIRMED' for ev in e.get('evidence',[])):
+    e['source_angle']=e['angle'];e['source_evidence']=copy.deepcopy(e.get('evidence',[]))
    angle=float(overrides[key])
    if not math.isfinite(angle) or not 0<abs(angle)<180:raise ValueError('A signed bend rotation must be between 0 and 180 degrees.')
    e['angle']=angle;e['evidence']=[{'profile':'USER CONFIRMED','vertex':None,'angle':angle}];e['confirmed']=True
@@ -194,7 +197,7 @@ def run(config):
  report.update(flat_width=outer.bounds[2],flat_height=outer.bounds[3],flat_area=blank.area,bend_lines=len(lines),physical_bends=len(edges),faces=len(faces),source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),origin=origin.tolist())
  report['review_geometry']=geometry_payload(faces,edges,material)
  report['unresolved_bends']=map_review(edges,overrides.get('bend_angles',{}))
- report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
+ report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'source_angle':e.get('source_angle',None if any(v.get('profile')=='USER CONFIRMED' for v in e.get('evidence',[])) else e.get('angle')),'drawing_dimensions':e.get('drawing_dimensions',[]),'detected_angle':e.get('detected_angle'),'confirmed':e.get('confirmed',False)} for e in edges]
  (out/'extraction.svg').write_text(extract_svg(outer,blank,lines,doc,origin));shutil.copyfile(source,out/'flat.dxf')
  extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
  checkpoint('EXTRACTING','Rendered numbered bend axes and contour. Checking drawing parameters…')
@@ -222,6 +225,7 @@ def run(config):
   issue('SECTION_EVIDENCE',str(exc))
   if not preview_requested:return finish('NEEDS_REVIEW')
   profs=[]
+ report['angular_annotations']=annotate_profiles(doc,origin,profs,t)
  report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
  general=not profs or section_layer!='HAT' or any(not l['orthogonal'] for l in lines) or any(abs(g.unit(a)@g.unit(b))>math.sin(math.radians(.01)) for p in profs for a,b in zip(np.diff(p['points'],axis=0),np.diff(p['points'],axis=0)[1:]))
  report['review_geometry']=geometry_payload(faces,edges,material)
@@ -248,7 +252,7 @@ def run(config):
   for message in review_errors:issue('REVIEW_CONFLICT',message)
   report['section_mapping']=mapped
   report['unresolved_bends']=map_review(edges,overrides.get('bend_angles',{}))
-  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
+  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'source_angle':e.get('source_angle',None if any(v.get('profile')=='USER CONFIRMED' for v in e.get('evidence',[])) else e.get('angle')),'drawing_dimensions':e.get('drawing_dimensions',[]),'detected_angle':e.get('detected_angle'),'confirmed':e.get('confirmed',False)} for e in edges]
   if review_errors:return finish('NEEDS_REVIEW')
   report['bend_parameter_model']={'deduction_reference_angle_deg':90,'k_factor':k,'other_angles':'constant K derived from the 90-degree calibration'}
   unresolved=[m for m in mapped if m['status']!='PASS']
@@ -266,22 +270,19 @@ def run(config):
   issue('DEDUCTION',f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm.",field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
  if (evidence['value'] is None or deduction['value'] is None) and not overrides.get('confirm_parameters'):
   issue('EVIDENCE','Drawing does not establish thickness or deduction reliably. Confirm the panel parameters before conversion.');return finish('NEEDS_REVIEW')
+ dimension_conflicts=attach_hinge_dimensions(edges,profs)
  unknown=map_review(edges,overrides.get('bend_angles',{}))
+ if dimension_conflicts:
+  issue('ANGLE_EVIDENCE_CONFLICT','Angular dimensions disagree with section geometry. Inspect the drawing and explicitly resolve the affected signed rotations.')
  corners=continuation_candidates(faces,edges,order,t,r,bd)
  report['corner_angle_candidates']=corners
- pending={c['key']:c for c in corners if c['requires_confirmation']}
- if pending:
-  for e in edges:
-   if e['review_key'] in pending:
-    e['angle_candidates']=[c for c in corners if c['key']==e['review_key']]
-    e.pop('angle',None)
-  unknown=map_review(edges,overrides.get('bend_angles',{}))
-  for row in unknown:
-   if row['key'] in pending:row['reason']=pending[row['key']]['reason']
-  issue('CORNER_ANGLE_CONFLICT','Section angles and possible flange continuation disagree. Confirm the highlighted signed bend rotations before generating a folded solid.')
+ # A hypothetical coplanar continuation is not contradictory drawing evidence.
+ # Preserve measured angles and show the alternative without demanding re-entry.
+ if any(c['requires_confirmation'] for c in corners):
+  issue('CORNER_CONTINUATION_CHECK','Drawing angles are retained and the model can be inspected. An alternative adjoining-flange continuation exists; inspect the corner before accepting manufacturing output. No angle re-entry is required.')
  report['unresolved_bends']=unknown
  if not general:report['section_mapping']=[{'profile':p['name'],'cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping')} for p in profs]
- report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False)} for e in edges]
+ report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'source_angle':e.get('source_angle',None if any(v.get('profile')=='USER CONFIRMED' for v in e.get('evidence',[])) else e.get('angle')),'drawing_dimensions':e.get('drawing_dimensions',[]),'detected_angle':e.get('detected_angle'),'confirmed':e.get('confirmed',False)} for e in edges]
  if unknown:
   issue('DIRECTIONS',f'{len(unknown)} hinge directions need explicit review.');return finish('NEEDS_REVIEW')
  paint_points=[g.vec(p)-origin for e in doc.modelspace().query('LWPOLYLINE[layer=="צבע"]') for p in e.get_points()]
