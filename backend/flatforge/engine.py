@@ -154,6 +154,16 @@ def run(config):
  def finish(status):
   if status=='NEEDS_REVIEW' and edges and not (out/'viewer.json').exists():
    dump(out/'viewer.json',viewer_data(faces,material,edges,None,settings['thickness'],settings['radius'],settings['deduction']))
+  bends=report.get('bends',[])
+  report['angle_review']={
+   'policy':'drawing_first_explicit_fallback',
+   'evidence_checked':report.get('angle_evidence_checked',False),
+   'detected':sum(b['angle'] is not None and not any(v.get('profile')=='USER CONFIRMED' for v in b['source']) for b in bends),
+   'manual':sum(any(v.get('profile')=='USER CONFIRMED' for v in b['source']) for b in bends),
+   'unresolved':sum(b['angle'] is None for b in bends),
+   'fallback_magnitude_deg':90,
+   'fallback_requires_confirmation':True,
+   'message':'Use drawing angles where established. For each unresolved bend, explicitly approve 90 degrees or enter another angle and choose its direction. A displayed fallback is not an applied angle.'}
   report['status']=status;report['review_decisions']=overrides;dump(out/'report.json',report)
   artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
   dump(out/'result.json',{'status':status,'report':report,'artifacts':artifacts});return report
@@ -195,6 +205,7 @@ def run(config):
  report['geometry_normalization']=g.read_drawing.repairs
  report['contour_annotations']=g.read_drawing.annotations
  report.update(flat_width=outer.bounds[2],flat_height=outer.bounds[3],flat_area=blank.area,bend_lines=len(lines),physical_bends=len(edges),faces=len(faces),source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),origin=origin.tolist())
+ report['angular_annotations']=annotate_profiles(doc,origin,[],settings['thickness'])
  report['review_geometry']=geometry_payload(faces,edges,material)
  report['unresolved_bends']=map_review(edges,overrides.get('bend_angles',{}))
  report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'source_angle':e.get('source_angle',None if any(v.get('profile')=='USER CONFIRMED' for v in e.get('evidence',[])) else e.get('angle')),'drawing_dimensions':e.get('drawing_dimensions',[]),'detected_angle':e.get('detected_angle'),'confirmed':e.get('confirmed',False)} for e in edges]
@@ -202,6 +213,7 @@ def run(config):
  extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
  checkpoint('EXTRACTING','Rendered numbered bend axes and contour. Checking drawing parameters…')
  if missing:
+  report['angle_evidence_checked']=section_layer is None
   issue('LAYERS','Missing or empty required layers: '+', '.join(missing)+'. A folded model cannot be inferred without bend and section evidence; explicit rotations can create an unvalidated review model.')
   if not preview_requested or 'KIFOF' in missing:return finish('NEEDS_REVIEW')
  if unassigned:
@@ -220,6 +232,7 @@ def run(config):
   return finish('NEEDS_REVIEW')
  for e in edges:
   for field in ('angle','evidence','confirmed'):e.pop(field,None)
+ report['angle_evidence_checked']=True
  try:profs=g.profiles(doc,origin,t)
  except ValueError as exc:
   issue('SECTION_EVIDENCE',str(exc))

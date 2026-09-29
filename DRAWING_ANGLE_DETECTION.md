@@ -63,3 +63,24 @@ until rebuild. Known angles appear as “Detected from drawing”; UNKNOWN angle
 remain blank for signed input. Use “Save & rebuild panel” for normal processing.
 For unresolved validation with known angles, the explicit review-model action
 continues to provide an unvalidated inspection export.
+
+## Explicit fallback for missing angles (September 29 follow-up)
+
+Drawing Review now lists all detected angular annotations, their source handles,
+section associations and whether they were matched, conflicting or unassociated.
+For bends still unresolved after the evidence check, it offers a proposed 90°
+angle or a panel-only custom value. The operator chooses included angle versus
+rotation and explicitly approves a positive or negative rotation per hinge.
+No bulk sign is guessed. Populating the proposal does not alter the fold tree.
+The proposal never overrides a known drawing angle. Early material/parameter
+checks do not falsely present the fallback as completed angle detection.
+
+The backend reports detected/manual/unresolved counts and its explicit-fallback
+policy. Approval uses the existing revision-checked bend_angles API. Missing
+section validation remains missing even after a user supplies an angle; a review
+model is not promoted to validated manufacturing output by that choice alone.
+
+The newly circled screenshot confirms a 120° side-profile label and 60° labels at
+the flat-pattern cutouts. They are not interchangeable. The native PN_NM_144 file
+is still required to verify its exact dimension associations and reconstructed
+solid. This change does not claim that screenshot-only validation is possible.

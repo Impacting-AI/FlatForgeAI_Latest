@@ -3,6 +3,7 @@ import {useState} from 'react';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Panel} from './types';
+import {fallbackRotation} from './angle-choice';
 
 type Point=[number,number];
 export type GeometryEvidence={faces:{id:number;outer:Point[];polygons?:{outer:Point[];holes:Point[][]}[]}[];hinges:{key:string;bend_ids:string[];parent:number;child:number;axis:Point;points:Point[]}[]};
@@ -31,15 +32,30 @@ function Profile({points}:{points:Point[]}){
 
 export default function GeometryReview({panel,choices,onChoices,angles,onAngles,disabled,onBuild}:{panel:Panel;choices:Record<string,string>;onChoices:(v:Record<string,string>)=>void;angles:Record<string,number|null>;onAngles:(v:Record<string,number|null>)=>void;disabled:boolean;onBuild:()=>void}){
  const [selected,setSelected]=useState('');const [section,setSection]=useState('');
+ const [fallback,setFallback]=useState('90');
+ const [convention,setConvention]=useState<'included'|'rotation'>('included');
  const tolerance=panel.report.strip_tolerance_mm??.5;
  const catalog=panel.report.review_catalog??[];const geometry=panel.report.review_geometry;
  if(!geometry)return null;
  const current=catalog.find(s=>s.profile===section)??catalog[0];
  const proposal=current?.candidates.find(c=>c.id===choices[current.profile]);
  const proposedAngles=Object.fromEntries(catalog.flatMap(s=>s.candidates.find(c=>c.id===choices[s.profile])?.folds.map(f=>[f.key,f.angle])??[]));
+ const missing=(panel.report.bends??[]).filter(b=>b.angle==null&&proposedAngles[b.key]==null&&angles[b.key]==null);
+ const fallbackValid=Number.isFinite(Number(fallback))&&Number(fallback)>0&&Number(fallback)<180;
  const invalid=Object.values(angles).some(a=>a!==null&&(!Number.isFinite(a)||a===0||Math.abs(a)>=180));
  return <section className="review-decisions" aria-label="Geometry rule editor">
   <h2>Geometry & fold rules</h2><p>Select a section correspondence or edit a signed bend angle. Decisions apply only to this drawing revision. Selecting a chain does not waive dimensional checks.</p>
+  <p>{panel.report.angle_review?`${panel.report.angle_review.detected} drawing-derived · ${panel.report.angle_review.manual} manually confirmed · ${panel.report.angle_review.unresolved} unresolved.`:'Drawing geometry is checked before requesting manual values.'}</p>
+  {!!panel.report.angular_annotations?.length&&<details><summary>Angle annotations found in drawing ({panel.report.angular_annotations.length})</summary><table className="calculation-table"><thead><tr><th>Drawing value</th><th>Association</th><th>Result</th></tr></thead><tbody>{panel.report.angular_annotations.map((a,i)=><tr key={`${a.handle}-${i}`}><td>{a.value_deg??'Unreadable'}° · {a.handle}</td><td>{a.profile?`${a.profile} · vertex ${a.vertex}`:'Not linked to a bend'}<small> {a.reason}</small></td><td>{a.status}{a.rotation_magnitude_deg!=null?` · rotation magnitude ${number(a.rotation_magnitude_deg)}°`:''}</td></tr>)}</tbody></table><p>Flat-pattern cutting angles are not automatically fold angles. Each value must identify the correct section walls and hinge.</p></details>}
+  {missing.length>0&&panel.report.angle_review?.evidence_checked===false&&<p>Resolve the drawing parameter checks below first. Angle detection has not finished; do not enter default angles yet.</p>}
+  {missing.length>0&&panel.report.angle_review?.evidence_checked!==false&&<div className="issue-card" style={{display:'block'}} role="region" aria-label="Missing bend angle confirmation">
+   <h3>{missing.length} bends need an angle decision</h3><p>No reliable drawing angle is available for these bends, or its evidence conflicts. Continue with 90° or change the proposed value below. Nothing is applied until you choose a direction for each bend.</p>
+   <label>Proposed angle (this panel only)<Input aria-label="Proposed fallback angle" type="number" min={0.001} max={179.999} step="any" value={fallback} disabled={disabled} onChange={e=>setFallback(e.target.value)}/></label>
+   <label>Value means <select aria-label="Fallback angle convention" value={convention} disabled={disabled} onChange={e=>setConvention(e.target.value as 'included'|'rotation')}><option value="included">Included angle between faces</option><option value="rotation">Rotation from flat</option></select></label>
+   <p>Direction is about the displayed parent-local hinge axis. A positive sign does not universally mean up.</p>
+   {missing.map(b=><div key={b.key}><strong>{b.bend_ids.join('/')} · F{b.parent} → F{b.child}</strong><p>{panel.report.unresolved_bends?.find(u=>u.key===b.key)?.reason??'Choose the intended angle and direction.'}</p>{([1,-1] as const).map(sign=><Button key={sign} variant="outline" disabled={disabled||!fallbackValid} onClick={()=>onAngles({...angles,[b.key]:fallbackRotation(Number(fallback),convention,sign)})}>Approve {fallbackValid?`${sign>0?'+':'−'}${number(Math.abs(fallbackRotation(Number(fallback),convention,sign)))}`:'…'}° rotation</Button>)}</div>)}
+   <p>Then save and rebuild. These are explicit panel overrides, not drawing measurements; global defaults stay unchanged.</p>
+  </div>}
   <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))',gap:20,marginTop:16}}>
    <Drawing {...geometry} selected={selected} onSelect={setSelected} highlight={proposal?.faces}/>
    <div>{current?<>
@@ -60,7 +76,7 @@ export default function GeometryReview({panel,choices,onChoices,angles,onAngles,
   </tr>)}</tbody></table></div>
   <p>Angles are signed rotations from flat about the displayed parent-local hinge axis. Included angle = 180° − |rotation|; for example, a 120° included corner needs a 60° rotation, with direction established by the drawing. All unresolved hinges need a selected source chain or an explicit angle before a solid can be built.</p>
   {invalid&&<p role="alert">Use finite, non-zero angles between −180° and +180°.</p>}
-  <Button disabled={disabled||invalid} onClick={onBuild}>Save rules & build review model</Button>
+  <Button disabled={disabled||invalid||missing.length>0} onClick={onBuild}>Save rules & build review model</Button>
   <p>A review STEP remains labelled unvalidated until all required checks pass. Global settings are unchanged.</p>
  </section>
 }
