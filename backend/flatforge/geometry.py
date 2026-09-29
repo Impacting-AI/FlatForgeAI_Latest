@@ -18,6 +18,7 @@ from shapely.affinity import translate
 GRID=.001
 ENDPOINT_SNAP=.05
 ORTHOGONAL_TOL=1e-5
+ZERO_ENTITY_TOL=1e-9
 
 def section_layer(doc):
     """Explicit drawing conventions, never guess a layer from similar geometry."""
@@ -29,7 +30,7 @@ def section_layer(doc):
 
 def line_frame(a,b):
     """Canonical unit support: +Y for vertical lines, otherwise positive X."""
-    if np.linalg.norm(b-a)<GRID:raise ValueError('Zero-length bend or section line')
+    if np.linalg.norm(b-a)<=ZERO_ENTITY_TOL:raise ValueError('Coincident endpoints cannot define a line direction')
     u=unit(b-a)
     if abs(u[0])<ORTHOGONAL_TOL:u=np.array([0.,1.])
     elif abs(u[1])<ORTHOGONAL_TOL:u=np.array([1.,0.])
@@ -98,7 +99,12 @@ def read_drawing(filename):
     if not oblique:blank=set_precision(blank,GRID)
     lines=[]
     for i,e in enumerate(sorted(ms.query('LINE[layer=="KIFOF"]'),key=lambda e:int(e.dxf.handle,16)),1):
-        a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin;u=unit(b-a)
+        a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin
+        length=float(np.linalg.norm(b-a))
+        if length<=ZERO_ENTITY_TOL:
+            read_drawing.repairs.append({'kind':'zero_length_bend_entity_ignored','handle':e.dxf.handle,'layer':'KIFOF','length_mm':length,'reason':'Coincident endpoints do not define a physical hinge; no finite geometry was removed'})
+            continue
+        if length<GRID:raise ValueError(f'KIFOF entity {e.dxf.handle} has a nonzero length of {length:g} mm below the {GRID:g} mm modelling resolution; review this entity')
         u,n,offset=line_frame(a,b)
         dim=int(abs(u[1])>abs(u[0]));c=float((a[1-dim]+b[1-dim])/2)
         # Keep oblique supports precise; independent endpoint rounding rotates
@@ -135,7 +141,9 @@ def partition(outer,blank,lines,relief):
         # Snap-round only the arrangement topology, then recover its vertices
         # on the original analytic supports for exact BREP mating surfaces.
         boundary=list(outer.exterior.coords)
-        segments=[(np.array(a),np.array(b)) for a,b in zip(boundary,boundary[1:])]
+        # Duplicate closing/consecutive vertices are not support directions.
+        # Keep the polygon itself unchanged; only omit point-like support segments.
+        segments=[(np.array(a),np.array(b)) for a,b in zip(boundary,boundary[1:]) if np.linalg.norm(np.array(b)-a)>ZERO_ENTITY_TOL]
         segments += [(np.array(c.coords[0]),np.array(c.coords[-1])) for c in cutters]
         cache={}
         def recover(q):
@@ -180,9 +188,13 @@ def partition(outer,blank,lines,relief):
     return faces,edges,parent,order,[p.intersection(blank) for p in faces]
 
 def profiles(doc,origin,t):
+    if not hasattr(read_drawing,'repairs'):read_drawing.repairs=[]
     ls=[]
     for e in section_lines(doc):
         a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin
+        if np.linalg.norm(b-a)<=ZERO_ENTITY_TOL:
+            read_drawing.repairs.append({'kind':'zero_length_section_entity_ignored','handle':e.dxf.handle,'layer':e.dxf.layer,'reason':'Coincident endpoints do not define a wall direction'})
+            continue
         if np.linalg.norm(b-a)<t+0.01:continue # end caps, never bend skeletons
         u,n,c=line_frame(a,b);dim=int(abs(u[1])>abs(u[0]))
         ls.append(dict(a=a,b=b,dim=dim,u=u,normal=n,c=c,lo=min(a@u,b@u),hi=max(a@u,b@u),handle=e.dxf.handle))

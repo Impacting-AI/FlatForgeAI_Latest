@@ -35,6 +35,16 @@ export default function GeometryReview({panel}:{panel:Panel}){
   <p>Read-only inspection. Bend angles are detected from the drawing; use the single Bend angle field below when a value is missing.</p>
   <Drawing {...geometry} selected={selected} onSelect={setSelected}/>
   {current&&<><label>Source section <select aria-label="Source section" value={current.profile} onChange={e=>setSection(e.target.value)}>{catalog.map(s=><option key={s.profile}>{s.profile}</option>)}</select></label><Profile points={current.points}/><p>{current.status} · {current.reason}</p></>}
+  {panel.report.section_mapping?.filter(row=>row.status==='NEEDS_REVIEW').map(row=><section key={row.profile} aria-label={`${row.profile} segment diagnostics`}>
+   <h3>{row.profile}: section comparison</h3><p>{row.reason}</p>
+   {row.nearest_candidate&&<><p>{row.nearest_candidate.normal_to_all_hinges?'Normal section candidate':'Projected/non-normal candidate — these apparent turns cannot directly establish fold rotations.'}</p>
+    {row.nearest_candidate.turn_angles_deg&&<p>Measured profile turns: {row.nearest_candidate.turn_angles_deg.map(a=>`${a.toFixed(3)}°`).join(', ')}.</p>}
+    <div style={{overflowX:'auto'}}><table className="calculation-table"><thead><tr><th>Segment / face</th><th>Flat drawing (mm)</th><th>Required by section + bend parameters (mm)</th><th>Difference (mm)</th><th>Source handles</th></tr></thead><tbody>{row.nearest_candidate.segment_checks?.map(s=><tr key={s.segment}><td>{s.segment} / F{s.face}</td><td>{s.observed_flat_mm.toFixed(3)}</td><td>{s.required_flat_mm.toFixed(3)}</td><td style={{color:s.within_tolerance?undefined:'#b44318'}}>{s.residual_mm.toFixed(3)}</td><td>{s.source_handles.join(', ')}</td></tr>)}</tbody></table></div>
+    {row.nearest_normal_candidate&&<p>Closest normal-chain maximum difference: {row.nearest_normal_candidate.max_strip_error_mm.toFixed(3)} mm.</p>}
+    {row.nearest_projected_candidate&&<p>Closest projected-chain difference: {row.nearest_projected_candidate.max_strip_error_mm.toFixed(3)} mm. A smaller length error does not prove a valid fold interpretation.</p>}
+   </>}
+   <p>These comparisons are diagnostic. Changing the angle or increasing tolerance merely to remove the warning can change the manufactured panel.</p>
+  </section>)}
   {!!panel.report.angular_annotations?.length&&<table className="calculation-table"><thead><tr><th>Drawing angle</th><th>Source</th><th>Status</th></tr></thead><tbody>{panel.report.angular_annotations.map((a,i)=><tr key={`${a.handle}-${i}`}><td>{a.value_deg??'Unreadable'}°</td><td>{a.profile?`${a.profile} · vertex ${a.vertex}`:'Not linked to a bend'}</td><td>{a.status}</td></tr>)}</tbody></table>}
  </details>
 }

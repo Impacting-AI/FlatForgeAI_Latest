@@ -186,7 +186,9 @@ def run(config):
  missing=[l for l in ['CONTOR','KIFOF'] if not layers.get(l)]
  if section_layer is None:missing.append('HAT')
  if 'CONTOR' in missing:issue('LAYERS','Missing or empty required layer: CONTOR');return finish('NEEDS_REVIEW')
- d,origin,outer,blank,lines=g.read_drawing(source);faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
+ d,origin,outer,blank,lines=g.read_drawing(source)
+ if not lines and 'KIFOF' not in missing:missing.append('KIFOF')
+ faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
  used={l['handle'] for e in edges for l in e['source']}
  unassigned=[l['id'] for l in lines if l['handle'] not in used]
  # A narrowly bounded proposal, never automatic manufacturing approval:

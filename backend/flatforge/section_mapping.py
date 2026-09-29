@@ -59,7 +59,7 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
     reports=[]
     for number,p in enumerate(profiles,1):
         p['name']=f'SECTION_{number:02}'
-        candidates=[];nearest=None
+        candidates=[];nearest=None;nearest_normal=None;nearest_projected=None
         for reverse in (False,True):
             pts=p['points'][::-1] if reverse else p['points']
             segs=p['segments'][::-1] if reverse else p['segments']
@@ -103,6 +103,8 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
                         'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=tolerance)
                     } for i,(a,b) in enumerate(zip(actual,expected))]
                     if nearest is None or error<nearest['max_strip_error_mm']:nearest=record
+                    if normal_cut and (nearest_normal is None or error<nearest_normal['max_strip_error_mm']):nearest_normal=record
+                    if not normal_cut and (nearest_projected is None or error<nearest_projected['max_strip_error_mm']):nearest_projected=record
                     if not normal_cut or error>tolerance:continue
                     rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
                     signature=tuple(sorted((e['index'],round(a,3)) for e,a in zip(hinges,rotations)))
@@ -112,7 +114,8 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
         # Internal geometry arrays are never copied into the public report.
         p['_normal_candidates']=candidates
         row={'profile':p['name'],'section_layer':p.get('layer'),'paint_marker':p['paint_handle'],
-             'source_handles':[s['handles'] for s in p['segments']], 'candidate_chains':len(signatures),'nearest_candidate':nearest}
+             'source_handles':[s['handles'] for s in p['segments']], 'candidate_chains':len(signatures),'nearest_candidate':nearest,
+             'nearest_normal_candidate':nearest_normal,'nearest_projected_candidate':nearest_projected}
         if len(signatures)!=1:
             if signatures:
                 code='AMBIGUOUS_CHAIN'
