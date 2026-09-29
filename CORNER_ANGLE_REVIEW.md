@@ -48,13 +48,13 @@ Missing evidence retains the existing UNKNOWN/manual-angle path.
 
 ## Operator workflow
 
-1. Rebuild the drawing with the updated API and worker.
-2. Open **Drawing Review → Geometry & fold rules**.
-3. Inspect the highlighted hinge, interpreted profile angle, continuation
-   candidate and neighboring face. Use **Use …° rotation**, or type the intended
-   signed rotation in the override field.
-4. Resolve every UNKNOWN hinge, then **Save rules & build review model**.
-5. Inspect the model and validation report. Choices persist only for that panel.
+The current UI uses the single panel-angle field documented in
+DRAWING_ANGLE_DETECTION.md. Known drawing angles are retained; the old per-hinge
+candidate buttons and signed input rows have been removed. Corner alternatives
+remain report evidence, not automatically applied values. A source/reference
+conflict requires corrected drawing evidence; a global fallback must not overwrite
+known section angles. Legacy explicit review decisions remain available through
+the backward-compatible API.
 
 For 149, explicitly using both candidates produces one valid connected BREP and
 parallel adjoining flange normals. The unfolded-area check passes. However, the

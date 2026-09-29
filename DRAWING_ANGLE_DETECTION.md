@@ -1,55 +1,69 @@
-# Drawing angles before manual input
+# Single panel bend-angle field
 
-The September 29 change fixes two regressions: a hypothetical corner continuation
-could clear a measured section angle, and the editable input appeared blank even
-when the backend had a source angle. Known drawing rotations now populate the
-input automatically. They are not saved as manual overrides unless edited.
-“Use drawing” removes a saved override and rebuilds from source evidence.
+## Current interface (September 29 simplification)
 
-## Evidence order
+Drawing Review contains one **Bend angle (° · included angle)** field.
+The per-hinge inputs, signed approval buttons, angle-convention selector and
+corner-candidate action buttons have been removed. Geometry and bend-source
+details are collapsed, read-only inspections.
 
-1. Extract the painted section/profile and map its wall chain to physical hinges.
-2. Associate native two-line/three-point angular DIMENSION entities using their
-   extension-ray intersection and both adjacent section wall directions.
-3. Recognise exploded TEXT/MTEXT degree labels only when a unique same-layer ARC
-   supplies those same rays. Unicode degrees, %%d and DXF Unicode escapes work.
-4. If a dimension agrees with the geometric angle within 1°, use its stated
-   magnitude in the mapped signed rotation. The section's paint orientation and
-   hinge traversal supply the sign. Native dimensions without text overrides use
-   their geometric measurement. Provenance includes dimension handle and vertex.
-5. Without an applicable annotation, retain the measured section turn. With no
-   unambiguous section-to-hinge mapping or direction, leave UNKNOWN for manual
-   signed entry. Never assign 90° as a default.
-6. A conflicting label or multiple inconsistent labels remain review evidence.
-   Explicit overrides can build an unvalidated inspection model; the conflict
-   remains in the report. Unrelated contour/relief angles are not fold angles.
+- A single detected drawing angle populates the field automatically.
+- If the drawing contains different angles, the same field shows the detected
+  values read-only (for example, `90°, 120°`). They are not flattened into a
+  single angle, and the user does not need to enter values for each hinge.
+- When an angle is missing, the user enters one panel-only included angle and
+  uses **Save & rebuild panel**. A 120° included angle means 60° rotation from flat.
+- Drawing-derived magnitudes take priority over the manual fallback. The engine
+  keeps each fold's independently established direction. Complete eligible
+  normal-section candidates may establish a common direction even while the
+  angle magnitude remains unresolved. Ambiguous, truncated or partially covering
+  candidate sets cannot establish that direction.
+- If the drawing also lacks direction, or has conflicting evidence, one unsigned
+  angle cannot solve it. The panel remains NEEDS_REVIEW with a drawing-evidence
+  explanation; no guessed directions or hidden per-hinge controls are introduced.
+- **Use drawing angles** clears the panel fallback and prior individual manual
+  angle corrections on save. Entering a panel fallback also explicitly replaces
+  old individual corrections. The backend retains the legacy API for compatibility,
+  but the ordinary UI no longer sends individual angle edits.
 
-An included 120° dimension normally describes a 60° rotation from flat. The
-annotation's rays determine whether it measures the included or supplementary
-angle; the number alone does not. Both the detected signed rotation and original
-dimension are shown in Drawing Review.
+Bend deduction stays a separate material parameter in **mm**, calibrated at 90°.
+An angle in degrees and a deduction in millimetres cannot share one numeric value.
+Workspace defaults and source files are unchanged.
 
-A possible flange-continuation alternative no longer clears a section angle.
-It remains a corner inspection flag, so known reference discrepancies do not
-silently become validated manufacturing exports.
+## Drawing evidence
 
-## Coverage and limitations
+Native modelspace two-line/three-point angular DIMENSION entities are matched to
+section walls by extension-ray geometry. Exploded degree TEXT/MTEXT is used only
+with a uniquely associated same-layer arc and matching section walls. Unicode
+and CAD degree encodings are supported. A compatible numeric dimension supplies
+the magnitude; painted profile orientation and the mapped chain supply the sign.
+Without an applicable numeric annotation, measured profile geometry is retained.
+Unrelated flat-pattern cutting angles never automatically become fold rotations.
+Bare text, unexpanded block/layout dimensions and ambiguous associations remain
+limitations. The native PN_NM_144 file has not been supplied for panel-specific
+verification; screenshots alone cannot establish every hinge association.
 
-Native modelspace angular dimensions and geometrically linked exploded arc/text
-annotations are supported. Bare nearby degree text, ambiguous arcs, dimensions
-inside unexpanded blocks/layouts and screenshots alone do not establish a hinge
-mapping. They must not silently supply a bend. Profile pairing, paint evidence,
-strip tolerances and solid/unfold validation still apply.
+## API, persistence and validation
 
-The supplied PN_NM_144 screenshot shows a 120° profile angle and 60° contour
-annotations. The original DWG/DXF was not supplied in this turn, so its exact
-entity encoding and complete reconstruction have not been tested. No screenshot
-number or panel filename is encoded in production logic.
+`POST /panels/{id}/review` accepts `panel_bend_angle_deg`, a finite included angle
+strictly between 0 and 180, with `expected_revision`. Omission preserves the saved
+value; explicit null clears it. A request cannot combine the single-field edit
+with nonempty legacy `bend_angles`. Changes persist only on the panel and queue a
+new revision. No database migration or dependency change is required.
 
-## Local test deployment
+`panel_bend_angle` in the result reports detected values, mixed/missing status,
+manual fallback and unresolved count. Detected values are not silently converted
+into manual overrides by displaying or saving unrelated settings. A user-supplied
+magnitude does not waive section, thickness, unfolding or BREP checks.
 
-No dependencies, material defaults or database schemas changed. To test the PR
-branch in an existing git checkout (preserve any uncommitted local work first):
+Verification covers known-angle preservation, mixed-angle display, distinct
+parent-local directions, consensus/ambiguity handling, invalid values, actual
+STEP construction with a missing-magnitude fixture, API persistence/reset,
+legacy correction clearing, revision checks and unchanged workspace defaults.
+
+## Local test update
+
+Preserve any local uncommitted work, then update the PR branch:
 
 ```sh
 git fetch origin
@@ -58,29 +72,5 @@ git pull --ff-only origin feature/drawing-linked-geometry-review
 docker compose up -d --build frontend api worker
 ```
 
-Reload the website and rebuild an existing drawing. Old artifacts do not update
-until rebuild. Known angles appear as “Detected from drawing”; UNKNOWN angles
-remain blank for signed input. Use “Save & rebuild panel” for normal processing.
-For unresolved validation with known angles, the explicit review-model action
-continues to provide an unvalidated inspection export.
-
-## Explicit fallback for missing angles (September 29 follow-up)
-
-Drawing Review now lists all detected angular annotations, their source handles,
-section associations and whether they were matched, conflicting or unassociated.
-For bends still unresolved after the evidence check, it offers a proposed 90°
-angle or a panel-only custom value. The operator chooses included angle versus
-rotation and explicitly approves a positive or negative rotation per hinge.
-No bulk sign is guessed. Populating the proposal does not alter the fold tree.
-The proposal never overrides a known drawing angle. Early material/parameter
-checks do not falsely present the fallback as completed angle detection.
-
-The backend reports detected/manual/unresolved counts and its explicit-fallback
-policy. Approval uses the existing revision-checked bend_angles API. Missing
-section validation remains missing even after a user supplies an angle; a review
-model is not promoted to validated manufacturing output by that choice alone.
-
-The newly circled screenshot confirms a 120° side-profile label and 60° labels at
-the flat-pattern cutouts. They are not interchangeable. The native PN_NM_144 file
-is still required to verify its exact dimension associations and reconstructed
-solid. This change does not claim that screenshot-only validation is possible.
+Reload and rebuild existing drawings. Previously generated artifacts do not
+change until rebuilt. This branch has not been merged or deployed automatically.

@@ -8,6 +8,7 @@ from . import geometry as g
 from . import dwg
 from .detail_mapping import map_details, normal_instances, check_local_profiles
 from .review import prepare_review, geometry_payload
+from .panel_angle import apply_panel_angle, panel_angle_summary, recover_directions
 from .corner_review import continuation_candidates
 from .angle_evidence import annotate_profiles, attach_hinge_dimensions
 DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
@@ -144,7 +145,9 @@ def run(config):
  tolerance=float(overrides.get('strip_tolerance_mm',.5))
  if not math.isfinite(tolerance) or tolerance<=0:raise ValueError('Strip tolerance must be a finite positive value in mm')
  report['strip_tolerance_mm']=tolerance
- preview_requested=bool(overrides.get('build_review_model'));edges=None
+ panel_angle=overrides.get('panel_bend_angle_deg')
+ apply_panel_angle([],panel_angle) # validate direct engine callers too
+ preview_requested=bool(overrides.get('build_review_model') or panel_angle is not None);edges=None
  def checkpoint(phase,message):
   report['phase_message']=message
   print(message,flush=True)
@@ -155,15 +158,16 @@ def run(config):
   if status=='NEEDS_REVIEW' and edges and not (out/'viewer.json').exists():
    dump(out/'viewer.json',viewer_data(faces,material,edges,None,settings['thickness'],settings['radius'],settings['deduction']))
   bends=report.get('bends',[])
+  report['panel_bend_angle']=panel_angle_summary(bends,panel_angle)
   report['angle_review']={
    'policy':'drawing_first_explicit_fallback',
    'evidence_checked':report.get('angle_evidence_checked',False),
-   'detected':sum(b['angle'] is not None and not any(v.get('profile')=='USER CONFIRMED' for v in b['source']) for b in bends),
-   'manual':sum(any(v.get('profile')=='USER CONFIRMED' for v in b['source']) for b in bends),
+   'detected':sum(b['angle'] is not None and not any(v.get('profile') in ('USER CONFIRMED','PANEL ANGLE') for v in b['source']) for b in bends),
+   'manual':sum(any(v.get('profile') in ('USER CONFIRMED','PANEL ANGLE') for v in b['source']) for b in bends),
    'unresolved':sum(b['angle'] is None for b in bends),
    'fallback_magnitude_deg':90,
    'fallback_requires_confirmation':True,
-   'message':'Use drawing angles where established. For each unresolved bend, explicitly approve 90 degrees or enter another angle and choose its direction. A displayed fallback is not an applied angle.'}
+   'message':'Drawing angles take priority. One panel included-angle field fills missing magnitudes; missing direction or conflicting evidence stays under review.'}
   report['status']=status;report['review_decisions']=overrides;dump(out/'report.json',report)
   artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
   dump(out/'result.json',{'status':status,'report':report,'artifacts':artifacts});return report
@@ -284,6 +288,10 @@ def run(config):
  if (evidence['value'] is None or deduction['value'] is None) and not overrides.get('confirm_parameters'):
   issue('EVIDENCE','Drawing does not establish thickness or deduction reliably. Confirm the panel parameters before conversion.');return finish('NEEDS_REVIEW')
  dimension_conflicts=attach_hinge_dimensions(edges,profs)
+ recover_directions(edges,report.get('review_catalog',[]))
+ blocked_panel_angles=apply_panel_angle(edges,panel_angle)
+ if blocked_panel_angles:
+  issue('PANEL_ANGLE_DIRECTION','The panel angle is saved, but the drawing does not establish a reliable fold direction or has conflicting angle evidence. Correct the drawing evidence before rebuilding; no directions were guessed.')
  unknown=map_review(edges,overrides.get('bend_angles',{}))
  if dimension_conflicts:
   issue('ANGLE_EVIDENCE_CONFLICT','Angular dimensions disagree with section geometry. Inspect the drawing and explicitly resolve the affected signed rotations.')

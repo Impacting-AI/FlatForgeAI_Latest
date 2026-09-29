@@ -47,6 +47,7 @@ class ReviewInput(BaseModel):
  section_choices:dict[str,str]|None=None
  build_review_model:bool=False
  expected_revision:int|None=None
+ panel_bend_angle_deg:float|None=Field(default=None,gt=0,lt=180,allow_inf_nan=False)
  strip_tolerance_mm:float|None=Field(default=None,gt=0,allow_inf_nan=False)
  @field_validator('bend_angles')
  @classmethod
@@ -125,7 +126,7 @@ def review(id:str,body:ReviewInput):
   p=lock_panel(s,id)
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
   if body.expected_revision is not None and body.expected_revision!=p.revision:raise HTTPException(409,'Drawing revision changed. Refresh before saving decisions.')
-  if (body.section_choices is not None or body.build_review_model) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
+  if (body.section_choices is not None or body.build_review_model or 'panel_bend_angle_deg' in body.model_fields_set) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
   report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}
   if set(body.bend_angles)-allowed:raise HTTPException(422,'Unknown bend key in review decision')
   selections={r['profile']:{c['id'] for c in r['candidates']} for r in report.get('review_catalog',[])}
@@ -134,6 +135,11 @@ def review(id:str,body:ReviewInput):
   for key,value in body.bend_angles.items():
    if value is None:angles.pop(key,None)
    else:angles[key]=value
+  if 'panel_bend_angle_deg' in body.model_fields_set:
+   if body.bend_angles:raise HTTPException(422,'Use the panel angle or legacy individual corrections, not both.')
+   angles={} # Explicit switch to the single-field workflow clears old corrections.
+   if body.panel_bend_angle_deg is None:overrides.pop('panel_bend_angle_deg',None)
+   else:overrides['panel_bend_angle_deg']=body.panel_bend_angle_deg
   overrides['bend_angles']=angles
   if body.section_choices is not None:overrides['section_choices']=body.section_choices
   if body.strip_tolerance_mm is not None:overrides['strip_tolerance_mm']=body.strip_tolerance_mm

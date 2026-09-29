@@ -1,3 +1,7 @@
+# Current UI
+
+The per-hinge angle editor and section-selection controls described below are historical. The current UI uses one panel included-angle field and collapsed read-only geometry evidence. See DRAWING_ANGLE_DETECTION.md for the active workflow. Legacy backend review APIs remain compatible.
+
 # Drawing-linked geometry review
 
 FlatForge automatically reconstructs panels when the extracted contours, hinge
