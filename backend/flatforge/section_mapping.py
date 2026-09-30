@@ -8,6 +8,7 @@ import math
 import numpy as np
 from shapely.geometry import LineString
 from . import geometry as g
+from .evidence_constraints import solve_domains
 
 
 def minimax_station(start, end, expected):
@@ -59,7 +60,7 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
     reports=[]
     for number,p in enumerate(profiles,1):
         p['name']=f'SECTION_{number:02}'
-        candidates=[];nearest=None;nearest_normal=None;nearest_projected=None
+        candidates=[];nearest=None;nearest_normal=None;nearest_projected=None;observed_counts=set()
         for reverse in (False,True):
             pts=p['points'][::-1] if reverse else p['points']
             segs=p['segments'][::-1] if reverse else p['segments']
@@ -76,6 +77,8 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
                     if high-low<.02:continue
                     # Trace length varies affinely inside a vertex-free lane.
                     c=(low+high)/2;items=trace(faces,outer,direction,c)
+                    if items and all(frozenset((a[2],b[2])) in lookup for a,b in zip(items,items[1:])):
+                        observed_counts.add(len(items))
                     if len(items)!=len(lengths):continue
                     eps=min(.001,(high-low)/10)
                     ends=[trace(faces,outer,direction,x) for x in (low+eps,high-eps)]
@@ -107,7 +110,7 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
                     if not normal_cut and (nearest_projected is None or error<nearest_projected['max_strip_error_mm']):nearest_projected=record
                     if not normal_cut or error>tolerance:continue
                     rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
-                    signature=tuple(sorted((e['index'],round(a,3)) for e,a in zip(hinges,rotations)))
+                    signature=tuple(sorted((e['index'],round(a,8)) for e,a in zip(hinges,rotations)))
                     candidates.append(dict(signature=signature,width=high-low,c=c,trace=items,direction=direction,pts=pts,segs=segs,main=main,hinges=hinges,rotations=rotations,error=error))
         signatures={c['signature'] for c in candidates}
         # Keep full candidates for the repeated-detail convention resolver.
@@ -115,14 +118,15 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
         p['_normal_candidates']=candidates
         row={'profile':p['name'],'section_layer':p.get('layer'),'paint_marker':p['paint_handle'],
              'source_handles':[s['handles'] for s in p['segments']], 'candidate_chains':len(signatures),'nearest_candidate':nearest,
-             'nearest_normal_candidate':nearest_normal,'nearest_projected_candidate':nearest_projected}
+             'nearest_normal_candidate':nearest_normal,'nearest_projected_candidate':nearest_projected,
+             'required_segment_count':len(p['segments']),'observed_chain_segment_counts':sorted(observed_counts)}
         if len(signatures)!=1:
             if signatures:
                 code='AMBIGUOUS_CHAIN'
                 reason='More than one distinct hinge chain matches this profile; a section cut marker is required.'
             elif nearest is None:
                 code='NO_CHAIN'
-                reason='No contiguous face chain matches the profile segment count.'
+                reason=f"No contiguous face chain matches the profile's {len(p['segments'])} segments; observed chain counts: {sorted(observed_counts)}. Check whether this is a partial detail or a different edge configuration."
             elif not nearest['normal_to_all_hinges']:
                 code='NON_NORMAL_CHAIN'
                 reason='The closest chain crosses nonparallel hinges; its apparent section turns cannot be used as bend rotations.'
@@ -130,12 +134,41 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
                 code='STRIP_LENGTH_MISMATCH'
                 reason=f"Closest normal chain exceeds the {tolerance:g} mm strip tolerance (maximum {nearest['max_strip_error_mm']:.3f} mm). Check its segment diagnostics and bend parameters."
             row.update(status='NEEDS_REVIEW',reason_code=code,reason=reason)
-            reports.append(row);continue
+
+        reports.append(row)
+    # Candidate generation is complete before any profile can affect another.
+    # Enumerate only distinct signed hinge assignments; lane duplicates are not
+    # independent interpretations.
+    grouped=[]
+    for p in profiles:
+        groups={}
+        for c in p['_normal_candidates']:groups.setdefault(c['signature'],[]).append(c)
+        grouped.append([groups[k] for k in sorted(groups)])
+    domains=[[{e['index']:a for e,a in zip(group[0]['hinges'],group[0]['rotations'])} for group in groups] for groups in grouped]
+    supported,components=solve_domains(domains)
+    for number,(p,row,groups) in enumerate(zip(profiles,reports,grouped)):
+        component=next((c for c in components if number in c['profiles']),None)
+        if component:
+            row['constraint_resolution']={**component,'profiles':[profiles[i]['name'] for i in component['profiles']]}
+            if component['status'] in ('CONFLICT','SEARCH_LIMIT'):
+                row.update(status='NEEDS_REVIEW',reason_code='SECTION_CONFLICT' if component['status']=='CONFLICT' else 'SEARCH_LIMIT',
+                           reason='Section hypotheses conflict on shared hinges.' if component['status']=='CONFLICT' else 'Section constraint search limit reached; no unique interpretation was established.')
+                if component['status']=='CONFLICT':
+                    affected=set().union(*(set(c) for i in component['profiles'] for c in domains[i]))
+                    for edge in edges:
+                        if edge['index'] in affected:edge['evidence_conflict']=True;edge.pop('angle',None)
+                p['_normal_candidates']=[]
+                continue
+        survivors=[c for k in sorted(supported[number]) for c in groups[k]]
+        p['_normal_candidates']=survivors
+        row['supported_candidate_chains']=len(supported[number])
+        if len(supported[number])!=1:continue
+        candidates=survivors
         candidate=min(candidates,key=lambda c:(-c['width'],c['error'],c['c'],c['signature']))
         conflicts=[e['index'] for e,a in zip(candidate['hinges'],candidate['rotations']) if 'angle' in e and abs(e['angle']-a)>1]
         if conflicts:
             row.update(status='NEEDS_REVIEW',reason='Profile rotations conflict with another section.',conflicting_hinges=conflicts)
-            reports.append(row);continue
+            continue
         p.update(points=candidate['pts'],segments=candidate['segs'],main=candidate['main'],trace=candidate['trace'],
                  cut_direction=candidate['direction'],cut_coordinate=candidate['c'],
                  mapping='unique normal section matched by full chain dimensions and paint marker')
@@ -144,6 +177,6 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
             e.setdefault('evidence',[]).append({'profile':p['name'],'vertex':vertex,'angle':angle,
                 'handles_before':p['segments'][vertex-1]['handles'],'handles_after':p['segments'][vertex]['handles'],
                 'paint_marker':p['paint_handle'],'layer':p.get('layer')})
+        row.pop('reason_code',None);row.pop('reason',None)
         row.update(status='PASS',max_strip_error_mm=candidate['error'],cut_direction=candidate['direction'].tolist(),cut_coordinate=candidate['c'])
-        reports.append(row)
     return reports

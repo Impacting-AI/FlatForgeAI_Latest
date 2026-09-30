@@ -11,6 +11,7 @@ import math
 import numpy as np
 from . import geometry as g
 from .section_mapping import map_normal_sections
+from .evidence_constraints import propagate_source_axes
 
 
 def profile_values(p,t,r,bd):
@@ -121,7 +122,7 @@ def map_details(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
     reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance)
     pending=[]
     for p,row in zip(profiles,reports):
-        if row['status']=='PASS':continue
+        if row['status']=='PASS' or row.get('reason_code') in ('SECTION_CONFLICT','SEARCH_LIMIT'):continue
         repeated=repeated_candidates(p,edges)
         if repeated:
             instances=[]
@@ -153,6 +154,11 @@ def map_details(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
         row.update(status='PASS',method='corroborated_local_edge_profile',reason='Opposite painted profiles agree on the same hinge chain and rotations.',
                    matched_faces=c['chain'],max_strip_error_mm=c['error'],corroborating_profiles=[x[0]['name'] for x in peers])
         row.pop('reason_code',None)
+    conflicts=propagate_source_axes(faces,edges)
+    if conflicts:
+        for row in reports:
+            row.update(status='NEEDS_REVIEW',reason_code='SOURCE_AXIS_CONFLICT',
+                       reason='Sections disagree on a continuous source bend axis.',source_axis_conflicts=conflicts)
     return reports
 
 

@@ -22,18 +22,21 @@ def dump(path,obj):
   return x
  path.write_text(json.dumps(clean(obj),indent=2,allow_nan=False))
 def thickness_evidence(doc):
+ from .wall_pairing import parallel_pair, ends_supported
  lines=[]
  for e in g.section_lines(doc):
   a,b=g.vec(e.dxf.start),g.vec(e.dxf.end)
   if np.linalg.norm(b-a)<8:continue
-  u=g.unit(b-a);dim=int(abs(u[1])>abs(u[0]))
-  if min(abs(u))>1e-5:continue
-  lines.append((dim,(a[1-dim]+b[1-dim])/2,min(a[dim],b[dim]),max(a[dim],b[dim])))
+  u,n,c=g.line_frame(a,b)
+  lines.append({'a':a,'b':b,'u':u,'normal':n,'c':c})
  votes=collections.Counter()
- for i,(d,c,a,b) in enumerate(lines):
-  for dd,cc,aa,bb in lines[i+1:]:
-   dist=abs(c-cc)
-   if dd==d and .5<=dist<=10 and min(b,bb)-max(a,aa)>5 and abs(a-aa)<=dist+.1 and abs(b-bb)<=dist+.1:votes[round(dist,2)]+=1
+ for i,l in enumerate(lines):
+  for m in lines[i+1:]:
+   pair=parallel_pair(l,m)
+   if pair is None:continue
+   a,b=pair['rows'];dist=pair['wall_spacing_mm']
+   if .5<=dist<=10 and min(a['hi'],b['hi'])-max(a['lo'],b['lo'])>5 and ends_supported(pair,lines,dist):
+    votes[round(dist,2)]+=1
  if not votes:return {'value':None,'confidence':'unknown','reason':'No repeated paired section-wall spacing.'}
  best=votes.most_common();v,count=best[0]
  if count<3 or (len(best)>1 and best[1][1]>=count*.8):return {'value':None,'confidence':'unknown','candidates':dict(votes)}
@@ -245,7 +248,7 @@ def run(config):
   if not preview_requested:return finish('NEEDS_REVIEW')
   profs=[]
  report['angular_annotations']=annotate_profiles(doc,origin,profs,t)
- report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
+ report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'spacing_range_mm':s.get('spacing_range_mm'),'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
  general=not profs or section_layer!='HAT' or any(not l['orthogonal'] for l in lines) or any(abs(g.unit(a)@g.unit(b))>math.sin(math.radians(.01)) for p in profs for a,b in zip(np.diff(p['points'],axis=0),np.diff(p['points'],axis=0)[1:]))
  report['review_geometry']=geometry_payload(faces,edges,material)
  if not general:
@@ -358,6 +361,7 @@ if __name__=='__main__':
   report=json.loads((out/'report.json').read_text()) if (out/'report.json').exists() else {}
 
   if report.get('conversion',{}).get('status')=='RUNNING':report['conversion']['status']='FAILED'
+  if hasattr(e,'diagnostics'):report['geometry_diagnostic']=e.diagnostics
   report.update(status='FAILED',error=message);report.setdefault('issues',[]).append({'code':'GEOMETRY','message':message});dump(out/'report.json',report)
   dump(out/'result.json',{'status':'FAILED','report':report,'artifacts':{p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}})
   traceback.print_exc();sys.exit(1)

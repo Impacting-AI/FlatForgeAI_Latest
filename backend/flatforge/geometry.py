@@ -20,6 +20,13 @@ ENDPOINT_SNAP=.05
 ORTHOGONAL_TOL=1e-5
 ZERO_ENTITY_TOL=1e-9
 
+class GeometryEvidenceError(ValueError):
+    """Geometric rejection with source-space evidence for review and audits."""
+    def __init__(self,message,diagnostics):
+        super().__init__(message)
+        self.diagnostics=diagnostics
+
+
 def section_layer(doc):
     """Explicit drawing conventions, never guess a layer from similar geometry."""
     populated={e.dxf.layer for e in doc.modelspace() if e.dxftype() in ('LINE','LWPOLYLINE','POLYLINE')}
@@ -157,7 +164,14 @@ def partition(outer,blank,lines,relief):
             if pairs and max(pairs)[0]>1e-5:
                 _,i,j=max(pairs);a,b=near[i],near[j]
                 restored=np.linalg.solve(np.array([a[1],b[1]]),[a[2],b[2]])
-                if np.linalg.norm(restored-q)>.004:raise ValueError('Analytic hinge-junction recovery exceeds the topology tolerance')
+                if np.linalg.norm(restored-q)>.004:
+                    distance=float(np.linalg.norm(restored-q))
+                    raise GeometryEvidenceError(
+                        f'Analytic hinge-junction recovery requires a {distance:.6f} mm move, exceeding the 0.004 mm topology limit; inspect the intersecting boundary and bend supports.',
+                        {'stage':'face_topology','code':'ILL_CONDITIONED_JUNCTION','coordinate_mm':q.tolist(),
+                         'proposed_coordinate_mm':restored.tolist(),'proposed_move_mm':distance,'limit_mm':.004,
+                         'support_cross_product':float(abs(cross(a[0],b[0]))),
+                         'nearby_bend_handles':[l['handle'] for l in lines if LineString([l['a']-relief*unit(l['b']-l['a']),l['b']+relief*unit(l['b']-l['a'])]).distance(Point(q))<=.002]})
                 q=restored
             elif near:q=q-near[0][1]*(q@near[0][1]-near[0][2])
             cache[key]=tuple(q);return cache[key]
@@ -198,29 +212,23 @@ def profiles(doc,origin,t):
         if np.linalg.norm(b-a)<t+0.01:continue # end caps, never bend skeletons
         u,n,c=line_frame(a,b);dim=int(abs(u[1])>abs(u[0]))
         ls.append(dict(a=a,b=b,dim=dim,u=u,normal=n,c=c,lo=min(a@u,b@u),hi=max(a@u,b@u),handle=e.dxf.handle))
-    def paired_end(l,m,end):
-        if abs(l[end]-m[end])<=t+.05:return True
-        # Wide-angle miter endpoints separate by t*tan(turn/2), not at most t.
-        # Accept that separation only when adjoining physical wall segments
-        # meet these endpoints and themselves form a thickness-spaced pair.
-        a=l['normal']*l['c']+l['u']*l[end]
-        b=m['normal']*m['c']+m['u']*m[end]
-        left=[v for v in ls if abs(cross(l['u'],v['u']))>1e-4 and min(np.linalg.norm(a-v[q]) for q in ('a','b'))<=.05]
-        right=[v for v in ls if abs(cross(m['u'],v['u']))>1e-4 and min(np.linalg.norm(b-v[q]) for q in ('a','b'))<=.05]
-        return any(abs(cross(v['u'],w['u']))<1e-4 and abs(abs(v['c']-w['c'])-t)<.05 for v in left for w in right)
-    paired=set();sk=[]
+    from .wall_pairing import parallel_pair, ends_supported
+    candidates=collections.defaultdict(list);pairs={}
     for i,l in enumerate(ls):
-        if i in paired:continue
-        choices=[]
-        for j,m in enumerate(ls):
-            if i==j or j in paired or abs(cross(l['u'],m['u']))>1e-4:continue
-            overlap=min(l['hi'],m['hi'])-max(l['lo'],m['lo'])
-            if abs(abs(l['c']-m['c'])-t)<.05 and overlap>0 and paired_end(l,m,'lo') and paired_end(l,m,'hi'):
-                choices.append(j)
-        if len(choices)!=1:raise ValueError(f'HAT pair ambiguity at {l["handle"]}: {len(choices)} matches')
-        j=choices[0];m=ls[j];paired.update([i,j]);dim=l['dim'];c=(l['c']+m['c'])/2
-        a=l['normal']*c+l['u']*(l['lo']+m['lo'])/2;b=l['normal']*c+l['u']*(l['hi']+m['hi'])/2
-        sk.append(dict(a=a,b=b,dim=dim,c=c,u=l['u'],normal=l['normal'],handles=[l['handle'],m['handle']],wall_spacing_mm=abs(l['c']-m['c']),parallel_error_deg=math.degrees(math.asin(abs(cross(l['u'],m['u']))))))
+        for j in range(i+1,len(ls)):
+            pair=parallel_pair(l,ls[j],t)
+            if pair is not None and ends_supported(pair,ls,t):
+                candidates[i].append(j);candidates[j].append(i);pairs[i,j]=pair
+    # Mutual uniqueness is established before consuming a wall. Entity order
+    # cannot turn an ambiguous graph into an apparently unique pairing.
+    for i,l in enumerate(ls):
+        if len(candidates[i])!=1:raise ValueError(f'HAT pair ambiguity at {l["handle"]}: {len(candidates[i])} matches')
+    sk=[]
+    for (i,j),pair in pairs.items():
+        sk.append(dict(a=pair['a'],b=pair['b'],dim=int(abs(pair['u'][1])>abs(pair['u'][0])),
+                       c=pair['c'],u=pair['u'],normal=pair['normal'],handles=[ls[i]['handle'],ls[j]['handle']],
+                       wall_spacing_mm=pair['wall_spacing_mm'],spacing_range_mm=pair['spacing_range_mm'],
+                       parallel_error_deg=pair['parallel_error_deg']))
     links=collections.defaultdict(list);joints={};repairs=[]
     for i,l in enumerate(sk):
         for j,m in enumerate(sk[i+1:],i+1):
@@ -359,16 +367,8 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,tolerance=.5):
             e['angle']=angle;e.setdefault('evidence',[]).append(ev)
             checks.append(ev)
         results.append(dict(profile=p['name'],cut_axis='Y' if dim==0 else 'X',cut_coordinate=c,mapping=mapping,segments=len(trace),turns=len(trace)-1,max_strip_error=err,paint_marker=p['paint_handle']))
-    # A single documented DXF LINE can hinge several disconnected flange tabs.
-    # Carry its section-derived sign only to other portions of that same entity.
-    for e in edges:
-        if 'angle' in e:continue
-        handles={l['handle'] for l in e['source']}
-        matches=[v for v in edges if 'angle' in v and handles.intersection(l['handle'] for l in v['source'])]
-        signs={round(v['angle'],6) for v in matches}
-        if len(signs)==1:
-            e['angle']=signs.pop()
-            e['evidence']=[dict(ev,correspondence='same original KIFOF LINE, separated flange tab') for v in matches for ev in v['evidence']]
+    from .evidence_constraints import propagate_source_axes
+    propagate_source_axes(faces,edges)
     if any('angle' not in e for e in edges):raise ValueError('Unmapped hinge; no default direction is allowed')
     return results
 

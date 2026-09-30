@@ -11,18 +11,19 @@ from flatforge import geometry as g
 from flatforge.engine import run
 
 
-def channel(path, angle=90., plan=37., layer='חיפוי', mirrored=False):
+def channel(path, angle=90., plan=37., layer='חיפוי', mirrored=False, main_width=200., left=30., right=35., height=80.):
     doc=ezdxf.new('R2010');doc.units=4
     for name in ('CONTOR','KIFOF',layer):doc.layers.new(name)
     ms=doc.modelspace();phi=math.radians(plan)
     rot=np.array([[math.cos(phi),-math.sin(phi)],[math.sin(phi),math.cos(phi)]])
     def point(x,y):return tuple(rot@np.array([x,y]))
-    ms.add_lwpolyline([point(0,0),point(265,0),point(265,80),point(0,80)],close=True,dxfattribs={'layer':'CONTOR'})
-    for x in (30,230):ms.add_line(point(x,0),point(x,80),dxfattribs={'layer':'KIFOF'})
+    width=left+main_width+right
+    ms.add_lwpolyline([point(0,0),point(width,0),point(width,height),point(0,height)],close=True,dxfattribs={'layer':'CONTOR'})
+    for x in (left,left+main_width):ms.add_line(point(x,0),point(x,height),dxfattribs={'layer':'KIFOF'})
     # An annotation on the cutting layer must not turn into a hole or error.
-    ms.add_linear_dim(base=point(0,-20),p1=point(0,0),p2=point(265,0),dxfattribs={'layer':'CONTOR'})
+    ms.add_linear_dim(base=point(0,-20),p1=point(0,0),p2=point(width,0),dxfattribs={'layer':'CONTOR'})
     gain=3*math.tan(math.radians(angle)/2)-4*(angle/90)/2
-    lengths=[30+gain,200+gain+1,36]
+    lengths=[left+gain,main_width+gain+1,right+1]
     p1=np.array([1000.,1000.]);p2=p1+[lengths[1],0]
     pts=np.array([p1+lengths[0]*np.array([-math.cos(math.radians(angle)),math.sin(math.radians(angle))]),p1,p2,p2+[0,lengths[2]]])
     vectors=np.diff(pts,axis=0);vectors/=np.linalg.norm(vectors,axis=1)[:,None]
