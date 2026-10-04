@@ -144,9 +144,8 @@ def review(id:str,body:ReviewInput):
   if body.section_choices is not None:overrides['section_choices']=body.section_choices
   if body.strip_tolerance_mm is not None:overrides['strip_tolerance_mm']=body.strip_tolerance_mm
   overrides['build_review_model']=body.build_review_model
-  if body.confirm_parameters:overrides['confirm_parameters']=True
-  if body.accept_partial_sections:overrides['accept_partial_sections']=True
-  if body.accept_relief_extensions:overrides['accept_relief_extensions']=True
+  for field in ('confirm_parameters','accept_partial_sections','accept_relief_extensions'):
+   if field in body.model_fields_set:overrides[field]=getattr(body,field)
   if body.settings:p.settings=json.dumps(body.settings.model_dump())
   p.overrides=json.dumps(overrides);p.revision+=1;p.status='QUEUED';p.error='';p.updated=time.time();p.artifacts='{}'
   s.add(Job(panel_id=p.id,revision=p.revision,log='Panel-only review decisions recorded. Queued for reconstruction.\n'))
@@ -178,6 +177,32 @@ def export_project(id:str,background_tasks:BackgroundTasks):
       local=td/(p.id+'_'+name);store.get(key,local);z.write(local,f'{Path(p.filename).stem}_{p.id[:8]}/{name}');local.unlink()
   background_tasks.add_task(shutil.rmtree,td,True)
   return FileResponse(archive,filename='FlatForge_project.zip',media_type='application/zip',background=background_tasks)
+ except Exception:shutil.rmtree(td,ignore_errors=True);raise
+
+
+@app.get('/panels/{id}/diagnostics',dependencies=[Depends(auth)])
+def panel_diagnostics(id:str,background_tasks:BackgroundTasks):
+ """Private, revision-labelled report bundle; no original drawing or secrets."""
+ td=Path(tempfile.mkdtemp(prefix='ff-diagnostics-'));archive=td/'diagnostics.zip'
+ try:
+  with Session() as s:
+   p=get_panel(s,id)
+   jobs=list(s.scalars(select(Job).where(Job.panel_id==id,Job.revision==p.revision).order_by(Job.created)))
+   payload={'panel_id':p.id,'filename':p.filename,'revision':p.revision,
+    'status':p.status,'error':p.error,
+    'report_may_be_from_previous_revision':p.status in ('QUEUED','CONVERTING','EXTRACTING','BUILDING'),
+    'settings':json.loads(p.settings),
+    'decisions':json.loads(p.overrides),'report':json.loads(p.report),
+    'jobs':[{'status':j.status,'revision':j.revision,'log':j.log} for j in jobs]}
+   artifacts=json.loads(p.artifacts)
+   with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
+    z.writestr('diagnostics.json',json.dumps(payload,indent=2,ensure_ascii=False))
+    z.writestr('README.txt','Private drawing diagnostics. Contains geometry and job logs. Share only with authorized support. Original CAD files and application credentials are not included. Supply the matching source drawing separately when requesting geometry investigation.\n')
+    for name in ('extraction.svg','fold_table.csv','section_checks.csv','section_segment_checks.csv','local_profile_checks.json'):
+     if name in artifacts:
+      target=td/name;store.get(artifacts[name],target);z.write(target,name)
+  background_tasks.add_task(shutil.rmtree,td,True)
+  return FileResponse(archive,filename=f'FlatForge_diagnostics_r{payload["revision"]}.zip',media_type='application/zip',background=background_tasks)
  except Exception:shutil.rmtree(td,ignore_errors=True);raise
 
 

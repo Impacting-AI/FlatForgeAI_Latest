@@ -11,6 +11,39 @@ from flatforge import worker
 from flatforge.db import Session,Panel,Job
 ROOT=Path(__file__).resolve().parents[2]
 SOURCE=ROOT/'public/samples/1648/flat.dxf'
+
+def test_review_decisions_are_reversible_and_diagnostics_are_private():
+ from flatforge.db import Project
+ with TestClient(app) as c:
+  c.headers['X-Flatforge-Key']=os.environ['FLATFORGE_API_KEY']
+  with Session.begin() as s:
+   project=Project(name='Review controls');s.add(project);s.flush()
+   panel=Panel(project_id=project.id,filename='source.dxf',source_key='not-in-bundle',status='NEEDS_REVIEW',
+    settings=json.dumps({'thickness':2,'radius':2,'deduction':4,'input_type':'flat_pattern'}),
+    overrides=json.dumps({'confirm_parameters':True,'accept_partial_sections':True,'accept_relief_extensions':True}),
+    report=json.dumps({'source_sha256':'test-source-digest','issues':[{'code':'PARTIAL_SECTION','message':'Review scope'}]}))
+   s.add(panel);s.flush();pid=panel.id
+   s.add(Job(panel_id=pid,revision=1,status='DONE',log='section evidence recorded'))
+  url='/panels/'+pid
+  response=c.get(url+'/diagnostics');assert response.status_code==200
+  archive=zipfile.ZipFile(io.BytesIO(response.content))
+  payload=json.loads(archive.read('diagnostics.json'))
+  assert payload['revision']==1 and payload['report']['source_sha256']=='test-source-digest'
+  assert payload['jobs'][0]['log']=='section evidence recorded'
+  assert not any(name.endswith(('.dxf','.dwg')) for name in archive.namelist())
+  assert os.environ['FLATFORGE_API_KEY'].encode() not in archive.read('diagnostics.json')
+  assert c.post(url+'/review',json={'expected_revision':0,'accept_partial_sections':False}).status_code==409
+  response=c.post(url+'/review',json={'expected_revision':1,'accept_partial_sections':False,
+    'accept_relief_extensions':False,'confirm_parameters':False,'build_review_model':True})
+  assert response.status_code==202
+  values=response.json()['overrides']
+  assert not any(values[k] for k in ('accept_partial_sections','accept_relief_extensions','confirm_parameters'))
+  assert values['build_review_model']
+  # Clean up this queued synthetic job so other worker integration tests do not claim it.
+  with Session.begin() as s:
+   for job in s.query(Job).filter_by(panel_id=pid):job.status='DONE'
+  c.headers.clear();assert c.get(url+'/diagnostics').status_code==401
+
 def test_upload_review_worker_exports_and_persistence():
  with TestClient(app) as c:
   assert c.get('/bootstrap').status_code==401

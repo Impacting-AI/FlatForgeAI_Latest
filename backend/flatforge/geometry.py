@@ -72,8 +72,12 @@ def section_lines(doc):
 def vec(p):return np.array(tuple(p)[:2],dtype=float)
 def cross(a,b):return float(a[0]*b[1]-a[1]*b[0])
 def unit(a):return a/np.linalg.norm(a)
-def read_drawing(filename):
-    doc=ezdxf.readfile(filename);ms=doc.modelspace()
+def read_drawing(filename, doc=None):
+    from .drawing_normalization import normalize
+    if doc is None:
+        doc=ezdxf.readfile(filename)
+        normalize(doc)
+    ms=doc.modelspace()
     read_drawing.repairs=[]
     read_drawing.annotations=[]
     oblique=any(min(abs(unit(vec(e.dxf.end)-vec(e.dxf.start))))>ORTHOGONAL_TOL for e in ms.query('LINE[layer=="KIFOF"]') if np.linalg.norm(vec(e.dxf.end)-vec(e.dxf.start))>GRID)

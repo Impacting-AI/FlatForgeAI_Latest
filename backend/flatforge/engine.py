@@ -148,6 +148,11 @@ def run(config):
  tolerance=float(overrides.get('strip_tolerance_mm',.5))
  if not math.isfinite(tolerance) or tolerance<=0:raise ValueError('Strip tolerance must be a finite positive value in mm')
  report['strip_tolerance_mm']=tolerance
+ report['original_source_sha256']=hashlib.sha256(source.read_bytes()).hexdigest()
+ code_digest=hashlib.sha256()
+ for code_file in sorted(Path(__file__).parent.glob('*.py')):
+  code_digest.update(code_file.name.encode());code_digest.update(code_file.read_bytes())
+ report['engine_fingerprint']=code_digest.hexdigest()
  panel_angle=overrides.get('panel_bend_angle_deg')
  apply_panel_angle([],panel_angle) # validate direct engine callers too
  preview_requested=bool(overrides.get('build_review_model') or panel_angle is not None);edges=None
@@ -171,7 +176,14 @@ def run(config):
    'fallback_magnitude_deg':90,
    'fallback_requires_confirmation':True,
    'message':'Drawing angles take priority. One panel included-angle field fills missing magnitudes; missing direction or conflicting evidence stays under review.'}
-  report['status']=status;report['review_decisions']=overrides;dump(out/'report.json',report)
+  report['status']=status;report['review_decisions']=overrides
+  report['validation_policy']={'strip_tolerance_mm':tolerance,'default_strip_tolerance_mm':.5,
+   'partial_sections_accepted':bool(overrides.get('accept_partial_sections')),
+   'relief_extensions_accepted':bool(overrides.get('accept_relief_extensions')),
+   'review_model_requested':preview_requested,
+   'manufacturing_ready':status=='PASS',
+   'limitations':['Checks validate the supplied drawing and selected parameters; PASS does not prove equivalence to a client reference STEP.']}
+  dump(out/'report.json',report)
   artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
   dump(out/'result.json',{'status':status,'report':report,'artifacts':artifacts});return report
  report['conversion']={'input_format':source.suffix.lower()[1:],'status':'RUNNING' if source.suffix.lower()=='.dwg' else 'NOT_REQUIRED','engine':'ODA' if source.suffix.lower()=='.dwg' else 'Native DXF'}
@@ -182,14 +194,18 @@ def run(config):
   except dwg.ConverterUnavailable as e:report['conversion']['status']='UNAVAILABLE';issue('DWG_CONVERTER',str(e));return finish('NEEDS_REVIEW')
  shutil.copyfile(source,out/'flat.dxf')
  checkpoint('EXTRACTING','DXF ready. Reading contour, bends and section evidence…')
- doc=ezdxf.readfile(source);layers={l.dxf.name:sum(1 for e in doc.modelspace() if e.dxf.layer==l.dxf.name) for l in doc.layers};report['layers']=layers
+ doc=ezdxf.readfile(source)
+ if len(doc.modelspace())>100000:raise ValueError('Drawing exceeds the 100,000-entity processing limit.')
+ from .drawing_normalization import normalize
+ report['entity_normalization']=normalize(doc)
+ layers={l.dxf.name:sum(1 for e in doc.modelspace() if e.dxf.layer==l.dxf.name) for l in doc.layers};report['layers']=layers
  if len(doc.modelspace())>100000:raise ValueError('Drawing exceeds the 100,000-entity processing limit.')
  section_layer=g.section_layer(doc)
  report['section_convention']={'layer':section_layer,'canonical_role':'HAT','alias_used':section_layer not in (None,'HAT')}
  missing=[l for l in ['CONTOR','KIFOF'] if not layers.get(l)]
  if section_layer is None:missing.append('HAT')
  if 'CONTOR' in missing:issue('LAYERS','Missing or empty required layer: CONTOR');return finish('NEEDS_REVIEW')
- d,origin,outer,blank,lines=g.read_drawing(source)
+ d,origin,outer,blank,lines=g.read_drawing(source,doc)
  if not lines and 'KIFOF' not in missing:missing.append('KIFOF')
  faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
  used={l['handle'] for e in edges for l in e['source']}
@@ -334,7 +350,7 @@ def run(config):
  report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=k,allowance=ba,corner_contacts=g.partition.contacts)
  if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or unfolding tolerances failed. Inspect validation results.')
  for c in checks:
-  if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and not local_checks and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
+  if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and c.get('validation_scope')!='local_edge_profile' and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
  if extensions and not overrides.get('accept_relief_extensions'):
   issue('RELIEF_EXTENSION','Draft reconstruction extends '+', '.join(f"{e['bend_id']} across a {max(e['endpoint_gaps_mm']):g} mm endpoint gap" for e in extensions)+'. This exceeds the standard 3 mm rule. Inspect the drawing and explicitly approve these endpoint extensions before final export.')
  dump(out/'viewer.json',viewer_data(faces,trimmed,edges,tf,t,r,bd));paint_glb(solid,tf,edges,t,r,out/'panel.glb')

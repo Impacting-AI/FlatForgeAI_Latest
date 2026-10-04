@@ -4,7 +4,7 @@ import json
 import numpy as np
 from . import geometry as g
 from .detail_mapping import local_candidates
-from .section_mapping import trace
+from .section_mapping import trace, connected_traces
 
 
 def bend_key(e):
@@ -35,7 +35,10 @@ def prepare_review(faces,outer,edges,profiles,rows,t,r,bd,choices,tolerance=.5):
             # matcher; only use nearest diagnostics for unresolved profiles.
             if row['status']!='PASS':
                 direction=np.array(nearest['cut_direction']);coordinate=nearest['cut_coordinate']
-                items=trace(faces,outer,direction,coordinate);hinges=[lookup[i] for i in nearest['hinges']]
+                items=next((group for group in connected_traces(trace(faces,outer,direction,coordinate),{})
+                            if [x[2] for x in group]==nearest['faces']),[])
+                if not items:raise ValueError('Section review trace no longer matches its recorded face chain')
+                hinges=[lookup[i] for i in nearest['hinges']]
                 angles=[float(a*np.sign(g.cross(g.support(e)[0],direction))*(1 if e['parent']==left[2] else -1))
                         for a,e,left in zip(nearest['turn_angles_deg'],hinges,items)]
                 candidates.append(dict(kind='normal_section',chain=nearest['faces'],hinges=hinges,angles=angles,

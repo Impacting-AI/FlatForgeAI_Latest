@@ -46,6 +46,16 @@ def trace(faces, outer, direction, coordinate):
     return sorted(items)
 
 
+def connected_traces(items, lookup):
+    """Separate disjoint material intervals; never truncate a connected chain."""
+    groups=[]
+    for item in items:
+        if not groups or abs(groups[-1][-1][1]-item[0])>1e-6:
+            groups.append([])
+        groups[-1].append(item)
+    return groups
+
+
 def directions(edges):
     result=[]
     for e in edges:
@@ -76,42 +86,49 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
                 for low,high in zip(stations,stations[1:]):
                     if high-low<.02:continue
                     # Trace length varies affinely inside a vertex-free lane.
-                    c=(low+high)/2;items=trace(faces,outer,direction,c)
-                    if items and all(frozenset((a[2],b[2])) in lookup for a,b in zip(items,items[1:])):
+                    mid=(low+high)/2
+                    groups=connected_traces(trace(faces,outer,direction,mid),lookup)
+                    for group_index,items in enumerate(groups):
+                        c=mid
                         observed_counts.add(len(items))
-                    if len(items)!=len(lengths):continue
-                    eps=min(.001,(high-low)/10)
-                    ends=[trace(faces,outer,direction,x) for x in (low+eps,high-eps)]
-                    ids=[x[2] for x in items]
-                    if all([x[2] for x in rows]==ids for rows in ends):
-                        start=np.array([b-a for a,b,_ in ends[0]]);end=np.array([b-a for a,b,_ in ends[1]])
-                        slope=end-start
-                        if slope@slope>1e-12:
-                            ratio=minimax_station(start,end,expected)
-                            c=low+eps+ratio*(high-low-2*eps);items=trace(faces,outer,direction,c)
-                    hinges=[lookup.get(frozenset((a[2],b[2]))) for a,b in zip(items,items[1:])]
-                    if any(e is None for e in hinges):continue
-                    actual=np.array([b-a for a,b,_ in items]);error=float(max(abs(actual-expected)))
-                    normal_cut=all(abs(g.support(e)[0]@direction)<1e-5 for e in hinges)
-                    record={'max_strip_error_mm':error,'faces':[i[2] for i in items],
-                            'reversed':reverse,
-                            'hinges':[e['index'] for e in hinges], 'normal_to_all_hinges':normal_cut,
-                            'observed_flat_lengths_mm':actual.tolist(),'required_flat_lengths_mm':expected.tolist(),
-                            'profile_lengths_mm':lengths.tolist(),'turn_angles_deg':angles.tolist(),
-                            'cut_direction':direction.tolist(),'cut_coordinate':c}
-                    record['segment_checks']=[{
-                        'segment':i+1,'face':items[i][2],
-                        'source_handles':segs[i]['handles'],
-                        'observed_flat_mm':float(a),'required_flat_mm':float(b),
-                        'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=tolerance)
-                    } for i,(a,b) in enumerate(zip(actual,expected))]
-                    if nearest is None or error<nearest['max_strip_error_mm']:nearest=record
-                    if normal_cut and (nearest_normal is None or error<nearest_normal['max_strip_error_mm']):nearest_normal=record
-                    if not normal_cut and (nearest_projected is None or error<nearest_projected['max_strip_error_mm']):nearest_projected=record
-                    if not normal_cut or error>tolerance:continue
-                    rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
-                    signature=tuple(sorted((e['index'],round(a,8)) for e,a in zip(hinges,rotations)))
-                    candidates.append(dict(signature=signature,width=high-low,c=c,trace=items,direction=direction,pts=pts,segs=segs,main=main,hinges=hinges,rotations=rotations,error=error))
+                        if len(items)!=len(lengths):continue
+                        eps=min(.001,(high-low)/10)
+                        ends=[connected_traces(trace(faces,outer,direction,x),lookup) for x in (low+eps,high-eps)]
+                        if any(len(rows)!=len(groups) for rows in ends):continue
+                        ends=[rows[group_index] for rows in ends]
+                        ids=[x[2] for x in items]
+                        if all([x[2] for x in rows]==ids for rows in ends):
+                            start=np.array([b-a for a,b,_ in ends[0]]);end=np.array([b-a for a,b,_ in ends[1]])
+                            slope=end-start
+                            if slope@slope>1e-12:
+                                ratio=minimax_station(start,end,expected)
+                                c=low+eps+ratio*(high-low-2*eps)
+                                fitted=connected_traces(trace(faces,outer,direction,c),lookup)
+                                if len(fitted)!=len(groups):continue
+                                items=fitted[group_index]
+                        hinges=[lookup.get(frozenset((a[2],b[2]))) for a,b in zip(items,items[1:])]
+                        if any(e is None for e in hinges):continue
+                        actual=np.array([b-a for a,b,_ in items]);error=float(max(abs(actual-expected)))
+                        normal_cut=all(abs(g.support(e)[0]@direction)<1e-5 for e in hinges)
+                        record={'max_strip_error_mm':error,'faces':[i[2] for i in items],
+                                'reversed':reverse,'scope':'disconnected_region' if len(groups)>1 else 'full_chain',
+                                'hinges':[e['index'] for e in hinges], 'normal_to_all_hinges':normal_cut,
+                                'observed_flat_lengths_mm':actual.tolist(),'required_flat_lengths_mm':expected.tolist(),
+                                'profile_lengths_mm':lengths.tolist(),'turn_angles_deg':angles.tolist(),
+                                'cut_direction':direction.tolist(),'cut_coordinate':c}
+                        record['segment_checks']=[{
+                            'segment':i+1,'face':items[i][2],
+                            'source_handles':segs[i]['handles'],
+                            'observed_flat_mm':float(a),'required_flat_mm':float(b),
+                            'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=tolerance)
+                        } for i,(a,b) in enumerate(zip(actual,expected))]
+                        if nearest is None or error<nearest['max_strip_error_mm']:nearest=record
+                        if normal_cut and (nearest_normal is None or error<nearest_normal['max_strip_error_mm']):nearest_normal=record
+                        if not normal_cut and (nearest_projected is None or error<nearest_projected['max_strip_error_mm']):nearest_projected=record
+                        if not normal_cut or error>tolerance:continue
+                        rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
+                        signature=tuple(sorted((e['index'],round(a,8)) for e,a in zip(hinges,rotations)))
+                        candidates.append(dict(signature=signature,width=high-low,c=c,trace=items,direction=direction,pts=pts,segs=segs,main=main,hinges=hinges,rotations=rotations,error=error,scope=record['scope']))
         signatures={c['signature'] for c in candidates}
         # Keep full candidates for the repeated-detail convention resolver.
         # Internal geometry arrays are never copied into the public report.
@@ -171,12 +188,13 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
             continue
         p.update(points=candidate['pts'],segments=candidate['segs'],main=candidate['main'],trace=candidate['trace'],
                  cut_direction=candidate['direction'],cut_coordinate=candidate['c'],
-                 mapping='unique normal section matched by full chain dimensions and paint marker')
+                 mapping='unique normal section matched by connected region dimensions and paint marker',
+                 section_scope=candidate['scope'])
         for vertex,(e,angle) in enumerate(zip(candidate['hinges'],candidate['rotations']),1):
             e['angle']=angle
             e.setdefault('evidence',[]).append({'profile':p['name'],'vertex':vertex,'angle':angle,
                 'handles_before':p['segments'][vertex-1]['handles'],'handles_after':p['segments'][vertex]['handles'],
                 'paint_marker':p['paint_handle'],'layer':p.get('layer')})
         row.pop('reason_code',None);row.pop('reason',None)
-        row.update(status='PASS',max_strip_error_mm=candidate['error'],cut_direction=candidate['direction'].tolist(),cut_coordinate=candidate['c'])
+        row.update(status='PASS',scope=candidate['scope'],max_strip_error_mm=candidate['error'],cut_direction=candidate['direction'].tolist(),cut_coordinate=candidate['c'])
     return reports
