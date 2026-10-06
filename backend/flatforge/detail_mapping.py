@@ -11,12 +11,12 @@ import math
 import numpy as np
 from . import geometry as g
 from .section_mapping import map_normal_sections
+from .evidence_constraints import propagate_source_axes
 
 
 def profile_values(p,t,r,bd):
     vectors=np.diff(p['points'],axis=0)
-    hand=g.cross(g.unit(vectors[p['main']]),p['paint_normal'])
-    angles=np.array([math.degrees(math.atan2(g.cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
+    angles=g.profile_turns(p)
     gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
     return angles,np.linalg.norm(vectors,axis=1)-np.r_[0,gains]-np.r_[gains,0]
 
@@ -76,7 +76,7 @@ def boundary_lengths(face,a,b):
     return options
 
 
-def local_candidates(p,faces,edges,t,r,bd):
+def local_candidates(p,faces,edges,t,r,bd,tolerance=.5):
     lookup={frozenset(e['faces']):e for e in edges};adj={i:[] for i in range(len(faces))}
     for e in edges:
         a,b=e['faces'];adj[a].append(b);adj[b].append(a)
@@ -105,7 +105,7 @@ def local_candidates(p,faces,edges,t,r,bd):
             if not valid:continue
             for length,segment in boundary_lengths(faces[root],hinges[main-1],hinges[main]):
                 lengths=np.array([length if x is None else x for x in actual]);error=float(max(abs(lengths-expected)))
-                if error>.5:continue
+                if error>tolerance:continue
                 rotations=[]
                 for e,a,f0,f1 in zip(hinges,turns,chain,chain[1:]):
                     u,n,c=g.support(e)
@@ -118,11 +118,11 @@ def local_candidates(p,faces,edges,t,r,bd):
     return found
 
 
-def map_details(faces,outer,edges,profiles,t,r,bd):
-    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd)
+def map_details(faces,outer,edges,profiles,t,r,bd,tolerance=.5):
+    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd,tolerance)
     pending=[]
     for p,row in zip(profiles,reports):
-        if row['status']=='PASS':continue
+        if row['status']=='PASS' or row.get('reason_code') in ('SECTION_CONFLICT','SEARCH_LIMIT'):continue
         repeated=repeated_candidates(p,edges)
         if repeated:
             instances=[]
@@ -139,7 +139,7 @@ def map_details(faces,outer,edges,profiles,t,r,bd):
                            matched_faces=[c['trace'][c['main']][2] for c in repeated],max_strip_error_mm=max(c['error'] for c in repeated))
                 row.pop('reason_code',None)
                 continue
-        candidates=local_candidates(p,faces,edges,t,r,bd)
+        candidates=local_candidates(p,faces,edges,t,r,bd,tolerance)
         signatures={c['signature'] for c in candidates}
         if len(signatures)==1:
             candidate=min(candidates,key=lambda c:(c['error'],c['chain'],c['boundary']))
@@ -154,6 +154,11 @@ def map_details(faces,outer,edges,profiles,t,r,bd):
         row.update(status='PASS',method='corroborated_local_edge_profile',reason='Opposite painted profiles agree on the same hinge chain and rotations.',
                    matched_faces=c['chain'],max_strip_error_mm=c['error'],corroborating_profiles=[x[0]['name'] for x in peers])
         row.pop('reason_code',None)
+    conflicts=propagate_source_axes(faces,edges)
+    if conflicts:
+        for row in reports:
+            row.update(status='NEEDS_REVIEW',reason_code='SOURCE_AXIS_CONFLICT',
+                       reason='Sections disagree on a continuous source bend axis.',source_axis_conflicts=conflicts)
     return reports
 
 
@@ -161,7 +166,7 @@ def normal_instances(profiles):
     return [q for p in profiles if 'local_chain' not in p for q in p.get('instances',[p])]
 
 
-def check_local_profiles(profiles,edges,tf,t,r,bd):
+def check_local_profiles(profiles,edges,tf,t,r,bd,tolerance=.5):
     """Check signed relative rotations and local edge lengths, not plane cuts.
 
     Normal BREP cuts and actual fused-solid unfolding run independently. These
@@ -179,7 +184,7 @@ def check_local_profiles(profiles,edges,tf,t,r,bd):
         gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
         actual=c['flat_lengths']+np.r_[0,gains]+np.r_[gains,0]
         error=float(max(abs(actual-np.linalg.norm(np.diff(p['points'],axis=0),axis=1))))
-        rows.append({'profile':p['name'],'validation_scope':'local_edge_profile','chain_status':'PASS' if error<=.5 and max(errors)<=1 else 'FAIL',
+        rows.append({'profile':p['name'],'validation_scope':'local_edge_profile','chain_status':'PASS' if error<=tolerance and max(errors)<=1 else 'FAIL',
                      'full_plane_status':'NOT_APPLICABLE','max_length_error_mm':error,'max_turn_error_deg':max(errors),
                      'source_boundary':c['boundary'],'faces':c['chain'],
                      'method':'Local edge dimensions and fold-tree relative rotations; not a full BREP plane section'})

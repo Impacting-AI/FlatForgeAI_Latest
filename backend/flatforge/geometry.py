@@ -18,6 +18,14 @@ from shapely.affinity import translate
 GRID=.001
 ENDPOINT_SNAP=.05
 ORTHOGONAL_TOL=1e-5
+ZERO_ENTITY_TOL=1e-9
+
+class GeometryEvidenceError(ValueError):
+    """Geometric rejection with source-space evidence for review and audits."""
+    def __init__(self,message,diagnostics):
+        super().__init__(message)
+        self.diagnostics=diagnostics
+
 
 def section_layer(doc):
     """Explicit drawing conventions, never guess a layer from similar geometry."""
@@ -29,7 +37,7 @@ def section_layer(doc):
 
 def line_frame(a,b):
     """Canonical unit support: +Y for vertical lines, otherwise positive X."""
-    if np.linalg.norm(b-a)<GRID:raise ValueError('Zero-length bend or section line')
+    if np.linalg.norm(b-a)<=ZERO_ENTITY_TOL:raise ValueError('Coincident endpoints cannot define a line direction')
     u=unit(b-a)
     if abs(u[0])<ORTHOGONAL_TOL:u=np.array([0.,1.])
     elif abs(u[1])<ORTHOGONAL_TOL:u=np.array([1.,0.])
@@ -64,8 +72,12 @@ def section_lines(doc):
 def vec(p):return np.array(tuple(p)[:2],dtype=float)
 def cross(a,b):return float(a[0]*b[1]-a[1]*b[0])
 def unit(a):return a/np.linalg.norm(a)
-def read_drawing(filename):
-    doc=ezdxf.readfile(filename);ms=doc.modelspace()
+def read_drawing(filename, doc=None):
+    from .drawing_normalization import normalize
+    if doc is None:
+        doc=ezdxf.readfile(filename)
+        normalize(doc)
+    ms=doc.modelspace()
     read_drawing.repairs=[]
     read_drawing.annotations=[]
     oblique=any(min(abs(unit(vec(e.dxf.end)-vec(e.dxf.start))))>ORTHOGONAL_TOL for e in ms.query('LINE[layer=="KIFOF"]') if np.linalg.norm(vec(e.dxf.end)-vec(e.dxf.start))>GRID)
@@ -98,7 +110,12 @@ def read_drawing(filename):
     if not oblique:blank=set_precision(blank,GRID)
     lines=[]
     for i,e in enumerate(sorted(ms.query('LINE[layer=="KIFOF"]'),key=lambda e:int(e.dxf.handle,16)),1):
-        a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin;u=unit(b-a)
+        a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin
+        length=float(np.linalg.norm(b-a))
+        if length<=ZERO_ENTITY_TOL:
+            read_drawing.repairs.append({'kind':'zero_length_bend_entity_ignored','handle':e.dxf.handle,'layer':'KIFOF','length_mm':length,'reason':'Coincident endpoints do not define a physical hinge; no finite geometry was removed'})
+            continue
+        if length<GRID:raise ValueError(f'KIFOF entity {e.dxf.handle} has a nonzero length of {length:g} mm below the {GRID:g} mm modelling resolution; review this entity')
         u,n,offset=line_frame(a,b)
         dim=int(abs(u[1])>abs(u[0]));c=float((a[1-dim]+b[1-dim])/2)
         # Keep oblique supports precise; independent endpoint rounding rotates
@@ -135,7 +152,9 @@ def partition(outer,blank,lines,relief):
         # Snap-round only the arrangement topology, then recover its vertices
         # on the original analytic supports for exact BREP mating surfaces.
         boundary=list(outer.exterior.coords)
-        segments=[(np.array(a),np.array(b)) for a,b in zip(boundary,boundary[1:])]
+        # Duplicate closing/consecutive vertices are not support directions.
+        # Keep the polygon itself unchanged; only omit point-like support segments.
+        segments=[(np.array(a),np.array(b)) for a,b in zip(boundary,boundary[1:]) if np.linalg.norm(np.array(b)-a)>ZERO_ENTITY_TOL]
         segments += [(np.array(c.coords[0]),np.array(c.coords[-1])) for c in cutters]
         cache={}
         def recover(q):
@@ -149,7 +168,14 @@ def partition(outer,blank,lines,relief):
             if pairs and max(pairs)[0]>1e-5:
                 _,i,j=max(pairs);a,b=near[i],near[j]
                 restored=np.linalg.solve(np.array([a[1],b[1]]),[a[2],b[2]])
-                if np.linalg.norm(restored-q)>.004:raise ValueError('Analytic hinge-junction recovery exceeds the topology tolerance')
+                if np.linalg.norm(restored-q)>.004:
+                    distance=float(np.linalg.norm(restored-q))
+                    raise GeometryEvidenceError(
+                        f'Analytic hinge-junction recovery requires a {distance:.6f} mm move, exceeding the 0.004 mm topology limit; inspect the intersecting boundary and bend supports.',
+                        {'stage':'face_topology','code':'ILL_CONDITIONED_JUNCTION','coordinate_mm':q.tolist(),
+                         'proposed_coordinate_mm':restored.tolist(),'proposed_move_mm':distance,'limit_mm':.004,
+                         'support_cross_product':float(abs(cross(a[0],b[0]))),
+                         'nearby_bend_handles':[l['handle'] for l in lines if LineString([l['a']-relief*unit(l['b']-l['a']),l['b']+relief*unit(l['b']-l['a'])]).distance(Point(q))<=.002]})
                 q=restored
             elif near:q=q-near[0][1]*(q@near[0][1]-near[0][2])
             cache[key]=tuple(q);return cache[key]
@@ -180,25 +206,33 @@ def partition(outer,blank,lines,relief):
     return faces,edges,parent,order,[p.intersection(blank) for p in faces]
 
 def profiles(doc,origin,t):
+    if not hasattr(read_drawing,'repairs'):read_drawing.repairs=[]
     ls=[]
     for e in section_lines(doc):
         a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin
+        if np.linalg.norm(b-a)<=ZERO_ENTITY_TOL:
+            read_drawing.repairs.append({'kind':'zero_length_section_entity_ignored','handle':e.dxf.handle,'layer':e.dxf.layer,'reason':'Coincident endpoints do not define a wall direction'})
+            continue
         if np.linalg.norm(b-a)<t+0.01:continue # end caps, never bend skeletons
         u,n,c=line_frame(a,b);dim=int(abs(u[1])>abs(u[0]))
         ls.append(dict(a=a,b=b,dim=dim,u=u,normal=n,c=c,lo=min(a@u,b@u),hi=max(a@u,b@u),handle=e.dxf.handle))
-    paired=set();sk=[]
+    from .wall_pairing import parallel_pair, ends_supported
+    candidates=collections.defaultdict(list);pairs={}
     for i,l in enumerate(ls):
-        if i in paired:continue
-        choices=[]
-        for j,m in enumerate(ls):
-            if i==j or j in paired or abs(cross(l['u'],m['u']))>1e-4:continue
-            overlap=min(l['hi'],m['hi'])-max(l['lo'],m['lo'])
-            if abs(abs(l['c']-m['c'])-t)<.05 and overlap>0 and abs(l['lo']-m['lo'])<=t+.05 and abs(l['hi']-m['hi'])<=t+.05:
-                choices.append(j)
-        if len(choices)!=1:raise ValueError(f'HAT pair ambiguity at {l["handle"]}: {len(choices)} matches')
-        j=choices[0];m=ls[j];paired.update([i,j]);dim=l['dim'];c=(l['c']+m['c'])/2
-        a=l['normal']*c+l['u']*(l['lo']+m['lo'])/2;b=l['normal']*c+l['u']*(l['hi']+m['hi'])/2
-        sk.append(dict(a=a,b=b,dim=dim,c=c,u=l['u'],normal=l['normal'],handles=[l['handle'],m['handle']],wall_spacing_mm=abs(l['c']-m['c']),parallel_error_deg=math.degrees(math.asin(abs(cross(l['u'],m['u']))))))
+        for j in range(i+1,len(ls)):
+            pair=parallel_pair(l,ls[j],t)
+            if pair is not None and ends_supported(pair,ls,t):
+                candidates[i].append(j);candidates[j].append(i);pairs[i,j]=pair
+    # Mutual uniqueness is established before consuming a wall. Entity order
+    # cannot turn an ambiguous graph into an apparently unique pairing.
+    for i,l in enumerate(ls):
+        if len(candidates[i])!=1:raise ValueError(f'HAT pair ambiguity at {l["handle"]}: {len(candidates[i])} matches')
+    sk=[]
+    for (i,j),pair in pairs.items():
+        sk.append(dict(a=pair['a'],b=pair['b'],dim=int(abs(pair['u'][1])>abs(pair['u'][0])),
+                       c=pair['c'],u=pair['u'],normal=pair['normal'],handles=[ls[i]['handle'],ls[j]['handle']],
+                       wall_spacing_mm=pair['wall_spacing_mm'],spacing_range_mm=pair['spacing_range_mm'],
+                       parallel_error_deg=pair['parallel_error_deg']))
     links=collections.defaultdict(list);joints={};repairs=[]
     for i,l in enumerate(sk):
         for j,m in enumerate(sk[i+1:],i+1):
@@ -270,9 +304,20 @@ def section_trace(faces,outer,dim,coordinate):
     items.sort()
     return items
 
-def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
-    # Sharp midsurface setback minus half bend allowance. 90-degree rule.
-    ba=2*(r+t)-bd;gain=r+t/2-ba/2
+def profile_turns(profile):
+    """Signed rotations from flat, not included angles between adjoining faces."""
+    vectors=np.diff(profile['points'],axis=0)
+    hand=cross(unit(vectors[profile['main']]),profile['paint_normal'])
+    if abs(abs(hand)-1)>1e-6:raise ValueError('Paint marker not normal to main section segment')
+    turns=np.array([math.degrees(math.atan2(cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
+    turns=np.where(abs(abs(turns)-90)<.01,np.sign(turns)*90,turns)
+    for i in range(len(turns)):
+        handles=sorted(h for seg in profile.get('segments',[])[i:i+2] for h in seg['handles'])
+        labels=[a for a in profile.get('angle_dimensions',[]) if a['wall_handles']==handles and a['status']=='MATCHED']
+        if labels:turns[i]=np.sign(turns[i])*labels[0]['rotation_magnitude_deg']
+    return turns
+
+def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,tolerance=.5):
     edge_lookup={frozenset(e['faces']):e for e in edges}
     results=[]
     for p in profs:
@@ -281,7 +326,9 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
             pts=pts[::-1];p['segments']=p['segments'][::-1];m=len(pts)-2-m
         p['points']=pts;p['main']=m
         lengths=np.linalg.norm(np.diff(pts,axis=0),axis=1)
-        flat_target=lengths-np.array([gain if i in [0,len(lengths)-1] else 2*gain for i in range(len(lengths))])
+        turns=profile_turns(p)
+        gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-bend_allowance(t,r,bd,a)/2 for a in turns])
+        flat_target=lengths-np.r_[0,gains]-np.r_[gains,0]
         if dim==0 and '-' in p['name']:
             letter=p['name'].split('-')[0];ts=[e for e in doc.modelspace().query('TEXT[layer=="A-STRS-1"]') if e.dxf.text==letter]
             polys=list(doc.modelspace().query('LWPOLYLINE[layer=="A-STRS-1"]'))
@@ -304,7 +351,7 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
             trace=section_trace(faces,outer,dim,c)
             if len(trace)!=len(lengths):continue
             err=max(abs((b-a)-target) for (a,b,_),target in zip(trace,flat_target))
-            if err<=.5:valid.append((err,-width,c,trace))
+            if err<=tolerance:valid.append((err,-width,c,trace))
         if not valid:raise ValueError(f'{p["name"]}: section vertex count or strip lengths do not match any cut; STOP chain')
         # Prefer widest equivalent lane; otherwise minimum geometric residual.
         err,nw,c,trace=min(valid,key=lambda v:(v[1],v[0],v[2]))
@@ -315,7 +362,7 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
         for k in range(len(trace)-1):
             left=trace[k][2];right=trace[k+1][2];key=frozenset([left,right])
             if key not in edge_lookup:raise ValueError('Section crosses an unassigned or non-hinge adjacency')
-            e=edge_lookup[key];v0=unit(pts[k+1]-pts[k]);v1=unit(pts[k+2]-pts[k+1]);delta=math.degrees(math.atan2(cross(v0,v1)*hand,np.dot(v0,v1)))
+            e=edge_lookup[key];v0=unit(pts[k+1]-pts[k]);v1=unit(pts[k+2]-pts[k+1]);delta=turns[k]
             # Canonical world hinge support points along +X or +Y.
             canonical_factor=1 if dim==1 else -1
             angle=delta*canonical_factor*(1 if e['parent']==left else -1)
@@ -324,18 +371,9 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
             e['angle']=angle;e.setdefault('evidence',[]).append(ev)
             checks.append(ev)
         results.append(dict(profile=p['name'],cut_axis='Y' if dim==0 else 'X',cut_coordinate=c,mapping=mapping,segments=len(trace),turns=len(trace)-1,max_strip_error=err,paint_marker=p['paint_handle']))
-    # A single documented DXF LINE can hinge several disconnected flange tabs.
-    # Carry its section-derived sign only to other portions of that same entity.
-    for e in edges:
-        if 'angle' in e:continue
-        handles={l['handle'] for l in e['source']}
-        matches=[v for v in edges if 'angle' in v and handles.intersection(l['handle'] for l in v['source'])]
-        signs={round(v['angle'],6) for v in matches}
-        if len(signs)==1:
-            e['angle']=signs.pop()
-            e['evidence']=[dict(ev,correspondence='same original KIFOF LINE, separated flange tab') for v in matches for ev in v['evidence']]
+    from .evidence_constraints import propagate_source_axes
+    propagate_source_axes(faces,edges)
     if any('angle' not in e for e in edges):raise ValueError('Unmapped hinge; no default direction is allowed')
-    if any(abs(abs(e['angle'])-90)>.001 for e in edges):raise ValueError('This implementation supports 90-degree bends only; no fallback angle allowed')
     return results
 
 def rotation(axis,angle):
@@ -347,6 +385,9 @@ def lift(p):return np.array([p[0],p[1],0.])
 def apply_tf(tf,p):return tf[0]@np.array(p)+tf[1]
 
 def transforms(faces,edges,order,t,r,bd):
+    from .bend_rules import parameter_check
+    invalid=[parameter_check(t,r,bd,e['angle']) for e in edges if not parameter_check(t,r,bd,e['angle'])['valid']]
+    if invalid:raise GeometryEvidenceError('Fixed bend parameters cannot produce a physical sheet bend.',{'code':'BEND_PARAMETERS','bends':invalid})
     rm=r+t/2;tf={0:(np.eye(3),np.zeros(3))}
     for child in order[1:]:
         e=next(e for e in edges if e['child']==child);parent=e['parent']
@@ -360,9 +401,9 @@ def transforms(faces,edges,order,t,r,bd):
     return tf
 
 def bend_allowance(t,r,bd,angle):
-    """BD is the 90-degree calibration; constant K gives BA at other angles."""
+    """Fixed total deduction: outside setbacks minus developed bend allowance."""
     if not 0<abs(angle)<180:raise ValueError('Bend rotation must be between 0 and 180 degrees')
-    return (2*(r+t)-bd)*abs(angle)/90.
+    return 2*(r+t)*math.tan(math.radians(abs(angle))/2)-bd
 
 def bend_strip(e,half_width,extension=0.):
     u,n,c=support(e);lo,hi=hinge_span(e);h=n*c
@@ -428,7 +469,7 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     ob=Bnd_Box();BRepBndLib.AddOptimal_s(fused.wrapped,ob,False,False);bounds=ob.Get();bmin=list(bounds[:3]);bmax=list(bounds[3:]);bsize=[v-u for u,v in zip(bmin,bmax)]
     return fused,flat_trimmed,dict(valid=fused.isValid(),solid_count=len(fused.Solids()),volume_mm3=fused.Volume(),pre_fuse_volume_mm3=raw_volume,fusion_volume_removed_mm3=raw_volume-fused.Volume(),bbox_mm=bsize,bbox_min_mm=bmin,bbox_max_mm=bmax,plate_flat_area=sum(p.area for p in flat_trimmed),bend_developed_area=sum(b['developed_area'] for b in bend_records))
 
-def check_sections(solid,profs,faces,tf,t,r,out,material=None):
+def check_sections(solid,profs,faces,tf,t,r,out,material=None,tolerance=.5):
     import cadquery as cq
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
     from OCP.gp import gp_Pln,gp_Pnt,gp_Dir
@@ -497,9 +538,9 @@ def check_sections(solid,profs,faces,tf,t,r,out,material=None):
             predicted=rotation(plane_turn_normal,theta)@paint
             actualpaint=tf[trace[i][2]][0][:,2]
             paint_errors.append(math.degrees(math.acos(float(np.clip(np.dot(predicted,actualpaint),-1,1)))))
-            details.append(dict(profile=p['name'],segment=i+1,face=f'F{trace[i][2]}',hat_virtual_midline_length_mm=float(expected[i]),solid_section_virtual_midline_length_mm=float(actual[i]),length_error_mm=float(abs(actual[i]-expected[i])),turn_error_deg=angle_errors[-1] if i<len(trace)-1 else '',paint_normal_error_deg=paint_errors[-1],status='PASS' if abs(actual[i]-expected[i])<=.5 and paint_errors[-1]<=1 and (i==len(trace)-1 or angle_errors[-1]<=1) else 'FAIL'))
+            details.append(dict(profile=p['name'],segment=i+1,face=f'F{trace[i][2]}',hat_virtual_midline_length_mm=float(expected[i]),solid_section_virtual_midline_length_mm=float(actual[i]),length_error_mm=float(abs(actual[i]-expected[i])),turn_error_deg=angle_errors[-1] if i<len(trace)-1 else '',paint_normal_error_deg=paint_errors[-1],status='PASS' if abs(actual[i]-expected[i])<=tolerance and paint_errors[-1]<=1 and (i==len(trace)-1 or angle_errors[-1]<=1) else 'FAIL'))
         radii=[e.radius() for e in se if e.geomType()=='CIRCLE'];radius_error=max([min(abs(v-r),abs(v-(r+t))) for v in radii],default=float('inf'))
-        status='PASS' if not misses and np.max(abs(actual-expected))<=.5 and max(angle_errors)<=1 and max(paint_errors)<=1 and radius_error<.001 else 'FAIL'
+        status='PASS' if not misses and np.max(abs(actual-expected))<=tolerance and max(angle_errors)<=1 and max(paint_errors)<=1 and radius_error<.001 else 'FAIL'
         summaries.append(dict(profile=p['name'],segments=len(trace),section_edges=len(se),max_length_error_mm=float(np.max(abs(actual-expected))),max_turn_error_deg=max(angle_errors),max_paint_normal_error_deg=max(paint_errors),circular_edges=len(radii),expected_circular_edges=2*(len(trace)-1),max_radius_error_mm=radius_error,missing_or_interrupted=misses,contour_openings=list(openings.values()),chain_status=status,full_plane_status='PASS' if status=='PASS' and len(radii)==2*(len(trace)-1) and len(se)==4*len(trace)+4*len(openings) else 'FAIL'))
         # Evidence image: real BREP section, registered to HAT by main-segment
         # midpoint/orientation only. No scaling or non-rigid fit is performed.

@@ -28,3 +28,20 @@ def test_minimax_does_not_hide_an_infeasible_lane():
     station=minimax_station([0,3],[1,4],[0,0])
     assert station==0
     assert max(abs(np.array([0,3])+station-np.array([0,0])))==3
+
+
+def test_unmatched_section_keeps_separate_normal_and_projected_diagnostics(tmp_path):
+    from test_complex_geometry import channel
+    from flatforge import geometry as g
+    from flatforge.section_mapping import map_normal_sections
+    source=tmp_path/'section.dxf';channel(source,60)
+    d,o,outer,blank,lines=g.read_drawing(source)
+    f,e,_,_,_=g.partition(outer,blank,lines,3)
+    profiles=g.profiles(d,o,2)
+    profiles[0]['points'][0]+=g.unit(profiles[0]['points'][0]-profiles[0]['points'][1])*3
+    rows=map_normal_sections(f,outer,e,profiles,2,2,4)
+    row=rows[0]
+    assert row['status']=='NEEDS_REVIEW'
+    assert row['nearest_normal_candidate']['normal_to_all_hinges']
+    assert row['nearest_normal_candidate']['max_strip_error_mm']>.5
+    assert all('source_handles' in s for s in row['nearest_normal_candidate']['segment_checks'])

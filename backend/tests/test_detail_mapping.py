@@ -23,19 +23,40 @@ def map_file(path):
     return f,e,p,map_details(f,outer,e,p,2.,2.,4.)
 
 
-def test_approved_complex_panel_automatic_solid(tmp_path):
+def test_complex_corner_retains_drawing_angles_and_allows_correction(tmp_path):
+    import json
     import cadquery as cq
-    r=run({'source':str(source()),'output':str(tmp_path)})
-    assert r['status']=='PASS',r.get('issues')
+    r=run({'source':str(source()),'output':str(tmp_path/'initial')})
+    assert r['status']=='NEEDS_REVIEW'
     assert r['physical_bends']==27 and r['faces']==28
-    assert np.allclose(r['bbox'],[729.1647801204218,1315.0277050265272,400.0802267167521],atol=.001)
-    assert r['unfold_check']['symmetric_difference_percent']<.02
-    assert len(r['section_checks'])==6
-    assert all(c['chain_status']=='PASS' for c in r['section_checks'])
-    assert sum(c.get('validation_scope')=='local_edge_profile' for c in r['section_checks'])==2
-    s=cq.importers.importStep(str(tmp_path/'panel.step')).val()
-    assert s.isValid() and len(s.Solids())==1
-    assert s.Volume()==pytest.approx(3135385.3349138047,abs=.1)
+    choices=r['corner_angle_candidates']
+    assert len(choices)==2
+    assert sorted(c['candidate_rotation_deg'] for c in choices)==pytest.approx([-59.6613411117,120.3386588883])
+    assert r['unresolved_bends']==[]
+    assert all(b['angle'] is not None for b in r['bends'])
+    assert (tmp_path/'initial/panel.step').exists()
+    # Re-selecting the section retains its measured angle without manual entry.
+    target=choices[0]['key']
+    row=next(row for row in r['review_catalog'] if any(target in [b['key'] for b in c['folds']] for c in row['candidates']))
+    candidate=next(c for c in row['candidates'] if target in [b['key'] for b in c['folds']])
+    selected=run({'source':str(source()),'output':str(tmp_path/'selected'),
+                  'overrides':{'section_choices':{row['profile']:candidate['id']}}})
+    assert selected['status']=='NEEDS_REVIEW'
+    assert any(c['key']==target and c['requires_confirmation'] for c in selected['corner_angle_candidates'])
+    angles={c['key']:c['candidate_rotation_deg'] for c in choices}
+    out=tmp_path/'confirmed'
+    rebuilt=run({'source':str(source()),'output':str(out),'overrides':{'bend_angles':angles,'build_review_model':True}})
+    assert rebuilt['status']=='NEEDS_REVIEW' # The original 90-degree section still conflicts.
+    assert rebuilt['review_model']['status']=='UNVALIDATED'
+    assert any(c['chain_status']=='FAIL' for c in rebuilt['section_checks'])
+    assert rebuilt['unfold_check']['status']=='PASS'
+    solid=cq.importers.importStep(str(out/'review_model.step')).val()
+    assert solid.isValid() and len(solid.Solids())==1
+    viewer=json.loads((out/'viewer.json').read_text());faces={f['id']:f for f in viewer['faces']}
+    for c in choices:
+        a=np.array(faces[c['adjacent_face']]['rotation'])[:,2]
+        b=np.array(faces[c['child']]['rotation'])[:,2]
+        assert np.dot(a,b)==pytest.approx(1,abs=1e-9)
 
 
 def test_rotated_renamed_drawing_maps_without_fixed_ids(tmp_path):
@@ -49,6 +70,19 @@ def test_rotated_renamed_drawing_maps_without_fixed_ids(tmp_path):
     f,e,p,rows=map_file(path)
     assert all(r['status']=='PASS' for r in rows),rows
     assert len(e)==27 and all('angle' in x for x in e)
+    from flatforge.corner_review import continuation_candidates
+    order=[0]
+    while len(order)<len(f):order.extend(x['child'] for x in e if x['parent'] in order and x['child'] not in order)
+    choices=continuation_candidates(f,e,order,2,2,4)
+    # Canonical axes can reverse when the whole drawing rotates: angle signs
+    # must reverse too. Check physical continuation rather than fixed signs.
+    assert sorted(abs(c['candidate_rotation_deg']) for c in choices)==pytest.approx([59.6613411117,120.3386588883],abs=.002)
+    from flatforge.review import bend_key
+    for edge in e:
+        choice=next((c for c in choices if c['key']==bend_key(edge)),None)
+        if choice:edge['angle']=choice['candidate_rotation_deg']
+    tf=g.transforms(f,e,order,2,2,4)
+    for c in choices:assert tf[c['child']][0][:,2]@tf[c['adjacent_face']][0][:,2]==pytest.approx(1,abs=1e-9)
 
 
 def test_uncorroborated_side_profile_does_not_supply_rotations():

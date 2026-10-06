@@ -15,6 +15,19 @@ export class SoftwareRenderer {
     const group=geom.groups.find((g:{start:number;count:number;materialIndex?:number})=>i>=g.start&&i<g.start+g.count);const material=materials[group?.materialIndex||0] as THREE.MeshStandardMaterial;const wa=new THREE.Vector3().fromBufferAttribute(position,ia),wb=new THREE.Vector3().fromBufferAttribute(position,ib),wc=new THREE.Vector3().fromBufferAttribute(position,ic);const normal=wb.sub(wa).cross(wc.sub(wa)).applyMatrix3(world).normalize();const shade=.62+.38*Math.abs(normal.dot(new THREE.Vector3(.4,-.5,.77).normalize()));const color=(material.color||new THREE.Color(0xb7c7c0)).clone().multiplyScalar(shade).getStyle();list.push({a,b,c,z:(a.z+b.z+c.z)/3,color,wire:material.wireframe});
    }
   });list.sort((a,b)=>b.z-a.z);for(const t of list){ctx.beginPath();ctx.moveTo((t.a.x+1)*w/2,(1-t.a.y)*h/2);ctx.lineTo((t.b.x+1)*w/2,(1-t.b.y)*h/2);ctx.lineTo((t.c.x+1)*w/2,(1-t.c.y)*h/2);ctx.closePath();if(!t.wire){ctx.fillStyle=t.color;ctx.fill();ctx.strokeStyle=t.color;ctx.lineWidth=.4;ctx.stroke()}else{ctx.strokeStyle=t.color;ctx.lineWidth=.6;ctx.stroke()}}
+  // Match the WebGL inspection overlay, including in the fully folded state.
+  scene.traverseVisible(obj=>{
+   if(!(obj instanceof THREE.LineSegments)||!obj.userData.bendOverlay)return;
+   const position=obj.geometry.getAttribute('position'),matrix=transform.clone().multiply(obj.matrixWorld);
+   const material=obj.material as THREE.LineDashedMaterial;
+   ctx.strokeStyle=material.color.getStyle();ctx.lineWidth=1.4;ctx.setLineDash([6,4]);
+   for(let i=0;i+1<position.count;i+=2){
+    const a=new THREE.Vector3().fromBufferAttribute(position,i).applyMatrix4(matrix),b=new THREE.Vector3().fromBufferAttribute(position,i+1).applyMatrix4(matrix);
+    if(a.z < -1||a.z>1||b.z < -1||b.z>1)continue;
+    ctx.beginPath();ctx.moveTo((a.x+1)*w/2,(1-a.y)*h/2);ctx.lineTo((b.x+1)*w/2,(1-b.y)*h/2);ctx.stroke();
+   }
+   ctx.setLineDash([]);
+  });
  }
  dispose(){this.domElement.width=0;this.domElement.height=0}
 }
