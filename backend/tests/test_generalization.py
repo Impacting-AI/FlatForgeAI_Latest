@@ -11,22 +11,23 @@ from flatforge import geometry as g
 from flatforge.angle_evidence import annotate_profiles
 from flatforge.detail_mapping import map_details
 from flatforge.engine import run
-from test_complex_geometry import channel
+from test_complex_geometry import channel, fixture_material
 
 
 @pytest.mark.parametrize('angle,width,left,right,height,plan',[
     (30,573,24,46,123,113),(120.339,1100,52,39,194,-23)])
 def test_unseen_sizes_angles_and_orientations_build_real_solid(tmp_path,angle,width,left,right,height,plan):
     source=tmp_path/'unseen.dxf'
-    channel(source,angle,plan,main_width=width,left=left,right=right,height=height)
-    r=run({'source':str(source),'output':str(tmp_path/'out')})
+    radius,deduction=fixture_material(angle)
+    channel(source,angle,plan,main_width=width,left=left,right=right,height=height,deduction=deduction)
+    r=run({'source':str(source),'output':str(tmp_path/'out'),'settings':{'radius':radius,'deduction':deduction},'overrides':{'accept_partial_sections':angle<45}})
     assert r['status']=='PASS',r.get('issues')
     assert sorted(abs(b['angle']) for b in r['bends'])==pytest.approx(sorted([angle,90]),abs=1e-5)
     assert r['solid']['valid'] and r['solid']['solid_count']==1
     assert r['unfold_check']['status']=='PASS'
     # Volume derived independently from straight neutral strips and bend sectors.
-    allowance=4*(angle/90+1)
-    volume=2*height*(width+left+right-allowance+3*math.radians(angle+90))
+    allowance=2*(radius+2)*(math.tan(math.radians(angle)/2)+1)-2*deduction
+    volume=2*height*(width+left+right-allowance+(radius+1)*math.radians(angle+90))
     assert r['solid']['volume_mm3']==pytest.approx(volume,abs=.3)
 
 

@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from .db import init, Session, Project, Panel, Job, Setting
 from .storage import store
 from .dwg import available as dwg_available
-DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
+from .bend_rules import DEFAULTS
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
 async def lifespan(app):
@@ -35,7 +35,7 @@ def pack_panel(p):
 class Parameters(BaseModel):
  model_config=ConfigDict(extra='forbid')
  thickness:float=Field(default=2,gt=0,le=20)
- radius:float=Field(default=2,gt=0,le=100)
+ radius:float=Field(default=.7366,gt=0,le=100)
  deduction:float=Field(default=4,ge=0,le=100)
  input_type:Literal['flat_pattern','folded_dimensions']='flat_pattern'
 class ProjectInput(BaseModel):
@@ -44,6 +44,7 @@ class ReviewInput(BaseModel):
  model_config=ConfigDict(extra='forbid')
  settings:Parameters|None=None
  bend_angles:dict[str,float|None]=Field(default_factory=dict)
+ bend_directions:dict[str,Literal['up','down']|None]=Field(default_factory=dict)
  section_choices:dict[str,str]|None=None
  build_review_model:bool=False
  expected_revision:int|None=None
@@ -126,9 +127,9 @@ def review(id:str,body:ReviewInput):
   p=lock_panel(s,id)
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
   if body.expected_revision is not None and body.expected_revision!=p.revision:raise HTTPException(409,'Drawing revision changed. Refresh before saving decisions.')
-  if (body.section_choices is not None or body.build_review_model or 'panel_bend_angle_deg' in body.model_fields_set) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
+  if (body.section_choices is not None or body.build_review_model or body.bend_directions or 'panel_bend_angle_deg' in body.model_fields_set) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
   report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}
-  if set(body.bend_angles)-allowed:raise HTTPException(422,'Unknown bend key in review decision')
+  if (set(body.bend_angles)|set(body.bend_directions))-allowed:raise HTTPException(422,'Unknown bend key in review decision')
   selections={r['profile']:{c['id'] for c in r['candidates']} for r in report.get('review_catalog',[])}
   if body.section_choices is not None and any(name not in selections or key not in selections[name] for name,key in body.section_choices.items()):raise HTTPException(422,'Unknown section candidate; refresh the drawing review.')
   overrides=json.loads(p.overrides);angles=overrides.get('bend_angles',{}).copy()
@@ -140,6 +141,11 @@ def review(id:str,body:ReviewInput):
    angles={} # Explicit switch to the single-field workflow clears old corrections.
    if body.panel_bend_angle_deg is None:overrides.pop('panel_bend_angle_deg',None)
    else:overrides['panel_bend_angle_deg']=body.panel_bend_angle_deg
+  directions=overrides.get('bend_directions',{}).copy()
+  for key,value in body.bend_directions.items():
+   if value is None:directions.pop(key,None)
+   else:directions[key]=value
+  overrides['bend_directions']=directions
   overrides['bend_angles']=angles
   if body.section_choices is not None:overrides['section_choices']=body.section_choices
   if body.strip_tolerance_mm is not None:overrides['strip_tolerance_mm']=body.strip_tolerance_mm

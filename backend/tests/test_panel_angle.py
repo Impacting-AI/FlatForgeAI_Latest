@@ -39,12 +39,12 @@ def test_summary_reports_multiple_actual_included_angles():
 
 
 def test_known_nonstandard_panel_is_not_changed_by_fallback(tmp_path):
-    path=tmp_path/'source.dxf';channel(path,60)
+    path=tmp_path/'source.dxf';channel(path,110)
     r=run({'source':str(path),'output':str(tmp_path/'out'),
            'overrides':{'confirm_parameters':True,'panel_bend_angle_deg':45}})
     assert r['status']=='PASS',r
-    assert sorted(abs(b['angle']) for b in r['bends'])==pytest.approx([60,90])
-    assert r['panel_bend_angle']['values']==[90,120]
+    assert sorted(abs(b['angle']) for b in r['bends'])==pytest.approx([90,110])
+    assert r['panel_bend_angle']['values']==[70,90]
 
 
 def test_single_angle_api_persistence_reset_and_legacy_migration(tmp_path):
@@ -84,16 +84,16 @@ def test_panel_value_reaches_brep_for_missing_magnitude_with_consensus_direction
     original=engine.prepare_review
     def omit_one_magnitude(faces,outer,edges,*args,**kwargs):
         catalog,errors=original(faces,outer,edges,*args,**kwargs)
-        target=next(e for e in edges if abs(abs(e.get('angle',0))-60)<.01)
+        target=next(e for e in edges if abs(abs(e.get('angle',0))-110)<.01)
         target.pop('angle');target.pop('evidence',None)
         return catalog,errors
     monkeypatch.setattr(engine,'prepare_review',omit_one_magnitude)
-    path=tmp_path/'source.dxf';channel(path,60)
+    path=tmp_path/'source.dxf';channel(path,110)
     r=run({'source':str(path),'output':str(tmp_path/'out'),
-           'overrides':{'confirm_parameters':True,'panel_bend_angle_deg':120}})
+           'overrides':{'confirm_parameters':True,'panel_bend_angle_deg':70}})
     assert r['status']=='PASS',r
     chosen=[b for b in r['bends'] if any(v['profile']=='PANEL ANGLE' for v in b['source'])]
-    assert len(chosen)==1 and abs(chosen[0]['angle'])==pytest.approx(60)
+    assert len(chosen)==1 and abs(chosen[0]['angle'])==pytest.approx(110)
     assert (tmp_path/'out/panel.step').exists()
 
 

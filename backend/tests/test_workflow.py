@@ -142,3 +142,30 @@ def test_drawing_review_revision_persistence_and_export_gate(tmp_path):
   assert p['overrides']['section_choices']=={}
   assert c.get(url+'/files/review_model.step').status_code==404
   assert c.get('/bootstrap').json()['settings']==settings
+
+
+def test_direction_review_requires_revision_and_can_be_revoked():
+ from flatforge.db import Project
+ from flatforge.bend_rules import DEFAULTS
+ with TestClient(app) as c:
+  c.headers['X-Flatforge-Key']=os.environ['FLATFORGE_API_KEY']
+  with Session.begin() as s:
+   project=Project(name='Direction review');s.add(project);s.flush()
+   panel=Panel(project_id=project.id,filename='synthetic.dxf',source_key='unused',status='NEEDS_REVIEW',
+    settings=json.dumps(DEFAULTS),overrides='{}',report=json.dumps({'unresolved_bends':[{'key':'A:F0:F1'}]}))
+   s.add(panel);s.flush();pid=panel.id
+  url='/panels/'+pid;decision={'bend_directions':{'A:F0:F1':'up'}}
+  assert c.post(url+'/review',json=decision).status_code==422
+  assert c.post(url+'/review',json={**decision,'expected_revision':0}).status_code==409
+  assert c.post(url+'/review',json={'expected_revision':1,'bend_directions':{'unknown':'up'}}).status_code==422
+  saved=c.post(url+'/review',json={**decision,'expected_revision':1})
+  assert saved.status_code==202
+  assert saved.json()['overrides']['bend_directions']==decision['bend_directions']
+  with Session.begin() as s:
+   s.get(Panel,pid).status='NEEDS_REVIEW'
+   for job in s.query(Job).filter_by(panel_id=pid):job.status='DONE'
+  p=c.get(url).json()
+  cleared=c.post(url+'/review',json={'expected_revision':p['revision'],'bend_directions':{'A:F0:F1':None}})
+  assert cleared.status_code==202 and cleared.json()['overrides']['bend_directions']=={}
+  with Session.begin() as s:
+   for job in s.query(Job).filter_by(panel_id=pid):job.status='DONE'

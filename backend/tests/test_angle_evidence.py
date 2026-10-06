@@ -56,7 +56,7 @@ def test_plan_relief_dimension_is_not_a_bend(tmp_path):
 
 
 def test_conflicting_label_needs_review_and_override_still_works(tmp_path):
-    path,doc,origin,p=drawing(tmp_path,text='90°') # actual included120
+    path,doc,origin,p=drawing(tmp_path,angle=110,text='90°') # actual included70
     doc.saveas(path)
     result=run({'source':str(path),'output':str(tmp_path/'out'),'overrides':{'confirm_parameters':True}})
     assert result['status']=='NEEDS_REVIEW'
@@ -75,9 +75,9 @@ def test_conflicting_label_needs_review_and_override_still_works(tmp_path):
     assert (tmp_path/'override/panel.step').exists()
 
 
-@pytest.mark.parametrize('label,rotation',[('120°',60.),('120',60.),('120.2°',59.8)])
+@pytest.mark.parametrize('label,rotation',[('70°',110.),('70',110.),('70.2°',109.8)])
 def test_dimension_value_reaches_solid_without_manual_input(tmp_path,label,rotation):
-    path,doc,origin,p=drawing(tmp_path,60,'3p',label);doc.saveas(path)
+    path,doc,origin,p=drawing(tmp_path,110,'3p',label);doc.saveas(path)
     r=run({'source':str(path),'output':str(tmp_path/'out'),'overrides':{'confirm_parameters':True}})
     assert r['status']=='PASS',r
     bends=[b for b in r['bends'] if b['drawing_dimensions']]

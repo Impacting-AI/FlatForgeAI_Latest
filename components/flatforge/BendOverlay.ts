@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export type Hinge={id:number;name:string;parent:number;child:number;axis:number[];d:number[];hinge?:number[];allowance?:number;coordinate:number;dim:number;low:number;high:number;angle:number|null;source:{profile:string;vertex?:number|null}[];folded_lines?:{face:number;surface:number;points:number[][]}[]};
+export type Hinge={id:number;name:string;parent:number;child:number;axis:number[];d:number[];hinge?:number[];allowance?:number;k_factor?:number|null;coordinate:number;dim:number;low:number;high:number;angle:number|null;source:{profile:string;vertex?:number|null}[];folded_lines?:{face:number;surface:number;points:number[][]}[]};
 export type Drawing={mode?:string;thickness:number;radius:number;allowance:number;k_factor:number;faces:{id:number;polygons:{outer:number[][];holes:number[][][]}[]}[];bends:Hinge[]};
 export const vector=(p:number[])=>new THREE.Vector3(p[0],p[1],p[2]);
 export const hingePoint=(e:Hinge)=>e.hinge?vector(e.hinge):new THREE.Vector3().setComponent(1-e.dim,e.coordinate);
@@ -13,7 +13,7 @@ export function hingeTransforms(data:Drawing,fraction:number){
   const parent=world(e.parent);
   if(f<.00001||e.angle==null){transforms.set(id,parent.clone());return transforms.get(id)!;}
   const angle=THREE.MathUtils.degToRad(e.angle)*f,axis=vector(e.axis),d=vector(e.d),h=hingePoint(e),allowance=e.allowance??data.allowance;
-  const R=new THREE.Matrix4().makeRotationAxis(axis,angle),rm=allowance/Math.abs(angle)+(0.5-data.k_factor)*data.thickness;
+  const R=new THREE.Matrix4().makeRotationAxis(axis,angle),rm=allowance/Math.abs(angle)+(0.5-(e.k_factor??data.k_factor))*data.thickness;
   const w=new THREE.Vector3().crossVectors(axis,d).multiplyScalar(Math.sign(angle));
   const center=h.clone().addScaledVector(d,-allowance/2).addScaledVector(w,rm);
   const end=center.clone().addScaledVector(w.clone().applyMatrix4(R),-rm);

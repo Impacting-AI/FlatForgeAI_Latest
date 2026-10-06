@@ -385,6 +385,9 @@ def lift(p):return np.array([p[0],p[1],0.])
 def apply_tf(tf,p):return tf[0]@np.array(p)+tf[1]
 
 def transforms(faces,edges,order,t,r,bd):
+    from .bend_rules import parameter_check
+    invalid=[parameter_check(t,r,bd,e['angle']) for e in edges if not parameter_check(t,r,bd,e['angle'])['valid']]
+    if invalid:raise GeometryEvidenceError('Fixed bend parameters cannot produce a physical sheet bend.',{'code':'BEND_PARAMETERS','bends':invalid})
     rm=r+t/2;tf={0:(np.eye(3),np.zeros(3))}
     for child in order[1:]:
         e=next(e for e in edges if e['child']==child);parent=e['parent']
@@ -398,9 +401,9 @@ def transforms(faces,edges,order,t,r,bd):
     return tf
 
 def bend_allowance(t,r,bd,angle):
-    """BD is the 90-degree calibration; constant K gives BA at other angles."""
+    """Fixed total deduction: outside setbacks minus developed bend allowance."""
     if not 0<abs(angle)<180:raise ValueError('Bend rotation must be between 0 and 180 degrees')
-    return (2*(r+t)-bd)*abs(angle)/90.
+    return 2*(r+t)*math.tan(math.radians(abs(angle))/2)-bd
 
 def bend_strip(e,half_width,extension=0.):
     u,n,c=support(e);lo,hi=hinge_span(e);h=n*c

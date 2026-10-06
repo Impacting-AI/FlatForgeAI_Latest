@@ -28,3 +28,12 @@ test('final overlay uses exact backend coordinates and never inserts a mesh',()=
  assert.deepEqual(bendSegments(data,data.bends[0],1).map(s=>s.map(p=>p.toArray())),[[[1,2,3],[1,82,3]]]);
  const overlay=createBendOverlay(data,'panel');assert.ok(overlay.group.children.every(o=>o instanceof THREE.LineSegments));assert.equal(overlay.group.scale.x,.001);overlay.dispose();
 });
+test('each hinge uses its own neutral-axis factor during animation',()=>{
+ const data=fixture(60);data.bends[0].k_factor=.2;data.bends[1].k_factor=.4;
+ const expected=hingeTransforms(data,.5);
+ data.k_factor=99;
+ const actual=hingeTransforms(data,.5);
+ for(const id of [1,2])assert.deepEqual(actual.get(id).elements,expected.get(id).elements);
+ delete data.bends[0].k_factor;
+ assert.notDeepEqual(hingeTransforms(data,.5).get(1).elements,expected.get(1).elements);
+});

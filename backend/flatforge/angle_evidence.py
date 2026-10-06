@@ -84,9 +84,9 @@ def annotate_profiles(doc,origin,profiles,thickness):
                     included=math.degrees(math.acos(np.clip(rays[0]@rays[1],-1,1)))
                     measured=annotation['measured_deg']
                     if min(abs(measured-included),abs(measured-(180-included)))>1:continue
-                    convention='included' if abs(measured-included)<=abs(measured-(180-included)) else 'rotation'
+                    convention='included'
                     value=annotation['value_deg']
-                    rotation=(180-value if convention=='included' else value) if value is not None else None
+                    rotation=180-value if value is not None else None
                     handles=sorted(h for s in p['segments'][i-1:i+1] for h in s['handles'])
                     matches.append((p,i,handles,rotation,included,convention))
         if len(matches)==1:

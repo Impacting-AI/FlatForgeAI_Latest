@@ -8,7 +8,7 @@ from test_complex_geometry import channel
 @pytest.mark.parametrize('representation', ['lines', 'polyline'])
 def test_equivalent_contour_and_hinge_entities_build_same_solid(tmp_path, representation):
     source=tmp_path/'source.dxf'
-    channel(source,60,plan=27,main_width=217,left=33,right=42,height=91)
+    channel(source,100,plan=27,main_width=217,left=33,right=42,height=91)
     baseline=run({'source':str(source),'output':str(tmp_path/'baseline'),
                   'overrides':{'confirm_parameters':True}})
     doc=ezdxf.readfile(source);ms=doc.modelspace()

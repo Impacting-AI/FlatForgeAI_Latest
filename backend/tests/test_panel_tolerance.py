@@ -9,7 +9,7 @@ from test_complex_geometry import channel
 
 
 def near_limit(path):
-    channel(path,60)
+    channel(path,100)
     doc=ezdxf.readfile(path)
     line=list(doc.modelspace().query('LINE[layer=="KIFOF"]'))[0]
     shift=.672*np.array([np.cos(np.radians(37)),np.sin(np.radians(37)),0])

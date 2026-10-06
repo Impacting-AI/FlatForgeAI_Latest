@@ -11,7 +11,7 @@ from .review import prepare_review, geometry_payload
 from .panel_angle import apply_panel_angle, panel_angle_summary, recover_directions
 from .corner_review import continuation_candidates
 from .angle_evidence import annotate_profiles, attach_hinge_dimensions
-DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
+from .bend_rules import DEFAULTS, apply_directions, direction_factor, parameter_check
 def dump(path,obj):
  def clean(x):
   if isinstance(x,np.ndarray):return clean(x.tolist())
@@ -97,9 +97,10 @@ def viewer_data(faces,material,edges,tf,t,r,bd):
   u,n,c=g.support(e);axis=g.lift(u);h=g.lift(n*c)
   d=g.lift(n)*np.sign(np.array(faces[e['child']].representative_point().coords[0])@n-c)
   angle=e.get('angle');allowance=g.bend_allowance(t,r,bd,angle) if angle is not None else 0.
+  if tf is None and angle is not None and not parameter_check(t,r,bd,angle)['valid']:allowance=0.
   lo,hi=g.hinge_span(e)
   bend={'id':e['index'],'name':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],
-    'axis':axis,'d':d,'hinge':h,'allowance':allowance,'coordinate':e['c'],'dim':e['dim'],'low':lo,'high':hi,
+    'axis':axis,'d':d,'hinge':h,'allowance':allowance,'k_factor':parameter_check(t,r,bd,angle)['k_factor'] if angle is not None else None,'coordinate':e['c'],'dim':e['dim'],'low':lo,'high':hi,
     'angle':angle,'included_angle':180-abs(angle) if angle is not None else None,
     'status':'KNOWN' if angle is not None else 'NEEDS_REVIEW','source':e.get('evidence',[])}
   # Both surfaces at each tangent to the bend, in the final solid's mm frame.
@@ -109,7 +110,7 @@ def viewer_data(faces,material,edges,tf,t,r,bd):
      for face,offset in ((e['parent'],-allowance/2),(e['child'],allowance/2)) for side in (-1,1)]
   bends.append(bend)
  return {'units':'mm','mode':'folded' if tf is not None else 'flat_review','angle_convention':'signed rotation from flat; included angle = 180 - abs(rotation)',
-  'thickness':t,'radius':r,'deduction':bd,'allowance':ba,'k_factor':(ba/(math.pi/2)-r)/t,
+  'thickness':t,'radius':r,'deduction':bd,'allowance':ba,'k_factor':(ba/(math.pi/2)-r)/t,'deduction_mode':'fixed_per_bend',
   'faces':[{'id':i,'polygons':[{'outer':list(p.exterior.coords),'holes':[list(h.coords) for h in p.interiors]} for p in g.poly_parts(material[i])],
             **({'rotation':tf[i][0],'translation':tf[i][1]} if tf is not None else {})} for i in range(len(faces))],
   'bends':bends}
@@ -155,7 +156,7 @@ def run(config):
  report['engine_fingerprint']=code_digest.hexdigest()
  panel_angle=overrides.get('panel_bend_angle_deg')
  apply_panel_angle([],panel_angle) # validate direct engine callers too
- preview_requested=bool(overrides.get('build_review_model') or panel_angle is not None);edges=None
+ preview_requested=bool(overrides.get('build_review_model') or panel_angle is not None or overrides.get('bend_directions'));edges=None
  def checkpoint(phase,message):
   report['phase_message']=message
   print(message,flush=True)
@@ -166,6 +167,12 @@ def run(config):
   if status=='NEEDS_REVIEW' and edges and not (out/'viewer.json').exists():
    dump(out/'viewer.json',viewer_data(faces,material,edges,None,settings['thickness'],settings['radius'],settings['deduction']))
   bends=report.get('bends',[])
+  for b in bends:
+   e=next((e for e in (edges or []) if e['index']==b['id']),None)
+   if e is not None:
+    b['direction']=('up' if b['angle']*direction_factor(e,faces)>0 else 'down') if b.get('angle') is not None else overrides.get('bend_directions',{}).get(b.get('key'))
+    detected=e.get('source_angle',e.get('angle') if not any(v.get('profile') in ('PANEL ANGLE','USER DIRECTION','USER CONFIRMED') for v in e.get('evidence',[])) else None)
+    b['detected_direction']=('up' if detected*direction_factor(e,faces)>0 else 'down') if detected is not None else None
   report['panel_bend_angle']=panel_angle_summary(bends,panel_angle)
   report['angle_review']={
    'policy':'drawing_first_explicit_fallback',
@@ -250,11 +257,7 @@ def run(config):
  report['units_evidence']='DXF millimetres' if doc.units==4 else 'Unitless DXF; interpreted in millimetres under workspace convention'
  if settings['input_type']!='flat_pattern':issue('INPUT_TYPE','This engine requires a developed flat pattern. Folded-dimension drawings need an explicit developed-pattern export.');return finish('NEEDS_REVIEW')
  t,r,bd=settings['thickness'],settings['radius'],settings['deduction'];ba=2*(r+t)-bd;k=(ba/(math.pi/2)-r)/t
- if not 0<k<1:
-  issue('BEND_PARAMETERS',f'Panel settings t={t:g} mm, r={r:g} mm, BD90={bd:g} mm imply K={k:.6g}; this model requires 0 < K < 1. Check the saved panel settings.',
-        thickness_mm=t,inside_radius_mm=r,deduction_90_mm=bd,calculated_k=k,
-        deduction_range_exclusive_mm=[2*(r+t)-(math.pi/2)*(r+t),2*(r+t)-(math.pi/2)*r])
-  return finish('NEEDS_REVIEW')
+ report['bend_parameter_model']={'deduction_mode':'fixed_per_bend','deduction_mm':bd,'inside_radius_mm':r,'k_factor':'calculated per bend; not a global constant'}
  for e in edges:
   for field in ('angle','evidence','confirmed'):e.pop(field,None)
  report['angle_evidence_checked']=True
@@ -292,7 +295,6 @@ def run(config):
   report['unresolved_bends']=map_review(edges,overrides.get('bend_angles',{}))
   report['bends']=[{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'source_angle':e.get('source_angle',None if any(v.get('profile')=='USER CONFIRMED' for v in e.get('evidence',[])) else e.get('angle')),'drawing_dimensions':e.get('drawing_dimensions',[]),'detected_angle':e.get('detected_angle'),'confirmed':e.get('confirmed',False)} for e in edges]
   if review_errors:return finish('NEEDS_REVIEW')
-  report['bend_parameter_model']={'deduction_reference_angle_deg':90,'k_factor':k,'other_angles':'constant K derived from the 90-degree calibration'}
   unresolved=[m for m in mapped if m['status']!='PASS']
   if unresolved:
    reasons='; '.join(f"{m['profile']}: {m['reason']}" for m in unresolved)
@@ -310,12 +312,21 @@ def run(config):
   issue('EVIDENCE','Drawing does not establish thickness or deduction reliably. Confirm the panel parameters before conversion.');return finish('NEEDS_REVIEW')
  dimension_conflicts=attach_hinge_dimensions(edges,profs)
  recover_directions(edges,report.get('review_catalog',[]))
+ apply_directions(edges,faces,overrides.get('bend_directions',{}))
  blocked_panel_angles=apply_panel_angle(edges,panel_angle)
  if blocked_panel_angles:
   issue('PANEL_ANGLE_DIRECTION','The panel angle is saved, but the drawing does not establish a reliable fold direction or has conflicting angle evidence. Correct the drawing evidence before rebuilding; no directions were guessed.')
  unknown=map_review(edges,overrides.get('bend_angles',{}))
+ apply_directions(edges,faces,overrides.get('bend_directions',{}))
  if dimension_conflicts:
   issue('ANGLE_EVIDENCE_CONFLICT','Angular dimensions disagree with section geometry. Inspect the drawing and explicitly resolve the affected signed rotations.')
+ checks=[dict(parameter_check(t,r,bd,e['angle']),bend_ids=[l['id'] for l in e['source']]) for e in edges if 'angle' in e]
+ report['bend_parameters']=checks
+ invalid=[c for c in checks if not c['valid']]
+ if invalid:
+  issue('BEND_PARAMETERS','Fixed deduction, radius and angle imply non-positive allowance or a neutral axis outside the sheet. No solid was generated. '+ '; '.join(f"{','.join(c['bend_ids'])}: included {c['included_angle_deg']:g}°, allowance {c['allowance_mm']:.6g} mm, K {c['k_factor']:.6g}" for c in invalid)+'',bends=invalid)
+  report['bends']=[{'id':e['index'],'key':e['review_key'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'source':e.get('evidence',[])} for e in edges]
+  return finish('NEEDS_REVIEW')
  corners=continuation_candidates(faces,edges,order,t,r,bd)
  report['corner_angle_candidates']=corners
  # A hypothetical coplanar continuation is not contradictory drawing evidence.
@@ -347,7 +358,7 @@ def run(config):
     'reference':'Convention confirmed by the customer against the reconstructed folded panel.'}
   dump(out/'local_profile_checks.json',local_checks)
  unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out)
- report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=k,allowance=ba,corner_contacts=g.partition.contacts)
+ report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=None,allowance=None,corner_contacts=g.partition.contacts)
  if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or unfolding tolerances failed. Inspect validation results.')
  for c in checks:
   if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and c.get('validation_scope')!='local_edge_profile' and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
