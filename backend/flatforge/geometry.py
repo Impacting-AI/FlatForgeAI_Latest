@@ -492,9 +492,10 @@ def rotation(axis,angle):
 def lift(p):return np.array([p[0],p[1],0.])
 def apply_tf(tf,p):return tf[0]@np.array(p)+tf[1]
 
-def transforms(faces,edges,order,t,r,bd):
+def transforms(faces,edges,order,t,r,bd,validation_mode="physical"):
+    if validation_mode not in ("dimensional","physical"):raise ValueError("Unknown validation mode")
     from .bend_rules import parameter_check
-    invalid=[parameter_check(t,r,bd,e['angle']) for e in edges if not parameter_check(t,r,bd,e['angle'])['valid']]
+    invalid=[parameter_check(t,r,bd,e['angle']) for e in edges if not parameter_check(t,r,bd,e['angle'])['valid' if validation_mode=='physical' else 'constructible']]
     if invalid:raise GeometryEvidenceError('Fixed bend parameters cannot produce a physical sheet bend.',{'code':'BEND_PARAMETERS','bends':invalid})
     rm=r+t/2;tf={0:(np.eye(3),np.zeros(3))}
     for child in order[1:]:

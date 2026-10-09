@@ -10,9 +10,9 @@ from . import geometry as g
 from .review import bend_key
 
 
-def continuation_candidates(faces,edges,order,t,r,bd):
+def continuation_candidates(faces,edges,order,t,r,bd,validation_mode="physical"):
     if any('angle' not in e for e in edges):return []
-    tf=g.transforms(faces,edges,order,t,r,bd)
+    tf=g.transforms(faces,edges,order,t,r,bd,validation_mode=validation_mode)
     result={}
     for seam in edges:
         u,n,c=g.support(seam);lo,hi=g.hinge_span(seam)

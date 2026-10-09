@@ -26,16 +26,25 @@ function Profile({points}:{points:Point[]}){
  return <svg aria-label="Source section profile with numbered vertices" viewBox={`${x-pad} ${y-pad} ${w+2*pad} ${h+2*pad}`} style={{width:'100%',height:150,background:'#f5f8fa'}}><g transform={`translate(0 ${2*y+h}) scale(1 -1)`}><polyline points={points.map(p=>p.join(',')).join(' ')} fill="none" stroke="#167a71" strokeWidth={Math.max(w,h)/300}/>{points.slice(1,-1).map((p,i)=><g key={i} transform={`translate(${p[0]} ${p[1]}) scale(1 -1)`}><circle r={Math.max(w,h)/220} fill="#c95319"/><text fontSize={Math.max(w,h)/40} y={-Math.max(w,h)/90}>{i+1}</text></g>)}</g></svg>
 }
 
-export default function GeometryReview({panel,directions,onDirection,disabled}:{panel:Panel;directions:Record<string,'up'|'down'|null>;onDirection:(key:string,value:'up'|'down'|null)=>void;disabled:boolean}){
+export default function GeometryReview({panel,directions,onDirection,choices,onChoice,disabled}:{panel:Panel;choices:Record<string,string>;onChoice:(profile:string,candidate:string)=>void;directions:Record<string,'up'|'down'|null>;onDirection:(key:string,value:'up'|'down'|null)=>void;disabled:boolean}){
  const [selected,setSelected]=useState('');const [section,setSection]=useState('');
  const geometry=panel.report.review_geometry;const catalog=panel.report.review_catalog??[];
  if(!geometry)return null;
  const current=catalog.find(s=>s.profile===section)??catalog[0];
+ const candidate=current?.candidates.find(c=>c.id===(choices[current.profile]??current.selected));
  return <details className="review-decisions"><summary>Drawing geometry and angle sources</summary>
   <p>Drawing angles take priority. Up/down describes the child flange moving toward/away from the parent face’s local +Z side. Unknown directions must be selected before building.</p>
   <div style={{overflowX:'auto'}}><table className="calculation-table"><thead><tr><th>Bend / faces</th><th>Included angle</th><th>Direction</th><th>Evidence</th></tr></thead><tbody>{panel.report.bends?.map(b=><tr key={b.key}><td>{b.bend_ids.join('/')} · F{b.parent} → F{b.child}</td><td>{b.angle==null?'Missing · panel fallback':`${180-Math.abs(b.angle)}°`}</td><td><select aria-label={`Direction ${b.bend_ids.join('/')} F${b.parent} to F${b.child}`} disabled={disabled} value={directions[b.key]??''} onChange={e=>onDirection(b.key,e.target.value===''?null:e.target.value as 'up'|'down')}><option value="">Drawing: {b.detected_direction??'UNKNOWN — select direction'}</option><option value="up">Up · operator override</option><option value="down">Down · operator override</option></select></td><td>{b.source?.map(x=>x.profile).join(', ')||'not found'}</td></tr>)}</tbody></table></div>
-  <Drawing {...geometry} selected={selected} onSelect={setSelected}/>
-  {current&&<><label>Source section <select aria-label="Source section" value={current.profile} onChange={e=>setSection(e.target.value)}>{catalog.map(s=><option key={s.profile}>{s.profile}</option>)}</select></label><Profile points={current.points}/><p>{current.status} · {current.reason}</p></>}
+  <Drawing {...geometry} selected={selected} onSelect={setSelected} highlight={candidate?.faces??[]}/>
+  {current&&<><label>Source section <select aria-label="Source section" value={current.profile} onChange={e=>setSection(e.target.value)}>{catalog.map(s=><option key={s.profile}>{s.profile}</option>)}</select></label><Profile points={current.points}/><p>{current.status} · {current.reason}</p>
+   <label>Section corresponds to <select aria-label="Section correspondence" disabled={disabled||!current.candidates.length} value={choices[current.profile]??''} onChange={e=>onChoice(current.profile,e.target.value)}>
+    <option value="">Automatic — keep ambiguous matches unresolved</option>
+    {current.candidates.map(c=><option key={c.id} value={c.id}>{c.kind} · {c.faces.map(f=>`F${f}`).join(' → ')} · difference {c.max_strip_error_mm.toFixed(3)} mm{c.fits_tolerance?'':' · outside tolerance'}</option>)}
+   </select></label>
+   <p>Select only the chain this section actually describes. Highlighted faces show the selected match. This records your interpretation and rebuilds all checks; it does not waive dimensional errors.</p>
+   {candidate&&<p>Selected chain: {candidate.folds.map(f=>`${f.bend_ids.join('/')} at vertex ${f.vertex}: signed rotation ${f.angle}°`).join('; ')}</p>}
+   {!current.candidates.length&&<p>No supported correspondence was found. A section cut position or clarified profile is needed; an angle alone cannot resolve this.</p>}
+  </>}
   {panel.report.section_mapping?.filter(row=>row.status==='NEEDS_REVIEW').map(row=><section key={row.profile} aria-label={`${row.profile} segment diagnostics`}>
    <h3>{row.profile}: section comparison</h3><p>{row.reason}</p>
    {row.nearest_candidate&&<><p>{row.nearest_candidate.normal_to_all_hinges?'Normal section candidate':'Projected/non-normal candidate — these apparent turns cannot directly establish fold rotations.'}</p>

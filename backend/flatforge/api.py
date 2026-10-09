@@ -46,6 +46,7 @@ class ReviewInput(BaseModel):
  bend_angles:dict[str,float|None]=Field(default_factory=dict)
  bend_directions:dict[str,Literal['up','down']|None]=Field(default_factory=dict)
  section_choices:dict[str,str]|None=None
+ validation_mode:Literal['dimensional','physical']|None=None
  build_review_model:bool=False
  expected_revision:int|None=None
  panel_bend_angle_deg:float|None=Field(default=None,gt=0,lt=180,allow_inf_nan=False)
@@ -127,7 +128,7 @@ def review(id:str,body:ReviewInput):
   p=lock_panel(s,id)
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
   if body.expected_revision is not None and body.expected_revision!=p.revision:raise HTTPException(409,'Drawing revision changed. Refresh before saving decisions.')
-  if (body.section_choices is not None or body.build_review_model or body.bend_directions or 'panel_bend_angle_deg' in body.model_fields_set) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
+  if (body.validation_mode is not None or body.section_choices is not None or body.build_review_model or body.bend_directions or 'panel_bend_angle_deg' in body.model_fields_set) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
   report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}
   if (set(body.bend_angles)|set(body.bend_directions))-allowed:raise HTTPException(422,'Unknown bend key in review decision')
   selections={r['profile']:{c['id'] for c in r['candidates']} for r in report.get('review_catalog',[])}
@@ -147,6 +148,7 @@ def review(id:str,body:ReviewInput):
    else:directions[key]=value
   overrides['bend_directions']=directions
   overrides['bend_angles']=angles
+  if body.validation_mode is not None:overrides['validation_mode']=body.validation_mode
   if body.section_choices is not None:overrides['section_choices']=body.section_choices
   if body.strip_tolerance_mm is not None:overrides['strip_tolerance_mm']=body.strip_tolerance_mm
   overrides['build_review_model']=body.build_review_model

@@ -55,6 +55,7 @@ def test_overlay_is_checked_against_step(reconstructed):
 @pytest.mark.parametrize('missing',['brep_check','corner_check','overlay_check','overlap_check','unfold_check','section_checks','bend_traceability'])
 def test_missing_check_cannot_verify(reconstructed,missing):
     data,out,report=reconstructed
+    report['validation_mode']='physical'
     report.pop(missing)
     result=validation.export_verification(report,'PASS',out)
     assert result['status']=='REVIEW'

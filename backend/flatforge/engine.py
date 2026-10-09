@@ -97,7 +97,7 @@ def viewer_data(faces,material,edges,tf,t,r,bd):
   u,n,c=g.support(e);axis=g.lift(u);h=g.lift(n*c)
   d=g.lift(n)*np.sign(np.array(faces[e['child']].representative_point().coords[0])@n-c)
   angle=e.get('angle');allowance=g.bend_allowance(t,r,bd,angle) if angle is not None else 0.
-  if tf is None and angle is not None and not parameter_check(t,r,bd,angle)['valid']:allowance=0.
+  if tf is None and angle is not None and not parameter_check(t,r,bd,angle)['constructible']:allowance=0.
   lo,hi=g.hinge_span(e)
   bend={'id':e['index'],'name':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],
     'axis':axis,'d':d,'hinge':h,'allowance':allowance,'k_factor':parameter_check(t,r,bd,angle)['k_factor'] if angle is not None else None,'coordinate':e['c'],'dim':e['dim'],'low':lo,'high':hi,
@@ -149,6 +149,10 @@ def run(config):
   target=out/name
   if target.exists() and target.resolve()!=source.resolve():target.unlink()
  settings={**DEFAULTS,**config.get('settings',{})};overrides=config.get('overrides',{});issues=[];report={'settings':settings,'issues':issues,'status':'FAILED'}
+ mode=overrides.get('validation_mode','dimensional')
+ if mode not in ('dimensional','physical'):raise ValueError('Unknown validation mode')
+ report['validation_mode']=mode
+ report['warnings']=[]
  tolerance=float(overrides.get('strip_tolerance_mm',.5))
  if not math.isfinite(tolerance) or tolerance<=0:raise ValueError('Strip tolerance must be a finite positive value in mm')
  report['strip_tolerance_mm']=tolerance
@@ -216,7 +220,10 @@ def run(config):
    'partial_sections_accepted':bool(overrides.get('accept_partial_sections')),
    'relief_extensions_accepted':bool(overrides.get('accept_relief_extensions')),
    'review_model_requested':preview_requested,
-   'manufacturing_ready':status=='PASS',
+   'validation_mode':mode,
+   'dimensional_verified':verification['status']=='VERIFIED',
+   'physical_unfolding':verification['physical_unfolding'],
+   'manufacturing_ready':False,
    'limitations':['Checks validate the supplied drawing and selected parameters; PASS does not prove equivalence to a client reference STEP.']}
   dump(out/'report.json',report)
   artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
@@ -355,12 +362,15 @@ def run(config):
   issue('ANGLE_EVIDENCE_CONFLICT','Angular dimensions disagree with section geometry. Inspect the drawing and explicitly resolve the affected signed rotations.')
  checks=[dict(parameter_check(t,r,bd,e['angle']),bend_ids=[l['id'] for l in e['source']]) for e in edges if 'angle' in e]
  report['bend_parameters']=checks
- invalid=[c for c in checks if not c['valid']]
+ invalid=[c for c in checks if not c['valid' if mode=='physical' else 'constructible']]
+ physical_conflicts=[c for c in checks if not c['valid']]
+ if physical_conflicts and mode=='dimensional':
+  report['warnings'].append({'code':'PHYSICAL_BEND_PARAMETERS','message':'Fixed deduction and selected radius/angle do not establish a physical neutral axis inside the sheet. Folded dimensions remain subject to independent validation; physical unfolding is unverified.','bends':physical_conflicts})
  if invalid:
   issue('BEND_PARAMETERS','Fixed deduction, radius and angle imply non-positive allowance or a neutral axis outside the sheet. No solid was generated. '+ '; '.join(f"{','.join(c['bend_ids'])}: included {c['included_angle_deg']:g}°, allowance {c['allowance_mm']:.6g} mm, K {c['k_factor']:.6g}" for c in invalid)+'',bends=invalid)
   report['bends']=[{'id':e['index'],'key':e['review_key'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'source':e.get('evidence',[])} for e in edges]
   return finish('NEEDS_REVIEW')
- corners=continuation_candidates(faces,edges,order,t,r,bd)
+ corners=continuation_candidates(faces,edges,order,t,r,bd,validation_mode=mode)
  report['corner_angle_candidates']=corners
  # A hypothetical coplanar continuation is not contradictory drawing evidence.
  # Preserve measured angles and show the alternative without demanding re-entry.
@@ -380,7 +390,7 @@ def run(config):
   issue('BEND_TRACEABILITY','Resolved angles lack complete or consistent source evidence; no solid was generated.',hinges=incomplete)
   return finish('NEEDS_REVIEW')
  checkpoint('BUILDING','Section mapping complete. Building and validating the folded solid…')
- tf=g.transforms(faces,edges,order,t,r,bd);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
+ tf=g.transforms(faces,edges,order,t,r,bd,validation_mode=mode);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
  if not stats['valid'] or stats['solid_count']!=1:raise ValueError('CAD validation failed: expected one valid connected solid.')
  normal_profs=[p for p in normal_instances(profs) if 'trace' in p] if general else profs
  checks,details=g.check_sections(solid,normal_profs,faces,tf,t,r,out,material,tolerance) if normal_profs else ([],[])
@@ -397,7 +407,10 @@ def run(config):
   dump(out/'local_profile_checks.json',local_checks)
  unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out)
  report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=None,allowance=None,corner_contacts=g.partition.contacts)
- if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or unfolding tolerances failed. Inspect validation results.')
+ if any(c['chain_status']!='PASS' for c in checks):issue('VALIDATION','Solid generated but documented section tolerances failed. Inspect validation results.')
+ if unfold['status']!='PASS':
+  if mode=='physical':issue('UNFOLD_VALIDATION','Solid generated but unfolding tolerances failed. Inspect validation results.')
+  else:report['warnings'].append({'code':'UNFOLD_VALIDATION','message':'Folded dimensions are checked separately. Exact unfolding to CONTOR has not been verified; inspect unfolding diagnostics.'})
  for c in checks:
   if c['chain_status']=='PASS' and c['full_plane_status'] not in ('PASS','NOT_APPLICABLE') and c.get('validation_scope')!='local_edge_profile' and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
  if extensions and not overrides.get('accept_relief_extensions'):

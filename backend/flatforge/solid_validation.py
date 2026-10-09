@@ -172,8 +172,13 @@ def inspect_corners(solid,blank,trimmed,edges,tf,t):
 def export_verification(report,status,out):
     """Fail closed. A successful Boolean is not drawing verification."""
     import json
+    mode=report.get('validation_mode','physical') # Legacy reports retain strict gating.
+    if mode not in ('dimensional','physical'):raise ValueError('Unknown validation mode')
+    parameters=report.get('bend_parameters',[])
+    physical=bool(parameters) and all(c.get('valid') is True for c in parameters) and report.get('unfold_check',{}).get('status')=='PASS'
     checks={key:report.get(key,{}).get('status')=='PASS' for key in
-            ('brep_check','corner_check','overlay_check','overlap_check','unfold_check')}
+            ('brep_check','corner_check','overlay_check','overlap_check')}
+    if mode=='physical':checks['physical_unfolding']=physical
     sections=report.get('section_checks',[])
     checks['documented_sections']=bool(sections) and all(c.get('chain_status')=='PASS' for c in sections)
     trace=report.get('bend_traceability',[])
@@ -188,7 +193,9 @@ def export_verification(report,status,out):
             source=out/f'panel.{suffix}'
             if source.exists():source.replace(out/f'review_model.{suffix}')
     result={'status':'VERIFIED' if verified else 'REVIEW','checks':checks,
-            'scope':'Drawing and selected parameters within reported tolerances; not client-reference equivalence',
+            'validation_mode':mode,
+            'physical_unfolding':'VERIFIED' if physical else 'UNVERIFIED',
+            'scope':'Folded dimensions against drawing and selected parameters; not client-reference equivalence or manufacturing certification. Physical unfolding is reported separately.',
             'files':{p.name:('VERIFIED' if verified else 'REVIEW') for p in out.iterdir()
                      if p.suffix.lower() in ('.step','.stl','.glb')}}
     if (out/'review_model.step').exists():

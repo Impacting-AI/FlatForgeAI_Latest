@@ -33,5 +33,6 @@ def parameter_check(t,r,bd,angle):
     ba=bend_allowance(t,r,bd,angle);theta=math.radians(abs(angle));k=(ba/theta-r)/t
     return {'rotation_deg':angle,'included_angle_deg':180-abs(angle),'allowance_mm':ba,
             'deduction_mm':bd,'inside_radius_mm':r,'thickness_mm':t,'k_factor':k,
+            'constructible':ba>0 and math.isfinite(ba),
             'valid':ba>0 and 0<=k<=1,
             'deduction_range_mm':[2*(r+t)*math.tan(theta/2)-theta*(r+t),2*(r+t)*math.tan(theta/2)-theta*r]}

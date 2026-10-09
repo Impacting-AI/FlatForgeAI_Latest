@@ -184,3 +184,32 @@ def test_legacy_pass_does_not_bypass_verification_gate():
    session.add(panel);session.flush();pid=panel.id;project_id=project.id
   assert client.get(f'/panels/{pid}/files/panel.step').status_code==409
   assert client.get(f'/projects/{project_id}/export').status_code==409
+
+
+def test_validation_target_and_section_choice_are_revision_bound():
+ from flatforge.db import Project
+ with TestClient(app) as c:
+  c.headers['X-Flatforge-Key']=os.environ['FLATFORGE_API_KEY']
+  with Session.begin() as s:
+   project=Project(name='Section decision');s.add(project);s.flush()
+   panel=Panel(project_id=project.id,filename='generic.dxf',source_key='unused',status='NEEDS_REVIEW',
+    settings=json.dumps({'thickness':2,'radius':.7366,'deduction':4,'input_type':'flat_pattern'}),
+    report=json.dumps({'review_catalog':[{'profile':'SECTION','candidates':[{'id':'candidate-a'}]}]}))
+   s.add(panel);s.flush();pid=panel.id
+  url=f'/panels/{pid}/review'
+  assert c.post(url,json={'validation_mode':'dimensional'}).status_code==422
+  assert c.post(url,json={'expected_revision':1,'validation_mode':'skip_all'}).status_code==422
+  assert c.post(url,json={'expected_revision':1,'section_choices':{'SECTION':'invented'}}).status_code==422
+  saved=c.post(url,json={'expected_revision':1,'validation_mode':'physical','section_choices':{'SECTION':'candidate-a'}})
+  assert saved.status_code==202
+  values=saved.json()['overrides'];assert values['validation_mode']=='physical'
+  assert values['section_choices']=={'SECTION':'candidate-a'}
+  with Session.begin() as s:
+   s.get(Panel,pid).status='NEEDS_REVIEW'
+   for job in s.query(Job).filter_by(panel_id=pid):job.status='DONE'
+  cleared=c.post(url,json={'expected_revision':2,'validation_mode':'dimensional','section_choices':{}})
+  assert cleared.status_code==202
+  assert cleared.json()['overrides']['section_choices']=={}
+  assert cleared.json()['settings']['radius']==.7366
+  with Session.begin() as s:
+   for job in s.query(Job).filter_by(panel_id=pid):job.status='DONE'
