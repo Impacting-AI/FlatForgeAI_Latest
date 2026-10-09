@@ -1,4 +1,7 @@
 'use client';
+import {createBendOverlay,bendLabel} from './BendOverlay';
+import type {Drawing,Hinge} from './BendOverlay';
+
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -46,24 +49,27 @@ type Props = {
  panels: Panel[];
  paint: boolean;
  wire: boolean;
+ bendLines: boolean;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({entries,panels,paint,wire},ref){
+ function AssemblyViewer({entries,panels,paint,wire,bendLines},ref){
   const host = useRef<HTMLDivElement>(null);
   const viewApi = useRef<{fit:()=>void;screenshot:()=>void}|null>(null);
-  const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
+  const applyRef = useRef<((p:boolean,w:boolean,b:boolean)=>void)|null>(null);
   const runClashRef = useRef<()=>ClashResult[]>(()=>[]);
   const clearClashRef = useRef<()=>void>(()=>{});
   // Track latest paint/wire for use inside async closures
   const paintLatest = useRef(paint);
   const wireLatest = useRef(wire);
+  const bendLatest = useRef(bendLines);
+  const [hover,setHover]=useState<string|null>(null);
   const [msg,setMsg] = useState('');
   const [err,setErr] = useState(false);
 
   // Keep latest-value refs up to date without triggering re-mount
-  useEffect(()=>{ paintLatest.current=paint; wireLatest.current=wire; },[paint,wire]);
+  useEffect(()=>{ paintLatest.current=paint; wireLatest.current=wire; bendLatest.current=bendLines; },[paint,wire,bendLines]);
 
   // Expose imperative handle
   useImperativeHandle(ref,()=>({
@@ -72,7 +78,8 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   }),[]);
 
   // Re-mount Three.js scene only when panel set / connections change
-  const key = entries.map(e=>`${e.id}:${e.panelId}:${e.myFace}:${e.targetId}:${e.targetFace}:${e.gap}`).join('|');
+  const revisions=panels.map(p=>p.id+':'+p.revision).join('|');
+  const key = revisions+entries.map(e=>`${e.id}:${e.panelId}:${e.myFace}:${e.targetId}:${e.targetFace}:${e.gap}`).join('|');
 
   useEffect(()=>{
    if(!entries.length){
@@ -107,23 +114,26 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
    const panelMap=new Map(panels.map(p=>[p.id,p]));
    const loader=new GLTFLoader();
-   type Item={group:THREE.Group;localCenter:THREE.Vector3;halfSize:THREE.Vector3};
+   type Item={overlay:ReturnType<typeof createBendOverlay>;group:THREE.Group;localCenter:THREE.Vector3;halfSize:THREE.Vector3};
    const items=new Map<string,Item>();
    const clashOverlays:THREE.Object3D[]=[];
 
    Promise.all(entries.map(async entry=>{
     const panel=panelMap.get(entry.panelId);
     if(!panel) throw new Error('Panel not found');
-    const gltf=await loader.loadAsync(fileUrl(panel,'panel.glb'));
+    const [gltf,response]=await Promise.all([loader.loadAsync(fileUrl(panel,'panel.glb')),fetch(fileUrl(panel,'viewer.json'))]);
+    if(!response.ok)throw new Error('Bend metadata unavailable');
+    const data=await response.json() as Drawing;
     if(!alive) return;
     const group=gltf.scene;
-    group.scale.setScalar(.001);
+    // GLB vertex coordinates are already metres. Overlay metadata is mm.
     group.updateMatrixWorld(true);
     const bounds=new THREE.Box3().setFromObject(group);
     const localCenter=bounds.getCenter(new THREE.Vector3());
     const halfSize=bounds.getSize(new THREE.Vector3()).multiplyScalar(.5);
+    const overlay=createBendOverlay(data,panel.id);group.add(overlay.group);
     scene.add(group);
-    items.set(entry.id,{group,localCenter,halfSize});
+    items.set(entry.id,{group,localCenter,halfSize,overlay});
    })).then(()=>{
     if(!alive) return;
 
@@ -154,8 +164,9 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     }
 
     // ── Paint / wireframe ─────────────────────────────────────────────────
-    function doApply(p:boolean,w:boolean){
+    function doApply(p:boolean,w:boolean,b:boolean){
      for(const item of items.values()){
+      item.overlay.group.visible=b;
       item.group.traverse(o=>{
        if(o instanceof THREE.Mesh){
         for(const mat of Array.isArray(o.material)?o.material:[o.material]){
@@ -168,7 +179,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      }
     }
     applyRef.current=doApply;
-    doApply(paint,wire);
+    doApply(paintLatest.current,wireLatest.current,bendLatest.current);
 
     // ── Clash detection ───────────────────────────────────────────────────
     function runClash():ClashResult[]{
@@ -275,7 +286,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      }
      clashOverlays.length=0;
      // Restore original colours using the latest paint/wire values
-     doApply(paintLatest.current,wireLatest.current);
+     doApply(paintLatest.current,wireLatest.current,bendLatest.current);
     }
 
     runClashRef.current=runClash;
@@ -301,6 +312,15 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     fit(); setMsg('');
    }).catch(()=>{if(alive){setMsg('Could not load one or more panels.');setErr(true);}});
 
+   const hoverRay=new THREE.Raycaster();hoverRay.params.Line.threshold=.004;
+   const pointerMove=(event:PointerEvent)=>{
+    const rect=renderer.domElement.getBoundingClientRect();
+    hoverRay.setFromCamera(new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1),camera);
+    const hits=hoverRay.intersectObjects([...items.values()].filter(i=>i.overlay.group.visible).map(i=>i.overlay.group),true);
+    const hinge=hits[0]?.object.userData.hinge as Hinge|undefined;setHover(hinge?bendLabel(hinge):null);
+   };
+   renderer.domElement.addEventListener('pointermove',pointerMove);
+   renderer.domElement.addEventListener('pointerleave',()=>setHover(null));
    const resize=new ResizeObserver(()=>{const w=root.clientWidth,h=root.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();});
    resize.observe(root);
    function loop(){frame=requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);}
@@ -311,6 +331,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     applyRef.current=null;
     runClashRef.current=()=>[];
     clearClashRef.current=()=>{};
+    for(const item of items.values())item.overlay.dispose();
     scene.traverse(o=>{if(o instanceof THREE.Mesh){o.geometry.dispose();for(const m of Array.isArray(o.material)?o.material:[o.material])m.dispose();}});
     renderer.dispose(); renderer.domElement.remove(); viewApi.current=null;
    };
@@ -318,11 +339,11 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   },[key]);
 
   // Apply visual settings without reloading
-  useEffect(()=>{applyRef.current?.(paint,wire);},[paint,wire]);
+  useEffect(()=>{applyRef.current?.(paint,wire,bendLines);},[paint,wire,bendLines]);
 
   return(
    <div className="viewer-stage">
-    <div ref={host} className="webgl-host"/>
+    <div ref={host} className="webgl-host"/>{hover&&<div className="bend-tooltip">{hover}</div>}
     {msg&&<div className="viewer-loading">{err?<Box/>:<LoaderCircle className="spin"/>}<span>{msg}</span></div>}
     {!entries.length&&!msg&&<div className="viewer-empty"><Box size={42}/><h3>Assembly is empty</h3><p>Add panels on the left and define how their faces connect.</p></div>}
     <div className="viewport-actions">

@@ -4,13 +4,14 @@ from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+import math
 from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
 from .db import init, Session, Project, Panel, Job, Setting
 from .storage import store
 from .dwg import available as dwg_available
-DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
+from .bend_rules import DEFAULTS
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
 async def lifespan(app):
@@ -34,7 +35,7 @@ def pack_panel(p):
 class Parameters(BaseModel):
  model_config=ConfigDict(extra='forbid')
  thickness:float=Field(default=2,gt=0,le=20)
- radius:float=Field(default=2,gt=0,le=100)
+ radius:float=Field(default=.7366,gt=0,le=100)
  deduction:float=Field(default=4,ge=0,le=100)
  input_type:Literal['flat_pattern','folded_dimensions']='flat_pattern'
 class ProjectInput(BaseModel):
@@ -42,7 +43,19 @@ class ProjectInput(BaseModel):
 class ReviewInput(BaseModel):
  model_config=ConfigDict(extra='forbid')
  settings:Parameters|None=None
- bend_angles:dict[str,Literal[-90,90]]=Field(default_factory=dict)
+ bend_angles:dict[str,float|None]=Field(default_factory=dict)
+ bend_directions:dict[str,Literal['up','down']|None]=Field(default_factory=dict)
+ section_choices:dict[str,str]|None=None
+ build_review_model:bool=False
+ expected_revision:int|None=None
+ panel_bend_angle_deg:float|None=Field(default=None,gt=0,lt=180,allow_inf_nan=False)
+ strip_tolerance_mm:float|None=Field(default=None,gt=0,allow_inf_nan=False)
+ @field_validator('bend_angles')
+ @classmethod
+ def valid_bend_angles(cls,value):
+  if any(a is not None and (not math.isfinite(a) or not 0<abs(a)<180) for a in value.values()):
+   raise ValueError('Signed angles must be finite, non-zero and between -180 and 180 degrees.')
+  return value
  confirm_parameters:bool=False;accept_partial_sections:bool=False
  accept_relief_extensions:bool=False
 class MeasurementInput(BaseModel):
@@ -113,12 +126,32 @@ def review(id:str,body:ReviewInput):
  with Session.begin() as s:
   p=lock_panel(s,id)
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
+  if body.expected_revision is not None and body.expected_revision!=p.revision:raise HTTPException(409,'Drawing revision changed. Refresh before saving decisions.')
+  if (body.section_choices is not None or body.build_review_model or body.bend_directions or 'panel_bend_angle_deg' in body.model_fields_set) and body.expected_revision is None:raise HTTPException(422,'A drawing revision is required for section review.')
   report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}
-  if set(body.bend_angles)-allowed:raise HTTPException(422,'Unknown bend key in review decision')
-  overrides=json.loads(p.overrides);overrides['bend_angles']={**overrides.get('bend_angles',{}),**body.bend_angles}
-  if body.confirm_parameters:overrides['confirm_parameters']=True
-  if body.accept_partial_sections:overrides['accept_partial_sections']=True
-  if body.accept_relief_extensions:overrides['accept_relief_extensions']=True
+  if (set(body.bend_angles)|set(body.bend_directions))-allowed:raise HTTPException(422,'Unknown bend key in review decision')
+  selections={r['profile']:{c['id'] for c in r['candidates']} for r in report.get('review_catalog',[])}
+  if body.section_choices is not None and any(name not in selections or key not in selections[name] for name,key in body.section_choices.items()):raise HTTPException(422,'Unknown section candidate; refresh the drawing review.')
+  overrides=json.loads(p.overrides);angles=overrides.get('bend_angles',{}).copy()
+  for key,value in body.bend_angles.items():
+   if value is None:angles.pop(key,None)
+   else:angles[key]=value
+  if 'panel_bend_angle_deg' in body.model_fields_set:
+   if body.bend_angles:raise HTTPException(422,'Use the panel angle or legacy individual corrections, not both.')
+   angles={} # Explicit switch to the single-field workflow clears old corrections.
+   if body.panel_bend_angle_deg is None:overrides.pop('panel_bend_angle_deg',None)
+   else:overrides['panel_bend_angle_deg']=body.panel_bend_angle_deg
+  directions=overrides.get('bend_directions',{}).copy()
+  for key,value in body.bend_directions.items():
+   if value is None:directions.pop(key,None)
+   else:directions[key]=value
+  overrides['bend_directions']=directions
+  overrides['bend_angles']=angles
+  if body.section_choices is not None:overrides['section_choices']=body.section_choices
+  if body.strip_tolerance_mm is not None:overrides['strip_tolerance_mm']=body.strip_tolerance_mm
+  overrides['build_review_model']=body.build_review_model
+  for field in ('confirm_parameters','accept_partial_sections','accept_relief_extensions'):
+   if field in body.model_fields_set:overrides[field]=getattr(body,field)
   if body.settings:p.settings=json.dumps(body.settings.model_dump())
   p.overrides=json.dumps(overrides);p.revision+=1;p.status='QUEUED';p.error='';p.updated=time.time();p.artifacts='{}'
   s.add(Job(panel_id=p.id,revision=p.revision,log='Panel-only review decisions recorded. Queued for reconstruction.\n'))
@@ -133,8 +166,9 @@ def file(id:str,name:str):
  with Session() as s:
   p=get_panel(s,id);artifacts=json.loads(p.artifacts)
   if name not in artifacts:raise HTTPException(404,'Artifact is not available for this panel revision')
-  if p.status!='PASS' and name in ['panel.step','panel.stl','flat.dwg']:raise HTTPException(409,'Confirm outstanding review items before final export')
+  if (p.status!='PASS' or json.loads(p.report).get('verification',{}).get('status')!='VERIFIED') and name in ['panel.step','panel.stl','flat.dwg']:raise HTTPException(409,'Confirm outstanding review items before final export')
   key=artifacts[name];label=Path(p.filename).stem+'_'+name
+  if json.loads(p.report).get('verification',{}).get('status')!='VERIFIED' and Path(name).suffix in ('.step','.stl','.glb'):label='REVIEW_'+label
  return StreamingResponse(store.stream(key),media_type=MIME.get(Path(name).suffix,'application/octet-stream'),headers={'Content-Disposition':"attachment; filename*=UTF-8''"+__import__('urllib.parse',fromlist=['quote']).quote(label),'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
 @app.get('/projects/{id}/export',dependencies=[Depends(auth)])
 def export_project(id:str,background_tasks:BackgroundTasks):
@@ -143,13 +177,40 @@ def export_project(id:str,background_tasks:BackgroundTasks):
   with Session() as s:
    get_project(s,id)
    panels=list(s.scalars(select(Panel).where(Panel.project_id==id,Panel.deleted_at.is_(None),Panel.status=='PASS')))
-   if not panels:raise HTTPException(409,'This project has no approved panel results to export')
+   panels=[p for p in panels if json.loads(p.report).get('verification',{}).get('status')=='VERIFIED']
+   if not panels:raise HTTPException(409,'This project has no verified panel results to export')
    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
     for p in panels:
      for name,key in json.loads(p.artifacts).items():
       local=td/(p.id+'_'+name);store.get(key,local);z.write(local,f'{Path(p.filename).stem}_{p.id[:8]}/{name}');local.unlink()
   background_tasks.add_task(shutil.rmtree,td,True)
   return FileResponse(archive,filename='FlatForge_project.zip',media_type='application/zip',background=background_tasks)
+ except Exception:shutil.rmtree(td,ignore_errors=True);raise
+
+
+@app.get('/panels/{id}/diagnostics',dependencies=[Depends(auth)])
+def panel_diagnostics(id:str,background_tasks:BackgroundTasks):
+ """Private, revision-labelled report bundle; no original drawing or secrets."""
+ td=Path(tempfile.mkdtemp(prefix='ff-diagnostics-'));archive=td/'diagnostics.zip'
+ try:
+  with Session() as s:
+   p=get_panel(s,id)
+   jobs=list(s.scalars(select(Job).where(Job.panel_id==id,Job.revision==p.revision).order_by(Job.created)))
+   payload={'panel_id':p.id,'filename':p.filename,'revision':p.revision,
+    'status':p.status,'error':p.error,
+    'report_may_be_from_previous_revision':p.status in ('QUEUED','CONVERTING','EXTRACTING','BUILDING'),
+    'settings':json.loads(p.settings),
+    'decisions':json.loads(p.overrides),'report':json.loads(p.report),
+    'jobs':[{'status':j.status,'revision':j.revision,'log':j.log} for j in jobs]}
+   artifacts=json.loads(p.artifacts)
+   with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
+    z.writestr('diagnostics.json',json.dumps(payload,indent=2,ensure_ascii=False))
+    z.writestr('README.txt','Private drawing diagnostics. Contains geometry and job logs. Share only with authorized support. Original CAD files and application credentials are not included. Supply the matching source drawing separately when requesting geometry investigation.\n')
+    for name in ('extraction.svg','fold_table.csv','section_checks.csv','section_segment_checks.csv','local_profile_checks.json'):
+     if name in artifacts:
+      target=td/name;store.get(artifacts[name],target);z.write(target,name)
+  background_tasks.add_task(shutil.rmtree,td,True)
+  return FileResponse(archive,filename=f'FlatForge_diagnostics_r{payload["revision"]}.zip',media_type='application/zip',background=background_tasks)
  except Exception:shutil.rmtree(td,ignore_errors=True);raise
 
 
