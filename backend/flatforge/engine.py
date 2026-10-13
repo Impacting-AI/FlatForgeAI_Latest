@@ -8,7 +8,14 @@ from . import geometry as g
 from . import dwg
 from .detail_mapping import map_details, normal_instances, check_local_profiles
 from .parameters import Parameters, BendOverride, DEFAULTS, hinge_parameters
-def dump(path,obj):path.write_text(json.dumps(obj,indent=2,default=lambda x:x.tolist() if isinstance(x,np.ndarray) else float(x)))
+def json_safe(obj):
+ if isinstance(obj,np.ndarray):return json_safe(obj.tolist())
+ if isinstance(obj,dict):return {k:json_safe(v) for k,v in obj.items()}
+ if isinstance(obj,(list,tuple)):return [json_safe(v) for v in obj]
+ if isinstance(obj,(float,np.floating)):return float(obj) if math.isfinite(obj) else None
+ if isinstance(obj,np.integer):return int(obj)
+ return obj
+def dump(path,obj):path.write_text(json.dumps(json_safe(obj),indent=2,allow_nan=False))
 def thickness_evidence(doc):
  lines=[]
  for e in g.section_lines(doc):
@@ -162,7 +169,12 @@ def run(config):
  missing=[l for l in ['CONTOR','KIFOF'] if not layers.get(l)]
  if section_layer is None:missing.append('HAT')
  if 'CONTOR' in missing:issue('LAYERS','Missing or empty required layer: CONTOR');return finish('NEEDS_REVIEW')
- d,origin,outer,blank,lines=g.read_drawing(source);faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
+ if overrides.get('relief_radii') and not str(overrides.get('review_note','')).strip():
+  issue('CORNER_RELIEF','Add a review note identifying the approved shape or dimensions for changed corner cuts.');return finish('NEEDS_REVIEW')
+ d,origin,outer,blank,lines=g.read_drawing(source,overrides.get('relief_radii'));doc=d
+ faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
+ report['relief_circles']=g.read_drawing.relief_circles
+ report['relief_cut_area_removed_mm2']=g.read_drawing.relief_removed_area
  used={l['handle'] for e in edges for l in e['source']}
  unassigned=[l['id'] for l in lines if l['handle'] not in used]
  # A narrowly bounded proposal, never automatic manufacturing approval:
@@ -188,7 +200,10 @@ def run(config):
  report.update(flat_width=outer.bounds[2],flat_height=outer.bounds[3],flat_area=blank.area,bend_lines=len(lines),physical_bends=len(edges),faces=len(faces),source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),origin=origin.tolist())
  report['unresolved_bends']=map_review(edges,overrides.get('bend_angles',{}),overrides.get('bend_parameters',{}))
  report['bends']=bend_rows(edges)
- (out/'extraction.svg').write_text(extract_svg(outer,blank,lines,doc,origin));shutil.copyfile(source,out/'flat.dxf')
+ (out/'extraction.svg').write_text(extract_svg(outer,blank,lines,doc,origin))
+ if any(c['changed'] for c in g.read_drawing.relief_circles):
+  shutil.copyfile(source,out/'original_flat.dxf');doc.saveas(out/'flat.dxf')
+ else:shutil.copyfile(source,out/'flat.dxf')
  extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
  checkpoint('EXTRACTING','Rendered numbered bend axes and contour. Checking drawing parameters…')
  if 'KIFOF' in missing:
@@ -212,6 +227,7 @@ def run(config):
   try:profs=g.profiles(doc,origin,t)
   except ValueError as exc:
    issue('SECTION_EVIDENCE',str(exc)+'. Correct the drawing or use confirmed manual bend values.');return finish('NEEDS_REVIEW')
+  report['duplicate_section_details']=g.profiles.duplicates
   if not profs:
    issue('SECTION_EVIDENCE','No usable section profiles were found. Supply confirmed bend values or repair the sections in CAD.');return finish('NEEDS_REVIEW')
  report['validation_scope']='user_confirmed_bends_and_solid_geometry' if manual else 'drawing_sections_and_solid_geometry'
@@ -259,8 +275,9 @@ def run(config):
  if not general and (not paint_points or not all(faces[0].buffer(.01).covers(Point(p)) for p in paint_points)):issue('PAINT','Paint marker does not identify the selected main face unambiguously.');return finish('NEEDS_REVIEW')
  if general:report['paint_evidence']={'source':'User review: root +Z is the finish reference' if manual else 'World-coordinate Zeva section markers; global base +Z is the finish reference','markers':[p['paint_handle'] for p in profs]}
  checkpoint('BUILDING','Section mapping complete. Building and validating the folded solid…')
- tf=g.transforms(faces,edges,order,t,r,bd,bend_model);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out)
+ tf=g.transforms(faces,edges,order,t,r,bd,bend_model);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out,settings['bend_end_mode'])
  if not stats['valid'] or stats['solid_count']!=1:raise ValueError('CAD validation failed: expected one valid connected solid.')
+ if stats['self_intersection_check']['status']!='PASS':issue('SELF_INTERSECTION','Folded faces intersect each other. Review the reported corner contacts and relief cuts before final export.')
  normal_profs=normal_instances(profs) if general else profs
  checks,details=g.check_sections(solid,normal_profs,faces,tf,t,r,out,material,strip_tol,max(angle_tol,.001),edges)
  local_checks=check_local_profiles(profs,edges,tf,t,r,bd,strip_tol,angle_tol,bend_model) if general else []
@@ -270,10 +287,10 @@ def run(config):
     'validation_scope':'Transverse documented chains are checked against actual BREP cuts. Side profiles use local edge lengths and relative rotations, not full plane cuts.',
     'reference':'Convention confirmed by the customer against the reconstructed folded panel.'}
   dump(out/'local_profile_checks.json',local_checks)
- unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out)
+ unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out,strip_tol,angle_tol)
  report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=k,allowance=ba,corner_contacts=g.partition.contacts)
  report['bends']=bend_rows(edges)
- if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or unfolding tolerances failed. Inspect validation results.')
+ if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or local outline tolerances failed. Inspect validation results.')
  for c in checks:
   if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and not local_checks and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
  if extensions and not overrides.get('accept_relief_extensions'):

@@ -65,10 +65,27 @@ def section_lines(doc):
 def vec(p):return np.array(tuple(p)[:2],dtype=float)
 def cross(a,b):return float(a[0]*b[1]-a[1]*b[0])
 def unit(a):return a/np.linalg.norm(a)
-def read_drawing(filename):
+def read_drawing(filename,relief_radii=None):
     doc=ezdxf.readfile(filename);ms=doc.modelspace()
     read_drawing.repairs=[]
     read_drawing.annotations=[]
+    read_drawing.relief_circles=[]
+    relief_radii=relief_radii or {}
+    axes=[(vec(e.dxf.start),vec(e.dxf.end)) for e in ms.query('LINE[layer=="KIFOF"]')
+          if np.linalg.norm(vec(e.dxf.end)-vec(e.dxf.start))>=GRID]
+    for circle in ms.query('CIRCLE[layer=="CONTOR"]'):
+        center=vec(circle.dxf.center);radius=float(circle.dxf.radius)
+        near=[unit(b-a) for a,b in axes if LineString([a,b]).distance(Point(center))<=max(3.,2*radius)]
+        if not any(abs(cross(a,b))>.01 for i,a in enumerate(near) for b in near[i+1:]):continue
+        used=float(relief_radii.get(circle.dxf.handle,radius))
+        if not math.isfinite(used) or not radius<=used<=radius+4.:
+            raise ValueError(f'Corner relief {circle.dxf.handle}: radius must be between {radius:g} and {radius+4:g} mm; shrinking a cut is not allowed.')
+        read_drawing.relief_circles.append({'handle':circle.dxf.handle,'center_dxf_mm':center.tolist(),
+            'original_radius_mm':radius,'used_radius_mm':used,'max_radius_mm':radius+4.,
+            'changed':abs(used-radius)>1e-8})
+        circle.dxf.radius=used
+    if set(relief_radii)-{c['handle'] for c in read_drawing.relief_circles}:
+        raise ValueError('Unknown corner relief: only existing CONTOR circles at nonparallel bend junctions can be enlarged.')
     oblique=any(min(abs(unit(vec(e.dxf.end)-vec(e.dxf.start))))>ORTHOGONAL_TOL for e in ms.query('LINE[layer=="KIFOF"]') if np.linalg.norm(vec(e.dxf.end)-vec(e.dxf.start))>GRID)
     outlines=[(e,Polygon([tuple(p)[:2] for p in dxfpath.make_path(e).flattening(.005)])) for e in ms.query('LWPOLYLINE[layer=="CONTOR"]')]
     if not outlines:raise ValueError('CONTOR must contain a closed LWPOLYLINE outline')
@@ -100,7 +117,7 @@ def read_drawing(filename):
     outlines=normalized;outer=next(p for e,p in outlines if e is outer_e)
     if any(e is not outer_e and not outer.covers(p) for e,p in outlines):raise ValueError('Multiple outer panels or intersecting contours: upload one panel per drawing')
     if not oblique:outer=set_precision(outer,GRID)
-    holes=[]
+    holes=[];original_holes=[]
     for e in ms:
         if e.dxf.layer!='CONTOR' or e is outer_e:continue
         if e.dxftype() in ('DIMENSION','TEXT','MTEXT','LEADER','MLEADER'):
@@ -109,6 +126,11 @@ def read_drawing(filename):
         if e.dxftype() not in ['LWPOLYLINE','CIRCLE']:raise ValueError('Unsupported CONTOR entity '+e.dxftype())
         ps=[vec(p)-origin for p in dxfpath.make_path(e).flattening(.005)]
         holes.append(Polygon(ps))
+        original=e
+        record=next((c for c in read_drawing.relief_circles if c['handle']==e.dxf.handle and c['changed']),None)
+        if record:
+            original=e.copy();original.dxf.radius=record['original_radius_mm']
+        original_holes.append(Polygon([vec(p)-origin for p in dxfpath.make_path(original).flattening(.005)]))
     blank=outer.difference(unary_union(holes))
     if not oblique:blank=set_precision(blank,GRID)
     lines=[]
@@ -135,6 +157,7 @@ def read_drawing(filename):
     outer=adjusted if oblique else set_precision(adjusted,GRID)
     blank=outer.difference(unary_union(holes))
     if not oblique:blank=set_precision(blank,GRID)
+    read_drawing.relief_removed_area=outer.difference(unary_union(original_holes)).difference(blank).area
     return doc,origin,outer,blank,lines
 
 def partition(outer,blank,lines,relief):
@@ -208,7 +231,8 @@ def partition(outer,blank,lines,relief):
             p=faces[i];width=p.bounds[2]-p.bounds[0];height=p.bounds[3]-p.bounds[1]
             if i==0 or p.area>relief*relief or max(width,height)>2*relief:
                 raise ValueError(f'Unconnected region F{i} has no bend axis. Add its missing KIFOF geometry or correct the contour in CAD.')
-            partition.corner_reliefs.append({'area_mm2':p.intersection(blank).area,'outline':list(p.exterior.coords),'reason':'Small region bounded by bend-end extensions; no original KIFOF segment bounds it.'})
+            area=p.intersection(blank).area
+            if area>1e-8:partition.corner_reliefs.append({'area_mm2':area,'outline':list(p.exterior.coords),'reason':'Small region bounded by bend-end extensions; no original KIFOF segment bounds it.'})
         keep={old:new for new,old in enumerate(i for i in range(len(faces)) if i not in islands)}
         faces=[p for i,p in enumerate(faces) if i in keep]
         for e in edges:e['faces']=tuple(keep[i] for i in e['faces'])
@@ -226,6 +250,7 @@ def partition(outer,blank,lines,relief):
     return faces,edges,parent,order,[p.intersection(blank) for p in faces]
 
 def profiles(doc,origin,t):
+    profiles.duplicates=[]
     ls=[]
     for e in section_lines(doc):
         a,b=vec(e.dxf.start)-origin,vec(e.dxf.end)-origin
@@ -284,6 +309,8 @@ def profiles(doc,origin,t):
             # Raw get_points() mirrors X a second time; use world vertices.
             ps=np.array([vec(p)-origin for p in v.vertices_in_wcs()]);markers.append((e.dxf.handle,ps))
     labels=[(re.sub(r'%%[uU]','',e.dxf.text),vec(e.dxf.insert)-origin) for e in doc.modelspace().query('TEXT') if re.fullmatch(r'(?:%%[uU])?([A-Za-z])-\1',e.dxf.text)]
+    from .section_evidence import remove_unmarked_duplicates
+    result,profiles.duplicates=remove_unmarked_duplicates(result,markers,t)
     for n,p in enumerate(result):
         pts=p['points'];main=p['main'];seg=LineString(pts[main:main+2])
         if not markers:raise ValueError('No triangular painted-face marker accompanies the section profiles')
@@ -429,19 +456,22 @@ def poly_parts(g):
     if g.geom_type=='Polygon':return [g]
     return [p for p in getattr(g,'geoms',[]) if p.geom_type=='Polygon' and p.area>1e-8]
 
-def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
+def build_cad(faces,material,edges,tf,t,r,bd,relief,out,bend_end_mode='contour'):
     import cadquery as cq
-    parts=[];flat_trimmed=[];bend_records=[]
+    from .bend_geometry import bend_regions, cylindrical_solid
+    parts=[];flat_trimmed=[];bend_records=[];plate_parts={i:[] for i in tf};curved_parts={}
+    regions=bend_regions(material,edges)
+    for e,region in zip(edges,regions):e['developed_region']=region
+    active_regions=regions if bend_end_mode=='contour' else [bend_strip(e,e['allowance']/2) for e in edges]
     for i,p in enumerate(material):
-        adjacent=[e for e in edges if i in e['faces']]
         # Keep topology on GRID, but do not snap analytic oblique tangent
         # cuts back to that grid: doing so tilts the plate/bend mating edge.
-        if any(min(abs(support(e)[0]))>ORTHOGONAL_TOL for e in adjacent):p=set_precision(p,0)
+        p=set_precision(p,0)
         # Finite tangent-zone removal, not an infinite half-plane: a face may
         # have a re-entrant wing beyond another face's hinge support.
         strips=[]
-        for e in adjacent:
-            strips.append(bend_strip(e,e['allowance']/2,relief))
+        for j,e in enumerate(edges):
+            if i in e['faces']:strips.append(regions[j] if bend_end_mode=='contour' else bend_strip(e,e['allowance']/2,relief))
         trimmed=p.difference(unary_union(strips));flat_trimmed.append(trimmed)
         for poly in poly_parts(trimmed):
             def wire(coords):
@@ -449,22 +479,54 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
             outer=wire(poly.exterior.coords);inner=[wire(ring.coords) for ring in poly.interiors]
             solid=cq.Solid.extrudeLinear(outer,inner,cq.Vector(*(tf[i][0]@np.array([0,0,t]))))
             if not solid.isValid():raise ValueError('Invalid planar plate BREP')
-            parts.append(solid)
-    for e in edges:
-        lo,hi=hinge_span(e);ba=e['allowance'];axis=e['axis'];w=e['w'];center=e['center']+axis*lo;angle=math.radians(e['angle'])
-        radius=e.get('radius',r)
-        parenttf=tf[e['parent']]
-        def pt(rad,a):return cq.Vector(*apply_tf(parenttf,center-rad*(rotation(axis,a)@w)))
-        edges_wire=[cq.Edge.makeThreePointArc(pt(radius,0),pt(radius,angle/2),pt(radius,angle)),cq.Edge.makeLine(pt(radius,angle),pt(radius+t,angle)),cq.Edge.makeThreePointArc(pt(radius+t,angle),pt(radius+t,angle/2),pt(radius+t,0)),cq.Edge.makeLine(pt(radius+t,0),pt(radius,0))]
-        wi=cq.Wire.assembleEdges(edges_wire);solid=cq.Solid.extrudeLinear(wi,[],cq.Vector(*(parenttf[0]@axis*(hi-lo))))
-        if not solid.isValid():raise ValueError('Invalid cylindrical bend BREP')
-        parts.append(solid);bend_records.append(dict(edge=e['index'],length=hi-lo,developed_area=(hi-lo)*ba))
+            parts.append(solid);plate_parts[i].append(solid)
+    for e,region in zip(edges,active_regions):
+        curved_parts[e['index']]=[]
+        for poly in poly_parts(region):
+            if bend_end_mode=='straight':
+                lo,hi=hinge_span(e);axis=e['axis'];w=e['w'];center=e['center']+axis*lo;angle=math.radians(e['angle']);radius=e['radius'];parenttf=tf[e['parent']]
+                def pt(rad,a):return cq.Vector(*apply_tf(parenttf,center-rad*(rotation(axis,a)@w)))
+                wire=cq.Wire.assembleEdges([cq.Edge.makeThreePointArc(pt(radius,0),pt(radius,angle/2),pt(radius,angle)),cq.Edge.makeLine(pt(radius,angle),pt(radius+t,angle)),cq.Edge.makeThreePointArc(pt(radius+t,angle),pt(radius+t,angle/2),pt(radius+t,0)),cq.Edge.makeLine(pt(radius+t,0),pt(radius,0))])
+                solid=cq.Solid.extrudeLinear(wire,[],cq.Vector(*(parenttf[0]@axis*(hi-lo))))
+            else:solid=cylindrical_solid(poly,e,tf[e['parent']],t)
+            parts.append(solid);curved_parts[e['index']].append(solid)
+        bend_records.append(dict(edge=e['index'],developed_area=region.area,
+                                 method='cylinder trimmed by developed contour' if bend_end_mode=='contour' else 'constant axial span'))
     print('CAD parts',len(parts),flush=True)
     # Fusing reports volume losses explicitly; it does not justify unmodelled
     # stretching at relief corners. Such residuals are reported in validation.
     raw_volume=sum(s.Volume() for s in parts)
-    fused=parts[0].fuse(*parts[1:],tol=1e-6).clean()
+    # Hinge/contour recovery uses a 0.001 mm topology grid. Joining at twice
+    # that precision resolves sub-grid seam slivers at multi-bend junctions;
+    # the independent local outline check still enforces the user tolerance.
+    # Preserve the Boolean's split faces. Unifying tangent domains can turn a
+    # valid stepped corner into a non-manifold shell in OpenCascade.
+    attempts=[]
+    for join_tolerance in (1e-6,2*GRID):
+        fused=parts[0].fuse(*parts[1:],tol=join_tolerance)
+        valid=fused.isValid() and len(fused.Solids())==1
+        volume=fused.Volume() if valid else 0.
+        # A union must contain every input solid and cannot exceed their sum.
+        conserved=max(s.Volume() for s in parts)-.01<=volume<=raw_volume+.01
+        attempts.append({'method':'batch','tolerance_mm':join_tolerance,'valid_single_solid':valid,'volume_bounds_pass':conserved})
+        if valid and conserved:break
+    if not valid or not conserved:
+        # Same solids and same precision, assembled in fold-tree order. This
+        # avoids an OCC batch Boolean failure on many disconnected plates.
+        current={i:cq.Compound.makeCompound(ps) for i,ps in plate_parts.items()}
+        for child in list(tf)[1:][::-1]:
+            e=next(e for e in edges if e['child']==child);parent=e['parent']
+            current[parent]=current[parent].fuse(current[child],*curved_parts[e['index']],tol=join_tolerance)
+        fused=current[0];valid=fused.isValid() and len(fused.Solids())==1
+        volume=fused.Volume() if valid else 0.
+        conserved=max(s.Volume() for s in parts)-.01<=volume<=raw_volume+.01
+        attempts.append({'method':'fold_tree','tolerance_mm':join_tolerance,'valid_single_solid':valid,'volume_bounds_pass':conserved})
     print('CAD valid',fused.isValid(),'solids',len(fused.Solids()),flush=True)
+    if not valid or not conserved:
+        raise ValueError('Folded parts do not form one valid solid. Review intersecting bend zones and corner reliefs.')
+    if bend_end_mode=='straight':
+        cleaned=fused.clean()
+        if cleaned.isValid() and len(cleaned.Solids())==1 and abs(cleaned.Volume()-fused.Volume())<.01:fused=cleaned
     cq.exporters.export(fused,str(out/'panel.step'))
     steppath=out/'panel.step';steptext=steppath.read_text();steptext=re.sub(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'","'1970-01-01T00:00:00'",steptext)
     # OpenCascade increments the default product label within a process.
@@ -480,10 +542,13 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     # subsequent in-memory check despite a valid saved BREP. Validate and use
     # the actual exported STEP for all downstream section/unfold operations.
     fused=cq.importers.importStep(str(out/'panel.step')).val()
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Check
+    interference=BRepAlgoAPI_Check(fused.wrapped,False,True)
+    interference_counts=collections.Counter(str(row.GetCheckStatus()).split('.')[-1] for row in interference.Result())
     from OCP.BRepBndLib import BRepBndLib
     from OCP.Bnd import Bnd_Box
     ob=Bnd_Box();BRepBndLib.AddOptimal_s(fused.wrapped,ob,False,False);bounds=ob.Get();bmin=list(bounds[:3]);bmax=list(bounds[3:]);bsize=[v-u for u,v in zip(bmin,bmax)]
-    return fused,flat_trimmed,dict(valid=fused.isValid(),solid_count=len(fused.Solids()),volume_mm3=fused.Volume(),pre_fuse_volume_mm3=raw_volume,fusion_volume_removed_mm3=raw_volume-fused.Volume(),bbox_mm=bsize,bbox_min_mm=bmin,bbox_max_mm=bmax,plate_flat_area=sum(p.area for p in flat_trimmed),bend_developed_area=sum(b['developed_area'] for b in bend_records))
+    return fused,flat_trimmed,dict(valid=fused.isValid(),solid_count=len(fused.Solids()),self_intersection_check={'status':'PASS' if interference.IsValid() else 'FAIL','method':'OpenCascade BRepAlgoAPI_Check; self-interference enabled, small-edge test disabled','issues':dict(interference_counts)},volume_mm3=fused.Volume(),pre_fuse_volume_mm3=raw_volume,fusion_volume_removed_mm3=raw_volume-fused.Volume(),cad_join_tolerance_mm=join_tolerance,join_attempts=attempts,bbox_mm=bsize,bbox_min_mm=bmin,bbox_max_mm=bmax,plate_flat_area=sum(p.area for p in flat_trimmed),bend_developed_area=sum(b['developed_area'] for b in bend_records),bend_regions=bend_records)
 
 def check_sections(solid,profs,faces,tf,t,r,out,material=None,strip_tolerance=.5,angle_tolerance=1.,edges=None):
     import cadquery as cq
@@ -586,7 +651,7 @@ def sampled_wire(wire):
     # Order connected BREP edge samples; curved edges receive finite chord error.
     pending=[]
     for e in wire.Edges():
-        n=2 if e.geomType()=='LINE' else max(8,min(256,int(e.Length()/.25)+1))
+        n=2 if e.geomType()=='LINE' else max(8,min(4096,int(e.Length()/.1)+1))
         pending.append(np.array([e.positionAt(float(v)).toTuple() for v in np.linspace(0,1,n)]))
     if not pending:return np.zeros((0,3))
     pts=list(pending.pop(0))
@@ -599,21 +664,46 @@ def sampled_wire(wire):
         pts.extend(arr[1:])
     return np.array(pts)
 
-def unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out):
+def unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out,strip_tolerance=.5,angle_tolerance=.1):
     from OCP.BRepAdaptor import BRepAdaptor_Surface
-    pieces=[];counts=collections.Counter()
+    pieces=[];counts=collections.Counter();normal_errors=collections.defaultdict(list)
     for face in solid.Faces():
         typ=face.geomType()
         if typ not in ['PLANE','CYLINDER']:continue
         outer3=sampled_wire(face.outerWire());holes3=[sampled_wire(w) for w in face.innerWires()]
         if typ=='PLANE':
+            candidates=[]
             for i,(R,T) in tf.items():
                 q=(outer3-T)@R
                 if max(abs(q[:,2]-t/2))>.005:continue
                 po=Polygon(q[:,:2],[((h-T)@R)[:,:2] for h in holes3])
                 if not po.is_valid:po=po.buffer(0)
-                po=po.intersection(trimmed[i])
-                if po.area>1e-6:pieces.append(po);counts['planar_patches']+=1
+                overlap=po.intersection(trimmed[i]).area
+                if overlap>1e-6:
+                    candidates.append((overlap,po,i))
+                    normal=np.array(BRepAdaptor_Surface(face.wrapped).Plane().Axis().Direction().Coord())
+                    normal_errors[i].append(math.degrees(math.acos(float(np.clip(abs(normal@R[:,2]),0,1)))))
+            if len(candidates)==1:
+                pieces.append(candidates[0][1]);counts['planar_patches']+=1
+            elif candidates:
+                # STEP can merge several coplanar plates into one face. Split
+                # that face among all owners in a common physical plane. Keep
+                # ALL unowned excess, so target clipping cannot hide a defect.
+                from shapely.affinity import affine_transform
+                _,base,base_i=max(candidates,key=lambda x:x[0]);Rb,Tb=tf[base_i]
+                masks=[];maps=[]
+                for _,po,i in candidates:
+                    Ri,Ti=tf[i];A=(Rb.T@Ri)[:2,:2]
+                    b=(Rb.T@(Ti-Tb)+Rb.T@Ri[:,2]*(t/2))[:2]
+                    parameters=[A[0,0],A[0,1],A[1,0],A[1,1],*b]
+                    masks.append(affine_transform(trimmed[i],parameters).buffer(0));maps.append((A,b))
+                    pieces.extend(poly_parts(po.intersection(trimmed[i])))
+                    counts['planar_patches']+=1
+                excess=base.difference(union_all(masks,grid_size=GRID))
+                for patch in poly_parts(excess):
+                    owner=min(range(len(masks)),key=lambda k:patch.representative_point().distance(masks[k]))
+                    A,b=maps[owner];inverse=np.linalg.inv(A);shift=-inverse@b
+                    pieces.append(affine_transform(patch,[inverse[0,0],inverse[0,1],inverse[1,0],inverse[1,1],*shift]))
         else:
             cyl=BRepAdaptor_Surface(face.wrapped).Cylinder();radius=cyl.Radius();loc=np.array(cyl.Location().Coord());axis=np.array(cyl.Axis().Direction().Coord())
             for e in edges:
@@ -629,8 +719,37 @@ def unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out):
                 po=Polygon(unwrap(outer3),[unwrap(h) for h in holes3])
                 if not po.is_valid:po=po.buffer(0)
                 pieces.append(po);counts['cylindrical_patches']+=1
-    unfolded=unary_union(pieces);delta=unfolded.symmetric_difference(blank)
+    # Join only numerical seam noise at the existing topology grid. Without
+    # this, coincident tangent edges can leave zero-area interior cracks which
+    # are not physical boundaries but would dominate a local distance check.
+    unfolded=union_all(pieces,grid_size=GRID)
+    # Independent curved-face sampling and STEP tolerances can leave thin
+    # cracks along a shared tangent. Join within the declared 0.005 mm curve
+    # sampling precision, recording the affected area. This is 100 times
+    # smaller than the default engineering limit and does not clip to input.
+    joined=unfolded.buffer(.005,join_style=2).buffer(-.005,join_style=2)
+    seam_area=joined.symmetric_difference(unfolded).area;unfolded=joined
+    delta=unfolded.symmetric_difference(blank)
     result=dict(method='inverse fold-tree mapping of actual fused BREP painted planar/cylindrical faces; cylindrical angle mapped by derived K',flat_input_area_mm2=blank.area,unfolded_area_mm2=unfolded.area,symmetric_difference_mm2=delta.area,symmetric_difference_percent=100*delta.area/blank.area,net_area_difference_percent=100*(unfolded.area-blank.area)/blank.area,missing_area_mm2=blank.difference(unfolded).area,excess_area_mm2=unfolded.difference(blank).area,surface_patch_counts=dict(counts),status='PASS' if delta.area/blank.area<=.005 else 'FAIL')
+    from .local_validation import compare_boundaries,contact_coverage
+    result['numerical_seam_join']={'distance_mm':.005,'changed_area_mm2':seam_area}
+    result['visible_boundary_check']=compare_boundaries(blank,unfolded,strip_tolerance)
+    coverage=unfolded
+    if result['visible_boundary_check']['status']!='PASS':
+        coverage,proof=contact_coverage(solid,unfolded,blank,trimmed,edges,tf,t,strip_tolerance)
+        # Joining verified contact patches has the same numerical seam issue
+        # as joining exported skins; never bridge beyond the stated precision.
+        coverage=union_all([coverage],grid_size=GRID).buffer(.005,join_style=2).buffer(-.005,join_style=2)
+        result['contact_material_check']=proof
+    result['local_boundary_check']=compare_boundaries(blank,coverage,strip_tolerance)
+    result['local_boundary_check']['scope']='Developed outline and 3D material coverage at hidden fold contacts; not a reference STEP comparison.'
+    missing_normals=[i for i,p in enumerate(trimmed) if p.area>1e-6 and not normal_errors[i]]
+    normal_error=max((max(v) for v in normal_errors.values() if v),default=None)
+    result['plate_normal_check']={'status':'PASS' if not missing_normals and normal_error is not None and normal_error<=max(angle_tolerance,1e-5) else 'FAIL',
+        'method':'Exported BREP planar supports compared with the prescribed fold rotations.',
+        'max_error_deg':normal_error,'tolerance_deg':angle_tolerance,'unobserved_plates':missing_normals}
+    if result['local_boundary_check']['status']!='PASS':result['status']='FAIL'
+    if result['plate_normal_check']['status']!='PASS':result['status']='FAIL'
     import matplotlib;matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     fig,ax=plt.subplots(figsize=(13,8))

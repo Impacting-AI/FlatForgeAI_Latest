@@ -39,6 +39,7 @@ class ReviewInput(BaseModel):
  bend_angles:dict[str,float|None]=Field(default_factory=dict)
  bend_parameters:dict[str,BendOverride]=Field(default_factory=dict)
  section_choices:dict[str,str|None]=Field(default_factory=dict)
+ relief_radii:dict[str,float|None]=Field(default_factory=dict)
  manual_bends:bool|None=None
  review_note:str|None=Field(default=None,max_length=2000)
  confirm_parameters:bool=False;accept_partial_sections:bool=False
@@ -120,6 +121,11 @@ def review(id:str,body:ReviewInput):
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
   report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}|{b['key'] for b in report.get('unmapped_hinges',[])}
   if (set(body.bend_angles)|set(body.bend_parameters))-allowed:raise HTTPException(422,'Unknown bend key in review decision')
+  circles={c['handle']:c for c in report.get('relief_circles',[])}
+  for handle,radius in body.relief_radii.items():
+   if handle not in circles:raise HTTPException(422,'Unknown corner-relief circle')
+   if radius is not None and not circles[handle]['original_radius_mm']<=radius<=circles[handle]['max_radius_mm']:
+    raise HTTPException(422,'Corner-relief radius is outside the permitted range; shrinking cuts is not allowed')
   choices={row['profile']:{v['id'] for v in row.get('review_candidates',[])} for row in report.get('section_mapping',[])}
   for profile,choice in body.section_choices.items():
    if choice is not None and choice not in choices.get(profile,set()):raise HTTPException(422,'Unknown section chain. Refresh the drawing review before selecting it.')
@@ -140,9 +146,15 @@ def review(id:str,body:ReviewInput):
    if value is None:selected.pop(key,None)
    else:selected[key]=value
   overrides['section_choices']=selected
+  reliefs={**overrides.get('relief_radii',{})}
+  for key,value in body.relief_radii.items():
+   if value is None:reliefs.pop(key,None)
+   else:reliefs[key]=value
+  overrides['relief_radii']=reliefs
   if body.manual_bends is not None:overrides['manual_bends']=body.manual_bends
   if body.review_note is not None:overrides['review_note']=body.review_note.strip()
   if overrides.get('manual_bends') and not overrides.get('review_note'):raise HTTPException(422,'Explain which confirmed values replace the missing or unreliable sections.')
+  if reliefs and not overrides.get('review_note'):raise HTTPException(422,'Identify the approved shape or dimensions for changed corner cuts in the review note.')
   if body.confirm_parameters:overrides['confirm_parameters']=True
   if body.accept_partial_sections:overrides['accept_partial_sections']=True
   if body.accept_relief_extensions:overrides['accept_relief_extensions']=True

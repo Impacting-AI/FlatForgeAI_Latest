@@ -20,6 +20,8 @@ Drawing Review and Material Defaults now expose:
 | Angle to use when missing | 90° | Shared magnitude for the explicit positive/negative direction buttons. It never invents a missing direction automatically. |
 | Bend calculation | Material model | Preserve the previous constant-K calibration at 90°, or explicitly choose fixed deduction at each angle for a shape model. |
 | Individual bend values | Inherit | Optional signed rotation, radius and deduction for any reported hinge. Blank means drawing/panel values. |
+| Bend ends | Straight | Existing jobs retain constant-length ends. Select **Follow cut outline** for stepped ends, oblique end cuts and holes crossing a bend. |
+| Corner-relief radius | Original DXF | Enlarge a selected existing circular cut at a nonparallel bend junction. The original radius, new radius, location and removed area are recorded. |
 
 Angles are rotations from flat. A 60° rotation leaves a 120° inside angle.
 Positive rotations follow the reported canonical hinge axis using the right-hand
@@ -77,43 +79,91 @@ clears its old decisions through the existing source-replacement workflow.
 The topology grid, analytic mating checks, valid-solid requirement and unfolding
 checks are not loosened by the drawing length tolerance.
 
-## Supplied panel results and remaining work
+## Section interpretation
 
-NM147 now partitions into 19 faces and 18 physical hinges, without the original
-zero-length or distant-junction errors. The section parser then cannot associate
-walls `E6/E7` with a nearby painted-side marker. Automatic orientation remains
-unresolved. Correct/identify the section marker in CAD, or supply a reviewed bend
-schedule through manual mode. Its small corner proposal contains approximately
-0.2933 mm² of original material and needs review.
+Unmarked details are removed as redundant only when all their vertices match a
+contiguous part of a marked section under rotation/translation within 0.002 mm.
+Reflections and changed dimensions do not qualify. Original wall handles and
+matching errors remain in `duplicate_section_details`; no painted direction is
+invented for the copy.
 
-NM148 maps sections 2 and 4 using the default 0.1° angular tolerance. With the
-explicit fixed-deduction setting, sections 1, 2 and 4 fit within 0.5 mm; section 3
-offers a local candidate with approximately 0.368 mm error. Confirming that
-candidate resolves all four profile mappings, but rotations for `C03`, `C04`,
-`C05` and `C09` still require evidence or user input. These IDs are diagnostic
-labels from this source, not rules embedded in the engine.
+Local details are searched against every possible base plate while preserving
+the original fold-tree rotation convention. All distinct fitting chains remain
+available for review. Candidates outside the selected tolerance are diagnostic
+only and cannot be selected or silently committed.
 
-Neither supplied panel is claimed to have a completed, verified folded solid in
-this change. Their missing decisions are now accessible in review. Numeric
-fields cannot supply absent contour geometry, missing bend-axis positions,
-unsupported curved folds or a disconnected large region. Those require a CAD
-correction or a future geometry-editing feature.
+## Shaped ends and local validation
 
-## Validation and reproduction
+In **Follow cut outline** mode the developed bend region is the material on both
+sides of a hinge, clipped to its allowance band. Its boundary is mapped into
+cylindrical surface coordinates. The solid retains true inner/outer cylinders,
+stepped ends, holes and ruled cut faces. Rectangular bands use exact annular
+extrusions. No panel names, source handles or measured customer values occur in
+the construction rules.
 
-The available automated suite passes with the two supplied files enabled:
+The selected construction mode is explicit. Straight ends preserve the earlier
+geometry convention; they still undergo the new checks. Some older examples
+therefore return to review even in their original mode.
 
-```bash
-PYTHONPATH=backend FLATFORGE_PAIR_DXF_DIR=/path/to/uploads python -m pytest -q backend/tests
+Validation now includes:
+
+- One valid, connected exported STEP solid and an OpenCascade self-interference
+  check. A closed-solid check alone does not detect every overlap.
+- Actual BREP plane orientations against the prescribed rotations, using the
+  selected angle tolerance, in addition to documented section checks.
+- Both directions of local outline distance, including hole boundaries, with a
+  bound between samples. The default engineering limit is **0.5 mm**. Sampling
+  and seam normalization have a separate 0.02 mm allowance; they do not enlarge
+  that engineering limit.
+- Coplanar ownership across merged STEP faces, retaining unowned excess rather
+  than clipping all measured geometry to the target outline.
+- At folded contacts, fusion can remove internal painted skins while retaining
+  material. A missing visible patch is restored to the coverage comparison only
+  after a bounded grid checks its full thickness against the actual exported
+  solid. An internal void fails this check. The 25,000-point limit leaves
+  unproved patches unresolved rather than assuming success.
+
+The report retains the raw visible-surface unfold, numerical seam changes,
+contact proof, local-distance bounds, angular results and Boolean attempts.
+Local coverage is not a claim of a certified 3D Hausdorff match to a client STEP.
+
+Corner-radius changes require a review note. Only identified junction circles
+can be enlarged, by at most 4 mm; arbitrary holes cannot be changed through this
+control. Clearing a value restores the original. A changed `flat.dxf` contains
+the approved radii, and `original_flat.dxf` preserves the source. STEP export is
+still blocked if any other validation fails.
+
+## Reference measurements
+
+Keep measured customer bend schedules, source hashes, original files and
+run reports outside the public repository. They are review inputs, never
+universal rules or filename-based construction paths.
+
+A private review JSON can contain a `panels` object, with each key holding
+`source_sha256`, `settings` and `overrides`. Rebuild an exact reviewed drawing:
+
+```sh
+PYTHONPATH=backend python backend/scripts/rebuild_reference.py --review-file /private/review.json --panel panel-key --source /private/input.dxf --output /private/result
 ```
 
-The pair directory uses the uploaded filenames `PN_NM_147(1).dxf` and
-`PN_NM_148 (1)(1).dxf`. Customer files remain outside the repository. Other
-optional customer fixtures use `FLATFORGE_REGRESSION_DXF_DIR` as before.
+The runner refuses a changed source hash. In the application, select
+**Follow cut outline**, enter the reviewed bend values and record any corner
+corrections before rebuilding. Local geometry PASS does not establish exact
+surface agreement with an external reference model. Use
+`backend/scripts/inspect_step.py` to distinguish basic validity from detected
+self-interference when examining a reference STEP.
 
-Coverage includes rotated duplicate contours, an actual 0.65 mm discrepancy
-that fails at 0.5 mm and passes at 0.8 mm, near-square drawing noise, real 60°/120°
-STEP solids, different radii on one solid, missing sections, API persistence and
-clearing of decisions, and prior bundled reference panels. Production build,
-TypeScript and lint checks on the new controls also pass. Interactive visual QA
-still needs to be run: the available browser could not reach the local server.
+## Compatibility and limits
+
+The old bundled examples 1570, 1619 and 1648 still produce valid solids with their
+original straight-end construction and unchanged overall dimensions. Their
+section and area checks pass, but local discrepancies of 2–2.828 mm fail the new
+0.5 mm gate. Tests now require `NEEDS_REVIEW` for these files instead of retaining
+an unsupported PASS. The API success/STEP round-trip test uses a dimensionally
+consistent synthetic channel, and these real examples remain separate negative
+regressions. They need further end/relief review before new final exports.
+
+The work does not infer radii absent from other drawings, replace missing axes,
+implement arbitrary curved hinge axes, or establish universal fabrication
+compensation. The client STEP uploads are measured offline here; the application
+does not yet automatically import and interpret arbitrary reference STEP files.

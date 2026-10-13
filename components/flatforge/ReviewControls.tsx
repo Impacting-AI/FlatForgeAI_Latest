@@ -3,13 +3,13 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { BendValues, Panel, Settings } from './types';
 
-export type ReviewValues={bend_parameters:Record<string,BendValues>;section_choices:Record<string,string|null>;manual_bends:boolean;review_note:string;accept_corner_reliefs:boolean};
-export const emptyReview:ReviewValues={bend_parameters:{},section_choices:{},manual_bends:false,review_note:'',accept_corner_reliefs:false};
+export type ReviewValues={relief_radii:Record<string,number|null>;bend_parameters:Record<string,BendValues>;section_choices:Record<string,string|null>;manual_bends:boolean;review_note:string;accept_corner_reliefs:boolean};
+export const emptyReview:ReviewValues={relief_radii:{},bend_parameters:{},section_choices:{},manual_bends:false,review_note:'',accept_corner_reliefs:false};
 export function savedReview(panel:Panel):ReviewValues {
  const saved=panel.overrides;
  const bends={...saved.bend_parameters as Record<string,BendValues>|undefined};
  for(const [key,angle] of Object.entries(saved.bend_angles as Record<string,number>|undefined??{}))bends[key]={angle,...bends[key]};
- return {bend_parameters:bends,section_choices:{...saved.section_choices as Record<string,string>|undefined},manual_bends:saved.manual_bends===true,review_note:typeof saved.review_note==='string'?saved.review_note:'',accept_corner_reliefs:saved.accept_corner_reliefs===true};
+ return {relief_radii:{...saved.relief_radii as Record<string,number>|undefined},bend_parameters:bends,section_choices:{...saved.section_choices as Record<string,string>|undefined},manual_bends:saved.manual_bends===true,review_note:typeof saved.review_note==='string'?saved.review_note:'',accept_corner_reliefs:saved.accept_corner_reliefs===true};
 }
 export function reviewError(value:ReviewValues,settings:Settings):string|null {
  const ranges:[number,number,number,string,boolean][]=[
@@ -22,7 +22,8 @@ export function reviewError(value:ReviewValues,settings:Settings):string|null {
   if(bend.radius!=null&&(!Number.isFinite(bend.radius)||bend.radius<=0||bend.radius>100))return 'Each bend radius must be above 0 and at most 100 mm.';
   if(bend.deduction!=null&&(!Number.isFinite(bend.deduction)||bend.deduction<0||bend.deduction>100))return 'Each bend deduction must be from 0 to 100 mm.';
  }
- return value.manual_bends&&!value.review_note.trim()?'Add a note stating where your confirmed bend values came from.':null;
+ for(const radius of Object.values(value.relief_radii))if(radius!=null&&(!Number.isFinite(radius)||radius<=0))return 'Corner-relief radii must be positive numbers.';
+ return (value.manual_bends||Object.values(value.relief_radii).some(r=>r!=null))&&!value.review_note.trim()?'Add a note stating where your confirmed bend or corner-cut values came from.':null;
 }
 
 export default function ReviewControls({panel,settings,value,onChange}:{panel:Panel;settings:Settings;value:ReviewValues;onChange:(v:ReviewValues)=>void}){
@@ -57,8 +58,13 @@ export default function ReviewControls({panel,settings,value,onChange}:{panel:Pa
    <p>Blank fields use the drawing or panel settings. Clear an entered value to return to automatic calculation.</p>
    <div className="table-wrap"><table className="calculation-table"><thead><tr><th>Bend</th><th>Signed rotation °</th><th>Inside radius mm</th><th>Deduction mm</th></tr></thead><tbody>{panel.report.bends.map(b=><tr key={b.key}><td>{b.bend_ids.join(' / ')}<small>F{b.parent} → F{b.child}{b.angle!=null?` · detected / current ${b.angle.toFixed(3)}°`:''}</small></td>{(['angle','radius','deduction'] as const).map(field=><td key={field}><input type="number" step="any" aria-label={`${field} for ${b.bend_ids.join('/')}`} placeholder={field==='angle'?(b.angle?.toString()??'Required'):settings[field].toString()} value={value.bend_parameters[b.key]?.[field]??''} onChange={e=>setBend(b.key,field,e.target.value)}/></td>)}</tr>)}</tbody></table></div>
   </details>}
+  {!!panel.report.relief_circles?.length&&<details className="bend-overrides"><summary>Adjust corner-relief cuts</summary>
+   <p>Enter the radius required by the approved shape. Blank restores the original DXF cut. These changes are recorded and included in the exported flat drawing.</p>
+   <div className="table-wrap"><table className="calculation-table"><thead><tr><th>Corner / drawing position</th><th>Original radius mm</th><th>Approved radius mm</th></tr></thead><tbody>{panel.report.relief_circles.map(c=><tr key={c.handle}><td>{c.handle}<small>X {c.center_dxf_mm[0].toFixed(2)}, Y {c.center_dxf_mm[1].toFixed(2)}</small></td><td>{c.original_radius_mm}</td><td><input type="number" step="any" min={c.original_radius_mm} max={c.max_radius_mm} aria-label={'Corner radius '+c.handle} placeholder={c.original_radius_mm.toString()} value={value.relief_radii[c.handle]??''} onChange={e=>onChange({...value,relief_radii:{...value.relief_radii,[c.handle]:e.target.value===''?null:Number(e.target.value)}})}/></td></tr>)}</tbody></table></div>
+  </details>}
   <div className="manual-section-choice"><label><Checkbox checked={value.manual_bends} onCheckedChange={c=>manualMode(c===true)}/>Use reviewed bend values instead of missing or unreliable section drawings</label>
-   {value.manual_bends&&<><p>Current detected angles are copied into the review values. Check them and fill every remaining rotation. The result records that section dimensions and paint orientation were not independently checked.</p><label htmlFor="review-note">Source of confirmed values / reason for this decision</label><textarea id="review-note" maxLength={2000} value={value.review_note} onChange={e=>onChange({...value,review_note:e.target.value})} placeholder="For example: confirmed angles from the client’s marked drawing."/></>}
+   {value.manual_bends&&<p>Current detected angles are copied into the review values. Check them and fill every remaining rotation. The result records that section dimensions and paint orientation were not independently checked.</p>}
+   {(value.manual_bends||Object.values(value.relief_radii).some(r=>r!=null))&&<><label htmlFor="review-note">Source of confirmed values / reason for this decision</label><textarea id="review-note" maxLength={2000} value={value.review_note} onChange={e=>onChange({...value,review_note:e.target.value})} placeholder="For example: measured from the approved client STEP."/></>}
   </div>
   {!!panel.report.corner_relief_proposals?.length&&<div className="manual-section-choice"><p>The highlighted corner regions contain {panel.report.corner_relief_proposals.reduce((sum,p)=>sum+p.area_mm2,0).toFixed(4)} mm² of material and have no original bend axis.</p><label><Checkbox checked={value.accept_corner_reliefs} onCheckedChange={c=>onChange({...value,accept_corner_reliefs:c===true})}/>I reviewed and approve removal of these corner regions as bend relief</label></div>}
   {panel.report.warnings?.map((warning,i)=><p className="review-warning" key={i}>{warning}</p>)}

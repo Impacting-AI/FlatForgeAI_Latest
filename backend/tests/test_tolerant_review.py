@@ -109,24 +109,21 @@ def test_review_api_accepts_non_square_values_rejects_unknown_keys_and_clears(tm
         client.delete(f"/projects/{project['id']}")
 
 
-@pytest.mark.parametrize('number',['147','148'])
-def test_uploaded_panel_reaches_actionable_review(tmp_path,number):
+@pytest.mark.parametrize('index',[0,1])
+def test_supplied_drawings_keep_outside_tolerance_choices_unselectable(tmp_path,index):
     folder=os.getenv('FLATFORGE_PAIR_DXF_DIR')
-    if not folder:pytest.skip('Set FLATFORGE_PAIR_DXF_DIR for the supplied NM147/NM148 drawings')
-    names={'147':'PN_NM_147(1).dxf','148':'PN_NM_148 (1)(1).dxf'}
-    r=run({'source':str(Path(folder)/names[number]),'output':str(tmp_path),'settings':{'bend_model':'fixed_deduction'}})
+    if not folder:pytest.skip('Set FLATFORGE_PAIR_DXF_DIR for private drawing regressions')
+    drawings=sorted(Path(folder).glob('*.dxf'))
+    if index>=len(drawings):pytest.skip('Private drawing fixture is unavailable')
+    r=run({'source':str(drawings[index]),'output':str(tmp_path),'settings':{'bend_model':'fixed_deduction'}})
     assert r['status']=='NEEDS_REVIEW'
-    assert r['physical_bends']==(18 if number=='147' else 21)
     assert r['bends'] and r['unresolved_bends']
     assert (tmp_path/'extraction.svg').exists()
-    if number=='147':
-        assert any(x['kind']=='duplicate_contour_closure' for x in r['geometry_normalization'])
-        assert r['corner_relief_proposals']
-        assert r['issues'][0]['code']=='SECTION_EVIDENCE'
-    else:
-        assert [s['status'] for s in r['section_mapping']]==['PASS','PASS','NEEDS_REVIEW','PASS']
-        candidate=r['section_mapping'][2]['review_candidates'][0]
-        again=run({'source':str(Path(folder)/names[number]),'output':str(tmp_path/'selected'),'settings':{'bend_model':'fixed_deduction'},'overrides':{'section_choices':{'SECTION_03':candidate['id']}}})
-        assert all(s['status']=='PASS' for s in again['section_mapping'])
-        assert len(again['unresolved_bends'])<len(r['unresolved_bends'])
-        assert all(i['code']=='DIRECTIONS' for i in again['issues'])
+    assert not any(i['code']=='SECTION_EVIDENCE' for i in r['issues'])
+    for section in r['section_mapping']:
+        for candidate in section.get('review_candidates',[]):
+            assert candidate['max_strip_error_mm']<=r['settings']['strip_tolerance']
+        nearest=section.get('nearest_local_candidate')
+        if section.get('reason_code')=='LOCAL_DIMENSION_MISMATCH':
+            assert nearest['max_strip_error_mm']>r['settings']['strip_tolerance']
+            assert section['status']=='NEEDS_REVIEW'

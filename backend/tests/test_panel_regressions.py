@@ -60,12 +60,18 @@ def test_missing_bend_data_stays_unknown(tmp_path):
     assert result['bend_lines']==0 and (tmp_path/'extraction.svg').exists()
     assert not (tmp_path/'panel.step').exists()
 
-@pytest.mark.parametrize('number',['1570','1619'])
-def test_previous_reference_panels(number,tmp_path):
+@pytest.mark.parametrize('number',['1570','1619','1648'])
+def test_previous_references_expose_local_errors_hidden_by_area_check(number,tmp_path):
     panel=next(p for p in json.loads((ROOT/'lib/sample-data.json').read_text())['panels'] if p['filename']==f'PN_PL_{number}.dxf')
     result=run({'source':str(ROOT/'public/samples'/number/'flat.dxf'),
                 'output':str(tmp_path),'overrides':panel['overrides']})
-    assert result['status']=='PASS',result.get('issues')
+    assert result['status']=='NEEDS_REVIEW',result.get('issues')
+    assert result['solid']['valid'] and result['solid']['solid_count']==1
+    assert all(c['chain_status']=='PASS' for c in result['section_checks'])
+    assert result['unfold_check']['symmetric_difference_percent']<.5
+    assert result['unfold_check']['local_boundary_check']['status']=='FAIL'
+    assert result['unfold_check']['local_boundary_check']['sampled_max_mm']==pytest.approx(2 if number=='1648' else 2**.5*2,abs=.01)
+    assert any(i['code']=='VALIDATION' for i in result['issues'])
     assert max(abs(a-b) for a,b in zip(result['bbox'],panel['report']['bbox']))<.001
 
 def test_gap_requires_explicit_review_before_step_export():

@@ -24,8 +24,15 @@ export default function ParameterFields({value,onChange}:{value:Settings;onChang
     <option value="fixed_deduction">Shape model · fixed deduction at each angle</option>
    </select>
   </div>
+  <div className="field"><Label htmlFor="bend-ends">Bend ends</Label>
+   <select id="bend-ends" value={value.bend_end_mode??'straight'} onChange={e=>onChange({...value,bend_end_mode:e.target.value as Settings['bend_end_mode']})}>
+    <option value="straight">Straight ends · constant bend length</option>
+    <option value="contour">Follow cut outline · shaped ends</option>
+   </select>
+  </div>
   <div className="field"><Label htmlFor="input-type">Input type</Label><select id="input-type" value={value.input_type} onChange={e=>onChange({...value,input_type:e.target.value as Settings['input_type']})}><option value="flat_pattern">Developed flat pattern</option><option value="folded_dimensions">Folded dimensions · review required</option></select></div>
   <p className="parameter-help">The length limit applies to drawing comparisons. The angle limit allows near-90° drawing turns to match 90°. Enter rotation from the flat sheet: a 60° rotation leaves a 120° inside angle. The missing-angle value is used only when you choose a bend direction below.</p>
   {value.bend_model==='fixed_deduction'&&<p className="parameter-help">Fixed deduction is an explicit shape convention. Review the result before using its dimensions for fabrication.</p>}
+  {value.bend_end_mode==='contour'&&<p className="parameter-help">Bends follow stepped ends and cut-outs in the drawing. Local checks include material hidden where folded faces meet.</p>}
  </div>;
 }

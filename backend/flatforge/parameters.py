@@ -14,6 +14,7 @@ class Parameters(BaseModel):
     angle_tolerance: float = Field(default=.1, ge=0, le=2)
     default_angle: float = Field(default=90, gt=0, lt=180)
     bend_model: Literal['constant_k', 'fixed_deduction'] = 'constant_k'
+    bend_end_mode: Literal['straight', 'contour'] = 'straight'
 
 
 class BendOverride(BaseModel):
