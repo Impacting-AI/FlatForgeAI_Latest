@@ -38,7 +38,7 @@ def channel(path, angle=90., plan=37., layer='חיפוי', mirrored=False):
     doc.saveas(path)
 
 
-@pytest.mark.parametrize('angle,plan,mirrored',[(90,37,False),(60,37,True),(90,-31,True)])
+@pytest.mark.parametrize('angle,plan,mirrored',[(90,37,False),(60,37,True),(120,37,False),(90,-31,True)])
 def test_arbitrary_axis_solid_sections_unfold_and_step(tmp_path,angle,plan,mirrored):
     source=tmp_path/'source.dxf';channel(source,angle,plan,mirrored=mirrored)
     out=tmp_path/'result'
@@ -103,7 +103,7 @@ def test_supplied_complex_drawings_report_remaining_evidence(tmp_path,name,axes,
     assert (tmp_path/'out/extraction.svg').exists()
     assert not (tmp_path/'out/panel.step').exists()
     unresolved=[m for m in result['section_mapping'] if m['status']!='PASS']
-    assert all(m['reason_code'] in {'AMBIGUOUS_CHAIN','NO_CHAIN','NON_NORMAL_CHAIN','STRIP_LENGTH_MISMATCH'} for m in unresolved)
+    assert all(m['reason_code'] in {'AMBIGUOUS_CHAIN','NO_CHAIN','NON_NORMAL_CHAIN','STRIP_LENGTH_MISMATCH','LOCAL_CONFIRMATION'} for m in unresolved)
     for mapping in unresolved:
         nearest=mapping['nearest_candidate']
         if nearest:

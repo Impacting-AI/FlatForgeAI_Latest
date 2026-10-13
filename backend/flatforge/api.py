@@ -4,13 +4,13 @@ from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
 from .db import init, Session, Project, Panel, Job, Setting
 from .storage import store
 from .dwg import available as dwg_available
-DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
+from .parameters import Parameters, BendOverride, DEFAULTS
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
 async def lifespan(app):
@@ -30,21 +30,26 @@ def get_panel(s,id):
  if not p or p.deleted_at is not None:raise HTTPException(404,'Panel not found')
  return p
 def pack_panel(p):
- return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':json.loads(p.settings),'overrides':json.loads(p.overrides),'report':json.loads(p.report),'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated}
-class Parameters(BaseModel):
- model_config=ConfigDict(extra='forbid')
- thickness:float=Field(default=2,gt=0,le=20)
- radius:float=Field(default=2,gt=0,le=100)
- deduction:float=Field(default=4,ge=0,le=100)
- input_type:Literal['flat_pattern','folded_dimensions']='flat_pattern'
+ return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':{**DEFAULTS,**json.loads(p.settings)},'overrides':json.loads(p.overrides),'report':json.loads(p.report),'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated}
 class ProjectInput(BaseModel):
  name:str=Field(min_length=1,max_length=160);client:str=Field(default='',max_length=160)
 class ReviewInput(BaseModel):
- model_config=ConfigDict(extra='forbid')
+ model_config=ConfigDict(extra='forbid',allow_inf_nan=False)
  settings:Parameters|None=None
- bend_angles:dict[str,Literal[-90,90]]=Field(default_factory=dict)
+ bend_angles:dict[str,float|None]=Field(default_factory=dict)
+ bend_parameters:dict[str,BendOverride]=Field(default_factory=dict)
+ section_choices:dict[str,str|None]=Field(default_factory=dict)
+ manual_bends:bool|None=None
+ review_note:str|None=Field(default=None,max_length=2000)
  confirm_parameters:bool=False;accept_partial_sections:bool=False
  accept_relief_extensions:bool=False
+ accept_corner_reliefs:bool=False
+ @field_validator('bend_angles')
+ @classmethod
+ def angles_valid(cls,values):
+  for angle in values.values():
+   if angle is not None:BendOverride(angle=angle)
+  return values
 class MeasurementInput(BaseModel):
  value:float|None=Field(default=None,gt=0,le=1000000)
  axis:Literal['flat_width','flat_height','folded_x','folded_y','folded_z']='flat_width'
@@ -59,7 +64,7 @@ def bootstrap():
  with Session() as s:
   projects=[{'id':p.id,'name':p.name,'client':p.client,'created':p.created} for p in s.scalars(select(Project).where(Project.deleted_at.is_(None)).order_by(Project.created.desc()))]
   panels=[pack_panel(p) for p in s.scalars(select(Panel).where(Panel.deleted_at.is_(None)).order_by(Panel.created))]
-  defaults=json.loads(s.get(Setting,'defaults').value)
+  defaults={**DEFAULTS,**json.loads(s.get(Setting,'defaults').value)}
  return {'mode':'live','capabilities':capabilities(),'settings':defaults,'projects':projects,'panels':panels}
 @app.put('/settings',dependencies=[Depends(auth)])
 def settings(p:Parameters):
@@ -113,12 +118,35 @@ def review(id:str,body:ReviewInput):
  with Session.begin() as s:
   p=lock_panel(s,id)
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
-  report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}
-  if set(body.bend_angles)-allowed:raise HTTPException(422,'Unknown bend key in review decision')
-  overrides=json.loads(p.overrides);overrides['bend_angles']={**overrides.get('bend_angles',{}),**body.bend_angles}
+  report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}|{b['key'] for b in report.get('unmapped_hinges',[])}
+  if (set(body.bend_angles)|set(body.bend_parameters))-allowed:raise HTTPException(422,'Unknown bend key in review decision')
+  choices={row['profile']:{v['id'] for v in row.get('review_candidates',[])} for row in report.get('section_mapping',[])}
+  for profile,choice in body.section_choices.items():
+   if choice is not None and choice not in choices.get(profile,set()):raise HTTPException(422,'Unknown section chain. Refresh the drawing review before selecting it.')
+  overrides=json.loads(p.overrides)
+  angles={**overrides.get('bend_angles',{})}
+  for key,value in body.bend_angles.items():
+   if value is None:angles.pop(key,None)
+   else:angles[key]=value
+  overrides['bend_angles']=angles
+  bends={**overrides.get('bend_parameters',{})}
+  for key,value in body.bend_parameters.items():
+   values=value.model_dump(exclude_none=True)
+   if values:bends[key]=values
+   else:bends.pop(key,None)
+  overrides['bend_parameters']=bends
+  selected={**overrides.get('section_choices',{})}
+  for key,value in body.section_choices.items():
+   if value is None:selected.pop(key,None)
+   else:selected[key]=value
+  overrides['section_choices']=selected
+  if body.manual_bends is not None:overrides['manual_bends']=body.manual_bends
+  if body.review_note is not None:overrides['review_note']=body.review_note.strip()
+  if overrides.get('manual_bends') and not overrides.get('review_note'):raise HTTPException(422,'Explain which confirmed values replace the missing or unreliable sections.')
   if body.confirm_parameters:overrides['confirm_parameters']=True
   if body.accept_partial_sections:overrides['accept_partial_sections']=True
   if body.accept_relief_extensions:overrides['accept_relief_extensions']=True
+  if 'accept_corner_reliefs' in body.model_fields_set:overrides['accept_corner_reliefs']=body.accept_corner_reliefs
   if body.settings:p.settings=json.dumps(body.settings.model_dump())
   p.overrides=json.dumps(overrides);p.revision+=1;p.status='QUEUED';p.error='';p.updated=time.time();p.artifacts='{}'
   s.add(Job(panel_id=p.id,revision=p.revision,log='Panel-only review decisions recorded. Queued for reconstruction.\n'))

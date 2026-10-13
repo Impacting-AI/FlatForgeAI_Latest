@@ -9,6 +9,7 @@ import argparse, collections, csv, hashlib, io, json, math, re, sys, subprocess,
 from pathlib import Path
 import numpy as np
 import ezdxf
+from .parameters import allowance, hinge_parameters
 from ezdxf import path as dxfpath
 from shapely import set_precision, union_all
 from shapely.geometry import Polygon,LineString,Point,box
@@ -77,10 +78,24 @@ def read_drawing(filename):
     for e,p in outlines:
         if not e.closed:raise ValueError(f'CONTOR contains an open outline at {e.dxf.handle}')
         points=np.array(p.exterior.coords)-origin
-        if not oblique or not p.is_valid:points=np.round(points,3)
-        clean=Polygon(points)
+        if not oblique:points=np.round(points,3)
+        # Closed CAD polylines sometimes repeat the first point with numerical
+        # noise. Remove only sub-grid consecutive edges, with source provenance.
+        cleaned=[]
+        for q in points[:-1]:
+            if cleaned and np.linalg.norm(q-cleaned[-1])<GRID:
+                read_drawing.repairs.append({'kind':'duplicate_contour_vertex','handle':e.dxf.handle,'distance_mm':float(np.linalg.norm(q-cleaned[-1]))})
+                continue
+            cleaned.append(q)
+        if len(cleaned)>1 and np.linalg.norm(cleaned[-1]-cleaned[0])<GRID:
+            read_drawing.repairs.append({'kind':'duplicate_contour_closure','handle':e.dxf.handle,'distance_mm':float(np.linalg.norm(cleaned[-1]-cleaned[0]))})
+            cleaned.pop()
+        if len(cleaned)<3:raise ValueError(f'CONTOR {e.dxf.handle} has fewer than three distinct vertices')
+        clean=Polygon(cleaned)
+        precision_repair=not clean.is_valid
+        if precision_repair:clean=Polygon(np.round(cleaned,3))
         if not clean.is_valid:raise ValueError(f'CONTOR contains an invalid outline at {e.dxf.handle}, even after {GRID} mm coordinate normalization')
-        if not p.is_valid:read_drawing.repairs.append({'kind':'coordinate_precision','handle':e.dxf.handle,'grid_mm':GRID,'reason':'Floating point duplicate/backtracking vertices removed by coordinate rounding'})
+        if precision_repair:read_drawing.repairs.append({'kind':'coordinate_precision','handle':e.dxf.handle,'grid_mm':GRID,'reason':'Floating point duplicate/backtracking vertices removed by coordinate rounding'})
         normalized.append((e,clean))
     outlines=normalized;outer=next(p for e,p in outlines if e is outer_e)
     if any(e is not outer_e and not outer.covers(p) for e,p in outlines):raise ValueError('Multiple outer panels or intersecting contours: upload one panel per drawing')
@@ -124,7 +139,23 @@ def read_drawing(filename):
 
 def partition(outer,blank,lines,relief):
     partition.contacts=[]
-    cutters=[LineString([l['a']-l.get('relief_extension',relief)*unit(l['b']-l['a']),l['b']+l.get('relief_extension',relief)*unit(l['b']-l['a'])]) for l in lines]
+    partition.corner_reliefs=[]
+    def extended_endpoint(q,distance,direction,source):
+        end=q+distance*direction
+        # Stop at the first outline crossing. Continuing beyond that crossing
+        # can merge an almost-parallel relief tail into an unrelated boundary.
+        ray=LineString([q,end]);hit=ray.intersection(outer.boundary)
+        points=[]
+        for part in getattr(hit,'geoms',[hit]):
+            if part.geom_type=='Point':points.append(np.array(part.coords[0]))
+        ahead=[p for p in points if float((p-q)@direction)>GRID]
+        if ahead and outer.covers(Point(q)):
+            return min(ahead,key=lambda p:np.linalg.norm(p-q))
+        return end
+    cutters=[]
+    for l in lines:
+        u=unit(l['b']-l['a']);extension=l.get('relief_extension',relief)
+        cutters.append(LineString([extended_endpoint(l['a'],extension,-u,l),extended_endpoint(l['b'],extension,u,l)]))
     # Preserve the proven 90-degree arrangement exactly. Oblique intersections
     # need joint noding; individually clipping them creates false slivers.
     oblique=any(not l.get('orthogonal',True) for l in lines)
@@ -135,7 +166,7 @@ def partition(outer,blank,lines,relief):
         # Snap-round only the arrangement topology, then recover its vertices
         # on the original analytic supports for exact BREP mating surfaces.
         boundary=list(outer.exterior.coords)
-        segments=[(np.array(a),np.array(b)) for a,b in zip(boundary,boundary[1:])]
+        segments=[(np.array(a),np.array(b)) for a,b in zip(boundary,boundary[1:]) if np.linalg.norm(np.array(b)-a)>=GRID]
         segments += [(np.array(c.coords[0]),np.array(c.coords[-1])) for c in cutters]
         cache={}
         def recover(q):
@@ -167,6 +198,21 @@ def partition(outer,blank,lines,relief):
             u,n,c=support(source[0])
             if any(abs(cross(u,support(l)[0]))>1e-7 or abs(c-support(l)[2])>.002 for l in source):raise ValueError('Multiple hinge supports on shared boundary')
             edges.append(dict(faces=(i,j),source=source,geom=shared,dim=source[0]['dim'],c=source[0]['c'],u=u,normal=n,offset=c))
+    # Small islands bounded exclusively by relief extensions have no real bend
+    # axis. Propose their removal as corner relief; the engine requires explicit
+    # review approval and reports the lost material against the original blank.
+    hinged={i for e in edges for i in e['faces']}
+    islands=[i for i in range(len(faces)) if i not in hinged] if edges else []
+    if islands:
+        for i in islands:
+            p=faces[i];width=p.bounds[2]-p.bounds[0];height=p.bounds[3]-p.bounds[1]
+            if i==0 or p.area>relief*relief or max(width,height)>2*relief:
+                raise ValueError(f'Unconnected region F{i} has no bend axis. Add its missing KIFOF geometry or correct the contour in CAD.')
+            partition.corner_reliefs.append({'area_mm2':p.intersection(blank).area,'outline':list(p.exterior.coords),'reason':'Small region bounded by bend-end extensions; no original KIFOF segment bounds it.'})
+        keep={old:new for new,old in enumerate(i for i in range(len(faces)) if i not in islands)}
+        faces=[p for i,p in enumerate(faces) if i in keep]
+        for e in edges:e['faces']=tuple(keep[i] for i in e['faces'])
+        partition.contacts=[{**c,'faces':[keep[i] for i in c['faces']]} for c in partition.contacts if all(i in keep for i in c['faces'])]
     adj=collections.defaultdict(list)
     for n,e in enumerate(edges):
         for f in e['faces']:adj[f].append(n)
@@ -193,7 +239,10 @@ def profiles(doc,origin,t):
         for j,m in enumerate(ls):
             if i==j or j in paired or abs(cross(l['u'],m['u']))>1e-4:continue
             overlap=min(l['hi'],m['hi'])-max(l['lo'],m['lo'])
-            if abs(abs(l['c']-m['c'])-t)<.05 and overlap>0 and abs(l['lo']-m['lo'])<=t+.05 and abs(l['hi']-m['hi'])<=t+.05:
+            # Mitered ends at non-square folds can differ by more than one
+            # thickness. Pair by parallel support, wall spacing and overlap;
+            # require a unique pair and validate the connected profile below.
+            if abs(abs(l['c']-m['c'])-t)<.05 and overlap>GRID:
                 choices.append(j)
         if len(choices)!=1:raise ValueError(f'HAT pair ambiguity at {l["handle"]}: {len(choices)} matches')
         j=choices[0];m=ls[j];paired.update([i,j]);dim=l['dim'];c=(l['c']+m['c'])/2
@@ -270,7 +319,7 @@ def section_trace(faces,outer,dim,coordinate):
     items.sort()
     return items
 
-def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
+def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,strip_tolerance=.5):
     # Sharp midsurface setback minus half bend allowance. 90-degree rule.
     ba=2*(r+t)-bd;gain=r+t/2-ba/2
     edge_lookup={frozenset(e['faces']):e for e in edges}
@@ -304,7 +353,7 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd):
             trace=section_trace(faces,outer,dim,c)
             if len(trace)!=len(lengths):continue
             err=max(abs((b-a)-target) for (a,b,_),target in zip(trace,flat_target))
-            if err<=.5:valid.append((err,-width,c,trace))
+            if err<=strip_tolerance:valid.append((err,-width,c,trace))
         if not valid:raise ValueError(f'{p["name"]}: section vertex count or strip lengths do not match any cut; STOP chain')
         # Prefer widest equivalent lane; otherwise minimum geometric residual.
         err,nw,c,trace=min(valid,key=lambda v:(v[1],v[0],v[2]))
@@ -346,23 +395,30 @@ def rotation(axis,angle):
 def lift(p):return np.array([p[0],p[1],0.])
 def apply_tf(tf,p):return tf[0]@np.array(p)+tf[1]
 
-def transforms(faces,edges,order,t,r,bd):
-    rm=r+t/2;tf={0:(np.eye(3),np.zeros(3))}
+def transforms(faces,edges,order,t,r,bd,bend_model='constant_k'):
+    tf={0:(np.eye(3),np.zeros(3))}
     for child in order[1:]:
         e=next(e for e in edges if e['child']==child);parent=e['parent']
         u,n,c=support(e);axis=lift(u);h=lift(n*c)
         d=lift(n)*np.sign(np.array(faces[child].representative_point().coords[0])@n-c)
-        angle=math.radians(e['angle']);ba=bend_allowance(t,r,bd,e['angle']);R=rotation(axis,angle)
+        radius,deduction,ba,k=hinge_parameters(e,t,r,bd,bend_model);rm=radius+t/2
+        angle=math.radians(e['angle']);R=rotation(axis,angle)
         tangent=h-d*ba/2;w=np.cross(axis,d)*np.sign(angle);center=tangent+rm*w
         end=center-rm*(R@w);shift=end-R@(h+d*ba/2)
         rp,tp=tf[parent];tf[child]=(rp@R,rp@shift+tp)
-        e.update(axis=axis,d=d,hinge=h,tangent=tangent,center=center,w=w,R=R,allowance=ba)
+        e.update(axis=axis,d=d,hinge=h,tangent=tangent,center=center,w=w,R=R,allowance=ba,radius=radius,deduction=deduction,k_factor=k)
     return tf
 
-def bend_allowance(t,r,bd,angle):
-    """BD is the 90-degree calibration; constant K gives BA at other angles."""
-    if not 0<abs(angle)<180:raise ValueError('Bend rotation must be between 0 and 180 degrees')
-    return (2*(r+t)-bd)*abs(angle)/90.
+def bend_allowance(t,r,bd,angle,bend_model='constant_k'):
+    return allowance(t,r,bd,angle,bend_model)
+
+def section_gains(angles,t,r,bd,hinges=None,bend_model='constant_k'):
+    values=[]
+    for i,a in enumerate(angles):
+        edge=hinges[i] if hinges is not None else {}
+        radius=edge.get('radius',r);deduction=edge.get('deduction',bd)
+        values.append((radius+t/2)*math.tan(math.radians(abs(a))/2)-bend_allowance(t,radius,deduction,a,bend_model)/2)
+    return np.asarray(values)
 
 def bend_strip(e,half_width,extension=0.):
     u,n,c=support(e);lo,hi=hinge_span(e);h=n*c
@@ -396,9 +452,10 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
             parts.append(solid)
     for e in edges:
         lo,hi=hinge_span(e);ba=e['allowance'];axis=e['axis'];w=e['w'];center=e['center']+axis*lo;angle=math.radians(e['angle'])
+        radius=e.get('radius',r)
         parenttf=tf[e['parent']]
         def pt(rad,a):return cq.Vector(*apply_tf(parenttf,center-rad*(rotation(axis,a)@w)))
-        edges_wire=[cq.Edge.makeThreePointArc(pt(r,0),pt(r,angle/2),pt(r,angle)),cq.Edge.makeLine(pt(r,angle),pt(r+t,angle)),cq.Edge.makeThreePointArc(pt(r+t,angle),pt(r+t,angle/2),pt(r+t,0)),cq.Edge.makeLine(pt(r+t,0),pt(r,0))]
+        edges_wire=[cq.Edge.makeThreePointArc(pt(radius,0),pt(radius,angle/2),pt(radius,angle)),cq.Edge.makeLine(pt(radius,angle),pt(radius+t,angle)),cq.Edge.makeThreePointArc(pt(radius+t,angle),pt(radius+t,angle/2),pt(radius+t,0)),cq.Edge.makeLine(pt(radius+t,0),pt(radius,0))]
         wi=cq.Wire.assembleEdges(edges_wire);solid=cq.Solid.extrudeLinear(wi,[],cq.Vector(*(parenttf[0]@axis*(hi-lo))))
         if not solid.isValid():raise ValueError('Invalid cylindrical bend BREP')
         parts.append(solid);bend_records.append(dict(edge=e['index'],length=hi-lo,developed_area=(hi-lo)*ba))
@@ -428,7 +485,7 @@ def build_cad(faces,material,edges,tf,t,r,bd,relief,out):
     ob=Bnd_Box();BRepBndLib.AddOptimal_s(fused.wrapped,ob,False,False);bounds=ob.Get();bmin=list(bounds[:3]);bmax=list(bounds[3:]);bsize=[v-u for u,v in zip(bmin,bmax)]
     return fused,flat_trimmed,dict(valid=fused.isValid(),solid_count=len(fused.Solids()),volume_mm3=fused.Volume(),pre_fuse_volume_mm3=raw_volume,fusion_volume_removed_mm3=raw_volume-fused.Volume(),bbox_mm=bsize,bbox_min_mm=bmin,bbox_max_mm=bmax,plate_flat_area=sum(p.area for p in flat_trimmed),bend_developed_area=sum(b['developed_area'] for b in bend_records))
 
-def check_sections(solid,profs,faces,tf,t,r,out,material=None):
+def check_sections(solid,profs,faces,tf,t,r,out,material=None,strip_tolerance=.5,angle_tolerance=1.,edges=None):
     import cadquery as cq
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
     from OCP.gp import gp_Pln,gp_Pnt,gp_Dir
@@ -497,9 +554,10 @@ def check_sections(solid,profs,faces,tf,t,r,out,material=None):
             predicted=rotation(plane_turn_normal,theta)@paint
             actualpaint=tf[trace[i][2]][0][:,2]
             paint_errors.append(math.degrees(math.acos(float(np.clip(np.dot(predicted,actualpaint),-1,1)))))
-            details.append(dict(profile=p['name'],segment=i+1,face=f'F{trace[i][2]}',hat_virtual_midline_length_mm=float(expected[i]),solid_section_virtual_midline_length_mm=float(actual[i]),length_error_mm=float(abs(actual[i]-expected[i])),turn_error_deg=angle_errors[-1] if i<len(trace)-1 else '',paint_normal_error_deg=paint_errors[-1],status='PASS' if abs(actual[i]-expected[i])<=.5 and paint_errors[-1]<=1 and (i==len(trace)-1 or angle_errors[-1]<=1) else 'FAIL'))
-        radii=[e.radius() for e in se if e.geomType()=='CIRCLE'];radius_error=max([min(abs(v-r),abs(v-(r+t))) for v in radii],default=float('inf'))
-        status='PASS' if not misses and np.max(abs(actual-expected))<=.5 and max(angle_errors)<=1 and max(paint_errors)<=1 and radius_error<.001 else 'FAIL'
+            details.append(dict(profile=p['name'],segment=i+1,face=f'F{trace[i][2]}',hat_virtual_midline_length_mm=float(expected[i]),solid_section_virtual_midline_length_mm=float(actual[i]),length_error_mm=float(abs(actual[i]-expected[i])),turn_error_deg=angle_errors[-1] if i<len(trace)-1 else '',paint_normal_error_deg=paint_errors[-1],status='PASS' if abs(actual[i]-expected[i])<=strip_tolerance and paint_errors[-1]<=angle_tolerance and (i==len(trace)-1 or angle_errors[-1]<=angle_tolerance) else 'FAIL'))
+        expected_radii={r,r+t} if edges is None else {radius for e in edges for radius in (e.get('radius',r),e.get('radius',r)+t)}
+        radii=[e.radius() for e in se if e.geomType()=='CIRCLE'];radius_error=max([min(abs(v-target) for target in expected_radii) for v in radii],default=float('inf'))
+        status='PASS' if not misses and np.max(abs(actual-expected))<=strip_tolerance and max(angle_errors)<=angle_tolerance and max(paint_errors)<=angle_tolerance and radius_error<.001 else 'FAIL'
         summaries.append(dict(profile=p['name'],segments=len(trace),section_edges=len(se),max_length_error_mm=float(np.max(abs(actual-expected))),max_turn_error_deg=max(angle_errors),max_paint_normal_error_deg=max(paint_errors),circular_edges=len(radii),expected_circular_edges=2*(len(trace)-1),max_radius_error_mm=radius_error,missing_or_interrupted=misses,contour_openings=list(openings.values()),chain_status=status,full_plane_status='PASS' if status=='PASS' and len(radii)==2*(len(trace)-1) and len(se)==4*len(trace)+4*len(openings) else 'FAIL'))
         # Evidence image: real BREP section, registered to HAT by main-segment
         # midpoint/orientation only. No scaling or non-rigid fit is performed.
@@ -510,7 +568,9 @@ def check_sections(solid,profs,faces,tf,t,r,out,material=None):
         hp=p['points'];hmid=(hp[main]+hp[main+1])/2;hd=unit(hp[main+1]-hp[main]);hat=np.column_stack([(hp-hmid)@hd,(hp-hmid)@p['paint_normal']])
         plots.append((p['name'],uv,hat))
     def savecsv(name,rows):
-        with (out/name).open('w',newline='') as f:w=csv.DictWriter(f,fieldnames=rows[0].keys());w.writeheader();w.writerows(rows)
+        if rows:
+            with (out/name).open('w',newline='') as f:w=csv.DictWriter(f,fieldnames=rows[0].keys());w.writeheader();w.writerows(rows)
+    if not plots:return summaries,details
     savecsv('section_checks.csv',summaries);savecsv('section_segment_checks.csv',details)
     import matplotlib;matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -558,7 +618,7 @@ def unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out):
             cyl=BRepAdaptor_Surface(face.wrapped).Cylinder();radius=cyl.Radius();loc=np.array(cyl.Location().Coord());axis=np.array(cyl.Axis().Direction().Coord())
             for e in edges:
                 R,T=tf[e['parent']];ga=R@e['axis'];gc=R@e['center']+T
-                desired=r+t/2-t/2*e['w'][2]
+                desired=e.get('radius',r)+t/2-t/2*e['w'][2]
                 if abs(radius-desired)>.005 or abs(np.dot(axis,ga))<1-1e-6 or np.linalg.norm(np.cross(loc-gc,ga))>.005:continue
                 angle=math.radians(e['angle']);start=-R@e['w'];ba=e['allowance']
                 def unwrap(pts):

@@ -64,7 +64,7 @@ def test_complex_upload_completes_without_review_or_panel_overrides():
   p=c.get('/panels/'+panel['id']).json()
   assert p['status']=='PASS',p['report']
   assert p['overrides']=={}
-  assert p['settings']==settings
+  assert all(p['settings'][key]==value for key,value in settings.items())
   assert p['report']['physical_bends']==27
   for filename in ('panel.step','panel.glb','viewer.json','fold_table.csv','report.json'):
    assert c.get('/panels/'+p['id']+'/files/'+filename).status_code==200
