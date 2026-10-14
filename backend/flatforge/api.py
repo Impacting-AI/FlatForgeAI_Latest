@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from .db import init, Session, Project, Panel, Job, Setting
 from .storage import store
 from .dwg import available as dwg_available
-from .parameters import Parameters, BendOverride, DEFAULTS
+from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS
 from .review_files import select_review, MAX_REVIEW_BYTES
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
@@ -31,13 +31,17 @@ def get_panel(s,id):
  if not p or p.deleted_at is not None:raise HTTPException(404,'Panel not found')
  return p
 def pack_panel(p):
- return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':{**DEFAULTS,**json.loads(p.settings)},'overrides':json.loads(p.overrides),'report':json.loads(p.report),'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated}
+ configured={**DEFAULTS,**json.loads(p.settings)};report=json.loads(p.report)
+ # A queued revision must not display the preceding revision's measurements.
+ effective=report.get('settings',configured) if p.status not in ['QUEUED','CONVERTING','EXTRACTING','BUILDING'] else configured
+ return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':effective,'configured_settings':configured,'overrides':json.loads(p.overrides),'report':report,'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated}
 class ProjectInput(BaseModel):
  name:str=Field(min_length=1,max_length=160);client:str=Field(default='',max_length=160)
 class ReviewInput(BaseModel):
  model_config=ConfigDict(extra='forbid',allow_inf_nan=False)
  expected_revision:int|None=Field(default=None,ge=1)
  settings:Parameters|None=None
+ parameter_overrides:ParameterOverrides=Field(default_factory=ParameterOverrides)
  bend_angles:dict[str,float|None]=Field(default_factory=dict)
  bend_parameters:dict[str,BendOverride]=Field(default_factory=dict)
  section_choices:dict[str,str|None]=Field(default_factory=dict)
@@ -93,6 +97,9 @@ async def preview_review_file(id:str,file:UploadFile=File(...)):
    raise HTTPException(422,'The review file must identify the source of confirmed bend or corner-cut values')
   previous=json.loads(p.overrides)
   result=body.model_dump()
+  # Imported values are explicit review decisions, not new workspace rules.
+  result['parameter_overrides']={field:entry['settings'].get(field) for field in ('thickness','radius','deduction')}
+  result['parameter_overrides'].update(body.parameter_overrides.model_dump(exclude_unset=True))
   result['manual_bends']=body.manual_bends is True;result['review_note']=body.review_note or ''
   # Replace prior decisions, including omitted angles, so stale values cannot
   # silently complete an incomplete imported schedule.
@@ -177,6 +184,19 @@ def review(id:str,body:ReviewInput):
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
   report=json.loads(p.report);validate_review_decisions(report,body)
   overrides=json.loads(p.overrides)
+  parameters={**overrides.get('parameter_overrides',{})}
+  explicit=body.parameter_overrides.model_dump(exclude_unset=True)
+  # Older clients send only settings. Preserve their intentional edits, but
+  # never turn unchanged displayed/detected fields into manual overrides.
+  if body.settings and 'parameter_overrides' not in body.model_fields_set:
+   previous={**DEFAULTS,**json.loads(p.settings),**report.get('settings',{})}
+   for field in ('thickness','radius','deduction'):
+    value=getattr(body.settings,field)
+    if value!=previous[field]:explicit[field]=value
+  for field,value in explicit.items():
+   if value is None:parameters.pop(field,None)
+   else:parameters[field]=value
+  overrides['parameter_overrides']=parameters
   angles={**overrides.get('bend_angles',{})}
   for key,value in body.bend_angles.items():
    if value is None:angles.pop(key,None)

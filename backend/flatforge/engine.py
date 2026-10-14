@@ -7,7 +7,8 @@ from shapely.geometry import Point,LineString
 from . import geometry as g
 from . import dwg
 from .detail_mapping import map_details, normal_instances, check_local_profiles
-from .parameters import Parameters, BendOverride, DEFAULTS, hinge_parameters
+from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS, hinge_parameters
+from .drawing_parameters import drawing_evidence, resolve_parameters, thickness_evidence, right_angle_deduction
 def json_safe(obj):
  if isinstance(obj,np.ndarray):return json_safe(obj.tolist())
  if isinstance(obj,dict):return {k:json_safe(v) for k,v in obj.items()}
@@ -16,23 +17,6 @@ def json_safe(obj):
  if isinstance(obj,np.integer):return int(obj)
  return obj
 def dump(path,obj):path.write_text(json.dumps(json_safe(obj),indent=2,allow_nan=False))
-def thickness_evidence(doc):
- lines=[]
- for e in g.section_lines(doc):
-  a,b=g.vec(e.dxf.start),g.vec(e.dxf.end)
-  if np.linalg.norm(b-a)<8:continue
-  u=g.unit(b-a);dim=int(abs(u[1])>abs(u[0]))
-  if min(abs(u))>1e-5:continue
-  lines.append((dim,(a[1-dim]+b[1-dim])/2,min(a[dim],b[dim]),max(a[dim],b[dim])))
- votes=collections.Counter()
- for i,(d,c,a,b) in enumerate(lines):
-  for dd,cc,aa,bb in lines[i+1:]:
-   dist=abs(c-cc)
-   if dd==d and .5<=dist<=10 and min(b,bb)-max(a,aa)>5 and abs(a-aa)<=dist+.1 and abs(b-bb)<=dist+.1:votes[round(dist,2)]+=1
- if not votes:return {'value':None,'confidence':'unknown','reason':'No repeated paired section-wall spacing.'}
- best=votes.most_common();v,count=best[0]
- if count<3 or (len(best)>1 and best[1][1]>=count*.8):return {'value':None,'confidence':'unknown','candidates':dict(votes)}
- return {'value':v,'confidence':'drawing','paired_segments':count,'source':'Repeated HAT wall separation'}
 def infer_deduction(faces,outer,profiles,t,strip_tolerance=.5):
  gains=[];residuals=[]
  for p in profiles:
@@ -139,7 +123,8 @@ def paint_glb(solid,tf,edges,t,r,path):
 
 def run(config):
  source=Path(config['source']);out=Path(config['output']);out.mkdir(parents=True,exist_ok=True)
- settings=Parameters(**config.get('settings',{})).model_dump();overrides=config.get('overrides',{});issues=[];report={'settings':settings,'issues':issues,'status':'FAILED','warnings':[]}
+ configured=Parameters(**config.get('settings',{})).model_dump();settings=dict(configured);overrides=dict(config.get('overrides',{}));issues=[];report={'settings':settings,'configured_settings':configured,'issues':issues,'status':'FAILED','warnings':[]}
+ overrides['parameter_overrides']=ParameterOverrides(**overrides.get('parameter_overrides',{})).model_dump(exclude_none=True)
  manual=bool(overrides.get('manual_bends'));t,r,bd=settings['thickness'],settings['radius'],settings['deduction']
  strip_tol=settings['strip_tolerance'];angle_tol=settings['angle_tolerance'];bend_model=settings['bend_model']
  def checkpoint(phase,message):
@@ -164,6 +149,12 @@ def run(config):
  checkpoint('EXTRACTING','DXF ready. Reading contour, bends and section evidence…')
  doc=ezdxf.readfile(source);layers={l.dxf.name:sum(1 for e in doc.modelspace() if e.dxf.layer==l.dxf.name) for l in doc.layers};report['layers']=layers
  if len(doc.modelspace())>100000:raise ValueError('Drawing exceeds the 100,000-entity processing limit.')
+ parameter_evidence=drawing_evidence(doc)
+ if bend_model=='fixed_deduction' and parameter_evidence['deduction'].get('value') is not None:
+  parameter_evidence['deduction']={'value':None,'confidence':'unknown','reason':'A 90° deduction note does not define deduction at every bend angle.'}
+ settings,resolved=resolve_parameters(configured,overrides,parameter_evidence)
+ report.update(settings=settings,parameter_resolution=resolved,thickness_evidence=parameter_evidence['thickness'])
+ t,r,bd=settings['thickness'],settings['radius'],settings['deduction']
  section_layer=g.section_layer(doc)
  report['section_convention']={'layer':section_layer,'canonical_role':'HAT','alias_used':section_layer not in (None,'HAT')}
  missing=[l for l in ['CONTOR','KIFOF'] if not layers.get(l)]
@@ -171,8 +162,12 @@ def run(config):
  if 'CONTOR' in missing:issue('LAYERS','Missing or empty required layer: CONTOR');return finish('NEEDS_REVIEW')
  if overrides.get('relief_radii') and not str(overrides.get('review_note','')).strip():
   issue('CORNER_RELIEF','Add a review note identifying the approved shape or dimensions for changed corner cuts.');return finish('NEEDS_REVIEW')
- d,origin,outer,blank,lines=g.read_drawing(source,overrides.get('relief_radii'));doc=d
- faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
+ try:
+  d,origin,outer,blank,lines=g.read_drawing(source,overrides.get('relief_radii'));doc=d
+  faces,edges,parents,order,material=g.partition(outer,blank,lines,3.)
+ except ValueError as exc:
+  issue('DRAWING_GEOMETRY',str(exc)+'. Correct the outline or bend positions in CAD and replace the drawing. Numeric bend values cannot supply missing geometry.')
+  return finish('NEEDS_REVIEW')
  report['relief_circles']=g.read_drawing.relief_circles
  report['relief_cut_area_removed_mm2']=g.read_drawing.relief_removed_area
  used={l['handle'] for e in edges for l in e['source']}
@@ -206,22 +201,20 @@ def run(config):
  else:shutil.copyfile(source,out/'flat.dxf')
  extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
  checkpoint('EXTRACTING','Rendered numbered bend axes and contour. Checking drawing parameters…')
+ for field,record in resolved.items():
+  if record['needs_review'] and record['evidence'].get('confidence')=='invalid':
+   issue('PARAMETER_INVALID',record['message'],field=field)
+ if issues:return finish('NEEDS_REVIEW')
  if 'KIFOF' in missing:
   issue('LAYERS','No bend axes were found. Add KIFOF bend positions in CAD and replace the drawing; a numeric angle cannot supply a missing axis.');return finish('NEEDS_REVIEW')
  if 'HAT' in missing and not manual:
-  issue('SECTION_EVIDENCE','Section drawings are missing. Enter confirmed bend values and select manual section review, or add the sections in CAD.');return finish('NEEDS_REVIEW')
+  issue('SECTION_EVIDENCE','Section drawings are missing. Enter the missing angles below and enable reviewed bend values with their source, or add the sections in CAD. No separate data file is required.');return finish('NEEDS_REVIEW')
  if unassigned:
   issue('UNASSIGNED_AXES','These bend entities do not bound a hinge after the 3 mm relief extension: '+', '.join(unassigned)+'. Check endpoint gaps and contour alignment; this alone does not prove an interior rib.');return finish('NEEDS_REVIEW')
- evidence=thickness_evidence(doc);report['thickness_evidence']=evidence
- if not manual and evidence['value'] is not None and abs(evidence['value']-settings['thickness'])>.1:
-  issue('THICKNESS',f"Drawing wall spacing is {evidence['value']:g} mm; panel thickness is {settings['thickness']:g} mm.",field='thickness',suggested=evidence['value']);return finish('NEEDS_REVIEW')
+ evidence=parameter_evidence['thickness']
  if doc.units not in [0,4]:issue('UNITS',f'DXF unit code {doc.units} is not millimetres. Convert units in CAD before upload.');return finish('NEEDS_REVIEW')
  report['units_evidence']='DXF millimetres' if doc.units==4 else 'Unitless DXF; interpreted in millimetres under workspace convention'
  if settings['input_type']!='flat_pattern':issue('INPUT_TYPE','This engine requires a developed flat pattern. Folded-dimension drawings need an explicit developed-pattern export.');return finish('NEEDS_REVIEW')
- ba=2*(r+t)-bd;k=(ba/(math.pi/2)-r)/t
- if bend_model=='constant_k' and not 0<k<1 and not overrides.get('bend_parameters'):
-  issue('BEND_PARAMETERS',f'Panel settings t={t:g} mm, r={r:g} mm, BD90={bd:g} mm imply K={k:.6g}; constant-K mode requires 0 < K < 1. Correct the values or choose the fixed-deduction shape model.',thickness_mm=t,inside_radius_mm=r,deduction_90_mm=bd,calculated_k=k,deduction_range_exclusive_mm=[2*(r+t)-(math.pi/2)*(r+t),2*(r+t)-(math.pi/2)*r])
-  return finish('NEEDS_REVIEW')
  profs=[]
  if not manual:
   try:profs=g.profiles(doc,origin,t)
@@ -230,6 +223,21 @@ def run(config):
   report['duplicate_section_details']=g.profiles.duplicates
   if not profs:
    issue('SECTION_EVIDENCE','No usable section profiles were found. Supply confirmed bend values or repair the sections in CAD.');return finish('NEEDS_REVIEW')
+ if not manual:
+  measured=right_angle_deduction(faces,outer,edges,profs,t,strip_tol,angle_tol)
+  if measured['value'] is not None:
+   previous=parameter_evidence['deduction']
+   if previous.get('confidence') not in ('conflict','invalid'):
+    if previous.get('value') is not None and abs(previous['value']-measured['value'])>.01:
+     parameter_evidence['deduction']={'value':None,'confidence':'conflict','reason':'The deduction note and section dimensions disagree.', 'candidates':[previous['value'],measured['value']],'note_evidence':previous,'geometry_evidence':measured}
+    else:parameter_evidence['deduction']=measured
+   settings,resolved=resolve_parameters(configured,overrides,parameter_evidence)
+   report.update(settings=settings,parameter_resolution=resolved)
+   t,r,bd=settings['thickness'],settings['radius'],settings['deduction']
+ ba=2*(r+t)-bd;k=(ba/(math.pi/2)-r)/t
+ if bend_model=='constant_k' and not 0<k<1 and not overrides.get('bend_parameters'):
+  issue('BEND_PARAMETERS',f'Panel settings t={t:g} mm, r={r:g} mm, BD90={bd:g} mm imply K={k:.6g}; constant-K mode requires 0 < K < 1. Correct the values or choose the fixed-deduction shape model.',thickness_mm=t,inside_radius_mm=r,deduction_90_mm=bd,calculated_k=k,deduction_range_exclusive_mm=[2*(r+t)-(math.pi/2)*(r+t),2*(r+t)-(math.pi/2)*r])
+  return finish('NEEDS_REVIEW')
  report['validation_scope']='user_confirmed_bends_and_solid_geometry' if manual else 'drawing_sections_and_solid_geometry'
  if manual:report['warnings'].append('Section matching was replaced by user-confirmed bend values. Section dimensions and paint orientation are not independently verified.')
  report['section_profiles']=[{'name':p['name'],'layer':p['layer'],'paint_marker':p['paint_handle'],'points':p['points'],'main_segment':p['main'],'wall_pairs':[{'handles':s['handles'],'spacing_mm':s['wall_spacing_mm'],'parallel_error_deg':s['parallel_error_deg']} for s in p['segments']]} for p in profs]
@@ -263,14 +271,21 @@ def run(config):
    if bend_model=='fixed_deduction' and not 0<implied_k<1:
     report['warnings'].append(f"{' / '.join(s['id'] for s in e['source'])}: fixed deduction defines a geometric shape outside the constant-K material model (K={implied_k:.3f}).")
   except ValueError as exc:issue('BEND_PARAMETERS',str(exc),bend_key=e['review_key'])
- if issues:return finish('NEEDS_REVIEW')
- deduction=infer_deduction(faces,outer,profs,t,strip_tol) if not general else {'value':bd,'confidence':'user_confirmed' if manual else 'settings_matched_to_sections','source':'User-confirmed shape parameters' if manual else 'Section and local-detail dimensions matched; no independent deduction measurement'}
+ deduction=infer_deduction(faces,outer,profs,t,strip_tol) if not general else {'value':bd if manual or not (unresolved or unknown) else None,'confidence':'user_confirmed' if manual else 'unknown' if unresolved or unknown else 'settings_matched_to_sections','source':'User-confirmed shape parameters' if manual else 'Section correspondence is incomplete; deduction is not independently established.' if unresolved or unknown else 'Section and local-detail dimensions matched; no independent deduction measurement'}
  report['deduction_evidence']=deduction
  report['input_evidence']={'classification':'user_confirmed_flat_pattern' if manual else 'flat_pattern_supported' if deduction['value'] is not None else 'not_proven','reason':'User-confirmed flat pattern and bend values' if manual else 'Matched section / flat-strip dimensions' if deduction['value'] is not None else 'Input interpretation requires user confirmation'}
  if deduction['value'] is not None and abs(deduction['value']-bd)>strip_tol:
   issue('DEDUCTION',f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm.",field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
- if not manual and (evidence['value'] is None or deduction['value'] is None) and not overrides.get('confirm_parameters'):
-  issue('EVIDENCE','Drawing does not establish thickness or deduction reliably. Confirm the panel parameters before conversion.');return finish('NEEDS_REVIEW')
+ # Report missing values as editable review fields. Section matching is allowed
+ # to run first so one pass exposes all unresolved geometry and parameters.
+ if not (unresolved or unknown) and deduction.get('confidence')=='drawing' and resolved['deduction']['source']=='unresolved' and parameter_evidence['deduction'].get('confidence') not in ('conflict','invalid') and abs(deduction['value']-bd)<=strip_tol:
+  resolved['deduction'].update(source='drawing',drawing_value=deduction['value'],needs_review=False,message=deduction['source']+'.',evidence=deduction)
+ for field,record in resolved.items():
+  if field in ('radius','deduction') and edges and all(field in e for e in edges):
+   record.update(source='per_bend',needs_review=False,message='Each bend has an explicit value; this fallback is unused.')
+  if record['needs_review']:
+   issue('PARAMETER_REQUIRED',f'{field.capitalize()}: '+record['message'],field=field,suggested=record['value'])
+ if issues:return finish('NEEDS_REVIEW')
  paint_points=[g.vec(p)-origin for e in doc.modelspace().query('LWPOLYLINE[layer=="צבע"]') for p in e.get_points()]
  if not general and (not paint_points or not all(faces[0].buffer(.01).covers(Point(p)) for p in paint_points)):issue('PAINT','Paint marker does not identify the selected main face unambiguously.');return finish('NEEDS_REVIEW')
  if general:report['paint_evidence']={'source':'User review: root +Z is the finish reference' if manual else 'World-coordinate Zeva section markers; global base +Z is the finish reference','markers':[p['paint_handle'] for p in profs]}

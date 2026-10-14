@@ -26,7 +26,10 @@ def test_upload_review_worker_exports_and_persistence(tmp_path):
   id=worker.claim();assert id and worker.claim() is None
   worker.process(id)
   p=c.get('/panels/'+p['id']).json();assert p['status']=='NEEDS_REVIEW',p
-  assert p['report']['issues'][0]['code']=='THICKNESS'
+  assert p['settings']['thickness']==2
+  assert p['configured_settings']['thickness']==3
+  assert p['report']['parameter_resolution']['thickness']['source']=='drawing'
+  assert any(i['code']=='PARAMETER_REQUIRED' and i['field']=='radius' for i in p['report']['issues'])
   assert c.post('/panels/'+p['id']+'/review',json={'settings':{**defaults,'thickness':2},'confirm_parameters':True}).status_code==202
   worker.process(worker.claim());p=c.get('/panels/'+p['id']).json()
   assert p['status']=='PASS',p
@@ -55,7 +58,7 @@ def test_complex_upload_completes_without_review_or_panel_overrides():
  if not folder:pytest.skip('Supply original customer DXFs')
  with TestClient(app) as c:
   c.headers['X-Flatforge-Key']=os.environ['FLATFORGE_API_KEY']
-  settings={'thickness':2,'radius':2,'deduction':4,'input_type':'flat_pattern'}
+  settings={'thickness':2,'radius':2,'deduction':4,'input_type':'flat_pattern','use_material_defaults':True}
   assert c.put('/settings',json=settings).status_code==200
   project=c.post('/projects',json={'name':'Approved complex convention','client':'Regression'}).json()
   with (Path(folder)/'PN_NM_149.dxf').open('rb') as f:

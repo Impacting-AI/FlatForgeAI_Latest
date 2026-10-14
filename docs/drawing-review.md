@@ -19,7 +19,8 @@ Drawing Review and Material Defaults now expose:
 | Allowed angle difference | 0.1° | Near-square drawing turns can normalize to 90°; local angle signatures and final angle checks use this tolerance. Range 0–2°. Numerical final checks have a 0.001° floor. |
 | Angle to use when missing | 90° | Shared magnitude for the explicit positive/negative direction buttons. It never invents a missing direction automatically. |
 | Bend calculation | Material model | Preserve the previous constant-K calibration at 90°, or explicitly choose fixed deduction at each angle for a shape model. |
-| Individual bend values | Inherit | Optional signed rotation, radius and deduction for any reported hinge. Blank means drawing/panel values. |
+| Individual bend values | Drawing / panel values | Current values are displayed. Edit a signed rotation, radius or deduction only when needed; **Use automatic** removes that bend’s corrections. |
+| Use material defaults | Off | Explicitly permit configured fallback thickness, radius and deduction where DXF evidence is absent. Drawing values still take priority. |
 | Bend ends | Straight | Existing jobs retain constant-length ends. Select **Follow cut outline** for stepped ends, oblique end cuts and holes crossing a bend. |
 | Corner-relief radius | Original DXF | Enlarge a selected existing circular cut at a nonparallel bend junction. The original radius, new radius, location and removed area are recorded. |
 
@@ -37,26 +38,50 @@ geometric shape whose implied neutral axis lies outside the constant-K material
 model; the report records this as a warning. It does not establish tooling,
 material behaviour or production bend compensation.
 
+## DXF-first values
+
+Upload the DXF/DWG directly. No review JSON or client STEP is required.
+
+- Repeated, uniquely paired section walls establish thickness in any rotation.
+  A different workspace default does not override this measurement.
+- Unambiguous normal right-angle section/flat-strip increments establish BD90
+  independently of radius. All admissible measurements must agree within
+  0.01 mm; sloped cut lanes and non-square profiles do not supply this inference.
+- Marked section geometry supplies bend rotations when the matching chain and
+  orientation are established. Valid 60°/120° bends retain their angles; only
+  near-square noise within the selected tolerance can normalize to 90°.
+- Scoped TEXT/MTEXT notes are also supported, in millimetres:
+  `MATERIAL THICKNESS = 2 mm`, `ALL BENDS INSIDE RADIUS = 2 mm`, and
+  `ALL BENDS DEDUCTION AT 90° = 4 mm`. These are supported note formats, not
+  mandatory annotations. Arbitrary numbers, hole radii, and flat-outline angular
+  dimensions never become global bend parameters. Conflicting or invalid
+  supported notes require a correction and retain their original evidence.
+- A sharp schematic section does not directly state inside bend radius. Missing
+  radius/deduction fields show proposed values and ask for confirmation. An
+  enabled **Use material defaults** rule can supply absent values automatically;
+  it is disabled by default. It cannot hide conflicting drawing evidence.
+
+The fields show the effective values, with their source: drawing, enabled material
+rule, or recorded panel correction. A correction has priority over detection;
+**Use automatic** removes that correction. The original drawing evidence remains
+in the report. Changing one field does not convert the other displayed fields
+into manual values. Workspace settings remain unchanged.
+
+The API separates `configured_settings` from effective `settings` and reports
+`parameter_resolution`. Review accepts `parameter_overrides` for thickness,
+radius and deduction; `null` removes an override. Existing saved settings alone
+are treated as fallback values, not evidence that the drawing contains them.
+Previously confirmed/manual reviews remain accepted and are labelled as review
+values. Fresh unconfirmed jobs can therefore expose missing-radius review items
+that an older version silently filled from defaults.
+
 ## Review workflow
 
-For an existing measured review file, choose **Import reviewed values** in Drawing
-Review. Select the JSON, inspect the matched settings, then choose **Load values
-into review**. Check the populated fields and use **Save & rebuild panel**.
-This runs the same API and CAD worker as ordinary manual review.
-
-Import matches the SHA-256 of the extracted source DXF, never its filename or the
-package's panel label. A renamed identical file works. A changed drawing, an
-unmatched DWG conversion, duplicate matches, unknown bend keys, conflicting
-rotations and invalid numbers are rejected. Missing rotations remain unknown;
-old saved rotations are cleared when omitted from the imported schedule. Values
-absent from the settings object keep the current panel setting and the preview
-explains this. The file must contain the source note for manual bend/cut values.
-Import is a preview: it saves nothing and queues no work until the user saves.
-The save checks the panel revision, preventing a stale form from replacing newer
-decisions. Review files are measured inputs, not automatic STEP interpretation.
-
-1. Inspect the numbered extracted drawing and the reported differences.
-2. Adjust the length/angle tolerance or panel values, then **Save & rebuild**.
+1. Upload the drawing. Inspect automatically populated values and the numbered
+   extraction. Only unresolved values or interpretations need input.
+2. Enter or confirm a missing value, or correct an inaccurate value, then
+   **Save & rebuild**. Keep the approved 0.5 mm / 0.1° limits unless a changed
+   tolerance has been explicitly approved for the job.
    Saving is allowed while rotations remain unknown, so a parameter change can
    resolve matching before the user fills individual values.
 3. Where local or normal section candidates fit, select the intended numbered
@@ -77,6 +102,24 @@ evidence is not silently overwritten. To intentionally replace unreliable
 sections, use the explicit manual mode. Corrections are stored per panel;
 workspace defaults and other panels are unaffected. Replacing a source drawing
 clears its old decisions through the existing source-replacement workflow.
+
+## Optional saved reviews
+
+**Advanced · load a saved review** contains the old review-file import for
+support/reproduction work. It is not part of the normal upload flow. No client
+needs to create a JSON alongside a drawing. Its file values mean measured
+thickness, radius, deduction, signed rotations, and recorded review choices.
+
+Import matches the SHA-256 of the extracted source DXF, never its filename or the
+package's panel label. A renamed identical file works. A changed drawing, an
+unmatched DWG conversion, duplicate matches, unknown bend keys, conflicting
+rotations and invalid numbers are rejected. Missing rotations remain unknown;
+old saved rotations are cleared when omitted from the imported schedule. Values
+absent from the settings object keep the current panel setting and the preview
+explains this. The file must contain the source note for manual bend/cut values.
+Import is a preview: it saves nothing and queues no work until the user saves.
+The save checks the panel revision, preventing a stale form from replacing newer
+decisions. Review files are measured inputs, not automatic STEP interpretation.
 
 ## Geometry corrections
 
@@ -163,7 +206,7 @@ PYTHONPATH=backend python backend/scripts/rebuild_reference.py --review-file /pr
 ```
 
 The runner refuses a changed source hash. In the application, select
-**Import reviewed values** to load the same JSON into the review fields, or select
+**Advanced · load a saved review → Import reviewed values** to load the same JSON into the review fields, or select
 **Follow cut outline** and enter the values manually. Record any corner
 corrections before rebuilding. Local geometry PASS does not establish exact
 surface agreement with an external reference model. Use

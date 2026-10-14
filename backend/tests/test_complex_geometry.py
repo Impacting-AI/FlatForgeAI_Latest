@@ -77,7 +77,7 @@ def test_conflicting_section_lengths_do_not_export_solid(tmp_path):
 
 
 def test_invalid_k_reports_the_actual_panel_settings(tmp_path):
-    source=tmp_path/'source.dxf';channel(source)
+    source=tmp_path/'source.dxf';channel(source,angle=60)
     result=run({'source':str(source),'output':str(tmp_path/'out'),
                 'settings':{'thickness':2.,'radius':2.,'deduction':8.}})
     issue=result['issues'][0]

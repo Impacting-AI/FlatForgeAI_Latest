@@ -15,6 +15,14 @@ class Parameters(BaseModel):
     default_angle: float = Field(default=90, gt=0, lt=180)
     bend_model: Literal['constant_k', 'fixed_deduction'] = 'constant_k'
     bend_end_mode: Literal['straight', 'contour'] = 'straight'
+    use_material_defaults: bool = False
+
+
+class ParameterOverrides(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    thickness: float | None = Field(default=None, gt=0, le=20)
+    radius: float | None = Field(default=None, gt=0, le=100)
+    deduction: float | None = Field(default=None, ge=0, le=100)
 
 
 class BendOverride(BaseModel):
