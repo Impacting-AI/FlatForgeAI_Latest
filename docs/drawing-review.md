@@ -39,6 +39,22 @@ material behaviour or production bend compensation.
 
 ## Review workflow
 
+For an existing measured review file, choose **Import reviewed values** in Drawing
+Review. Select the JSON, inspect the matched settings, then choose **Load values
+into review**. Check the populated fields and use **Save & rebuild panel**.
+This runs the same API and CAD worker as ordinary manual review.
+
+Import matches the SHA-256 of the extracted source DXF, never its filename or the
+package's panel label. A renamed identical file works. A changed drawing, an
+unmatched DWG conversion, duplicate matches, unknown bend keys, conflicting
+rotations and invalid numbers are rejected. Missing rotations remain unknown;
+old saved rotations are cleared when omitted from the imported schedule. Values
+absent from the settings object keep the current panel setting and the preview
+explains this. The file must contain the source note for manual bend/cut values.
+Import is a preview: it saves nothing and queues no work until the user saves.
+The save checks the panel revision, preventing a stale form from replacing newer
+decisions. Review files are measured inputs, not automatic STEP interpretation.
+
 1. Inspect the numbered extracted drawing and the reported differences.
 2. Adjust the length/angle tolerance or panel values, then **Save & rebuild**.
    Saving is allowed while rotations remain unknown, so a parameter change can
@@ -147,11 +163,19 @@ PYTHONPATH=backend python backend/scripts/rebuild_reference.py --review-file /pr
 ```
 
 The runner refuses a changed source hash. In the application, select
-**Follow cut outline**, enter the reviewed bend values and record any corner
+**Import reviewed values** to load the same JSON into the review fields, or select
+**Follow cut outline** and enter the values manually. Record any corner
 corrections before rebuilding. Local geometry PASS does not establish exact
 surface agreement with an external reference model. Use
 `backend/scripts/inspect_step.py` to distinguish basic validity from detected
 self-interference when examining a reference STEP.
+
+To test private measured drawings through upload, review import, the worker and
+STEP/project export (customer data stays outside the repository):
+
+```sh
+FLATFORGE_REVIEW_FILE=/private/review.json FLATFORGE_REVIEW_SOURCE_DIR=/private/drawings PYTHONPATH=backend python -m pytest backend/tests/test_reviewed_files.py -q
+```
 
 ## Compatibility and limits
 
