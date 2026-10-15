@@ -25,14 +25,19 @@ def test_upload_review_worker_exports_and_persistence(tmp_path):
   assert r.status_code==202;p=r.json()['panels'][0];assert p['settings']['thickness']==3
   id=worker.claim();assert id and worker.claim() is None
   worker.process(id)
-  p=c.get('/panels/'+p['id']).json();assert p['status']=='NEEDS_REVIEW',p
+  p=c.get('/panels/'+p['id']).json();assert p['status']=='PASS',p
   assert p['settings']['thickness']==2
   assert p['configured_settings']['thickness']==3
   assert p['report']['parameter_resolution']['thickness']['source']=='drawing'
-  assert any(i['code']=='PARAMETER_REQUIRED' and i['field']=='radius' for i in p['report']['issues'])
-  assert c.post('/panels/'+p['id']+'/review',json={'settings':{**defaults,'thickness':2},'confirm_parameters':True}).status_code==202
+  assert p['settings']['radius']==2
+  assert not p['report']['parameter_resolution']['radius']['needs_review']
+  assert p['overrides']=={}
+  # The approved radius is a default, not a lock: edits reach the exported solid.
+  assert c.post('/panels/'+p['id']+'/review',json={'parameter_overrides':{'radius':3}}).status_code==202
   worker.process(worker.claim());p=c.get('/panels/'+p['id']).json()
   assert p['status']=='PASS',p
+  assert p['settings']['radius']==3
+  assert c.get('/bootstrap').json()['settings']['radius']==2
   assert max(abs(a-b) for a,b in zip(p['report']['bbox'],[204,80,37]))<.001
   assert p['report']['unfold_check']['symmetric_difference_percent']<.5
   assert c.get('/bootstrap').json()['settings']['thickness']==3,'Panel override changed global defaults'
@@ -42,6 +47,9 @@ def test_upload_review_worker_exports_and_persistence(tmp_path):
   saved=Path(os.environ['FLATFORGE_DATA'])/'roundtrip.step';saved.write_bytes(step.content)
   import cadquery as cq
   shape=cq.importers.importStep(str(saved)).val();assert shape.isValid() and len(shape.Solids())==1
+  from OCP.BRepAdaptor import BRepAdaptor_Surface
+  radii={round(BRepAdaptor_Surface(f.wrapped).Cylinder().Radius(),4) for f in shape.Faces() if f.geomType()=='CYLINDER'}
+  assert radii=={3,5}
   assert c.get('/panels/'+p['id']+'/files/unknown.step').status_code==404
   archive=c.get('/projects/'+project['id']+'/export');assert archive.status_code==200
   assert any(n.endswith('panel.step') for n in zipfile.ZipFile(io.BytesIO(archive.content)).namelist())

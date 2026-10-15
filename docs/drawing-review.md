@@ -9,6 +9,9 @@ models as shape references, not as proof of a universal fabrication rule.
 FlatForge must accept bounded drawing differences and expose missing values for
 review. It must record corrections and the scope of validation.
 
+Client clarification, 15 October 2026: use a 2 mm inside bend radius by default
+without confirmation. Keep it editable for exceptions.
+
 ## Controls
 
 Drawing Review and Material Defaults now expose:
@@ -20,7 +23,8 @@ Drawing Review and Material Defaults now expose:
 | Angle to use when missing | 90° | Shared magnitude for the explicit positive/negative direction buttons. It never invents a missing direction automatically. |
 | Bend calculation | Material model | Preserve the previous constant-K calibration at 90°, or explicitly choose fixed deduction at each angle for a shape model. |
 | Individual bend values | Drawing / panel values | Current values are displayed. Edit a signed rotation, radius or deduction only when needed; **Use automatic** removes that bend’s corrections. |
-| Use material defaults | Off | Explicitly permit configured fallback thickness, radius and deduction where DXF evidence is absent. Drawing values still take priority. |
+| Inside bend radius | 2 mm | Applied automatically when absent from the DXF, without confirmation. Editable in Material Defaults or for an individual panel. |
+| Use material defaults | Off | Explicitly permit configured fallback thickness and deduction where DXF evidence is absent. Drawing values still take priority. |
 | Bend ends | Straight | Existing jobs retain constant-length ends. Select **Follow cut outline** for stepped ends, oblique end cuts and holes crossing a bend. |
 | Corner-relief radius | Original DXF | Enlarge a selected existing circular cut at a nonparallel bend junction. The original radius, new radius, location and removed area are recorded. |
 
@@ -56,12 +60,12 @@ Upload the DXF/DWG directly. No review JSON or client STEP is required.
   mandatory annotations. Arbitrary numbers, hole radii, and flat-outline angular
   dimensions never become global bend parameters. Conflicting or invalid
   supported notes require a correction and retain their original evidence.
-- A sharp schematic section does not directly state inside bend radius. Missing
-  radius/deduction fields show proposed values and ask for confirmation. An
-  enabled **Use material defaults** rule can supply absent values automatically;
-  it is disabled by default. It cannot hide conflicting drawing evidence.
+- A sharp schematic section does not directly state inside bend radius. The
+  client-approved default is 2 mm, applied without confirmation and still
+  editable. Missing thickness/deduction values require input unless **Use
+  material defaults** is enabled. Defaults cannot hide conflicting drawing evidence.
 
-The fields show the effective values, with their source: drawing, enabled material
+The fields show the effective values, with their source: drawing, configured material
 rule, or recorded panel correction. A correction has priority over detection;
 **Use automatic** removes that correction. The original drawing evidence remains
 in the report. Changing one field does not convert the other displayed fields
@@ -72,8 +76,9 @@ The API separates `configured_settings` from effective `settings` and reports
 radius and deduction; `null` removes an override. Existing saved settings alone
 are treated as fallback values, not evidence that the drawing contains them.
 Previously confirmed/manual reviews remain accepted and are labelled as review
-values. Fresh unconfirmed jobs can therefore expose missing-radius review items
-that an older version silently filled from defaults.
+values. Missing radius uses the configured default automatically, including a
+custom value saved in Material Defaults. Clearing a panel correction restores
+the drawing value or configured default. Existing geometry validation still applies.
 
 ## Review workflow
 

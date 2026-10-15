@@ -53,17 +53,20 @@ def test_unlabelled_numbers_and_hole_radii_do_not_supply_manufacturing_values(tm
     assert evidence['deduction']['value'] is None
     settings=Parameters().model_dump()
     _,unresolved=resolve_parameters(settings,{},evidence)
-    assert unresolved['radius']['needs_review'] and unresolved['deduction']['needs_review']
+    assert unresolved['radius']['value']==2 and not unresolved['radius']['needs_review']
+    assert unresolved['radius']['source']=='workspace_rule'
+    assert unresolved['deduction']['needs_review']
     _,rules=resolve_parameters({**settings,'use_material_defaults':True},{},evidence)
     assert rules['radius']['source']=='workspace_rule' and rules['thickness']['source']=='drawing'
 
 
 def test_right_angle_dimensions_automatically_supply_deduction(tmp_path):
     source=tmp_path/'right-angle.dxf';drawing(source,angle=90,notes=False)
-    doc=ezdxf.readfile(source);doc.modelspace().add_text('ALL BENDS INSIDE RADIUS = 2 mm');doc.saveas(source)
     result=run({'source':str(source),'output':str(tmp_path/'out'),'settings':{'thickness':5,'deduction':8}})
     assert result['status']=='PASS',result['issues']
     assert result['settings']['thickness']==2
+    assert result['settings']['radius']==2
+    assert not result['parameter_resolution']['radius']['needs_review']
     assert result['settings']['deduction']==pytest.approx(4,abs=1e-5)
     record=result['parameter_resolution']['deduction']
     assert record['source']=='drawing'
@@ -131,19 +134,19 @@ def test_upload_reads_dxf_and_only_missing_fields_need_correction(tmp_path):
         assert panel['settings']['thickness']==2
         assert panel['configured_settings']['thickness']==5
         assert panel['report']['unresolved_bends']==[]
-        assert {i['field'] for i in panel['report']['issues'] if i['code']=='PARAMETER_REQUIRED'}=={'radius','deduction'}
+        assert {i['field'] for i in panel['report']['issues'] if i['code']=='PARAMETER_REQUIRED'}=={'deduction'}
         assert client.get(url+'/files/panel.step').status_code!=200
         for values in ({'radius':0},{'thickness':21},{'unknown':2}):
             assert client.post(url+'/review',json={'parameter_overrides':values}).status_code==422
-        # Only supply the two missing scalar fields through the normal form.
+        # Radius already uses the approved default; only deduction needs input.
         body={'expected_revision':panel['revision'],'settings':panel['configured_settings'],
-              'parameter_overrides':{'radius':2,'deduction':4}}
+              'parameter_overrides':{'deduction':4}}
         assert client.post(url+'/review',json=body).status_code==202
         worker.process(worker.claim());built=client.get(url).json()
         assert built['status']=='PASS',built['report']
         assert client.post(url+'/review',json=body).status_code==409
         assert client.get(url+'/files/panel.step').status_code==200
-        assert built['overrides']['parameter_overrides']=={'radius':2,'deduction':4}
+        assert built['overrides']['parameter_overrides']=={'deduction':4}
         assert built['report']['parameter_resolution']['thickness']['source']=='drawing'
         assert sorted(abs(b['angle']) for b in built['report']['bends'])==pytest.approx([60,90])
         assert not built['overrides'].get('manual_bends')

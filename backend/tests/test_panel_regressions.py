@@ -63,8 +63,7 @@ def test_missing_bend_data_stays_unknown(tmp_path):
 @pytest.mark.parametrize('number',['1570','1619','1648'])
 def test_previous_references_expose_local_errors_hidden_by_area_check(number,tmp_path):
     panel=next(p for p in json.loads((ROOT/'lib/sample-data.json').read_text())['panels'] if p['filename']==f'PN_PL_{number}.dxf')
-    # These geometry regressions deliberately use the previously reviewed
-    # 2 mm radius. Fresh unconfirmed uploads now ask for that missing value.
+    # Preserve the previously reviewed material defaults for these regressions.
     result=run({'source':str(ROOT/'public/samples'/number/'flat.dxf'),
                 'output':str(tmp_path),'settings':{'use_material_defaults':True},'overrides':panel['overrides']})
     assert result['status']=='NEEDS_REVIEW',result.get('issues')

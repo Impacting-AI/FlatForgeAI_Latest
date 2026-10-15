@@ -142,6 +142,8 @@ def resolve_parameters(settings, overrides, evidence):
             value=drawn;source='drawing';message=found.get('source','Drawing measurement')+'.'
         elif found.get('confidence')=='conflict':
             value=settings[field];source='unresolved';message=found['reason']+' The field shows the proposed fallback.'
+        elif field=='radius':
+            value=settings[field];source='workspace_rule';message='Using the configured inside bend radius (default 2 mm); no confirmation required.'
         elif settings.get('use_material_defaults'):
             value=settings[field];source='workspace_rule';message='Not established by the DXF; using the enabled material fallback rule.'
         elif overrides.get('confirm_parameters') or overrides.get('manual_bends'):
