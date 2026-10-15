@@ -27,7 +27,7 @@ def fixture(name):
 def test_drawing_validated_solid(name,tmp_path):
     import cadquery as cq
     source=fixture(name)
-    result=run({'source':str(source),'output':str(tmp_path)})
+    result=run({'source':str(source),'output':str(tmp_path),'settings':{'use_material_defaults':True}})
     assert result['status']=='PASS',result.get('issues')
     assert result['unfold_check']['symmetric_difference_percent']<=.5
     for check in result['section_checks']:
@@ -49,7 +49,7 @@ def test_drawing_validated_solid(name,tmp_path):
         assert any(c['chain_status']=='FAIL' and c['missing_or_interrupted'] for c in checks)
     if name=='PN_PL_15(1).dxf':
         again=tmp_path/'repeat'
-        run({'source':str(source),'output':str(again)})
+        run({'source':str(source),'output':str(again),'settings':{'use_material_defaults':True}})
         assert hashlib.sha256((tmp_path/'panel.step').read_bytes()).digest()==hashlib.sha256((again/'panel.step').read_bytes()).digest()
 
 def test_missing_bend_data_stays_unknown(tmp_path):
@@ -60,12 +60,19 @@ def test_missing_bend_data_stays_unknown(tmp_path):
     assert result['bend_lines']==0 and (tmp_path/'extraction.svg').exists()
     assert not (tmp_path/'panel.step').exists()
 
-@pytest.mark.parametrize('number',['1570','1619'])
-def test_previous_reference_panels(number,tmp_path):
+@pytest.mark.parametrize('number',['1570','1619','1648'])
+def test_previous_references_expose_local_errors_hidden_by_area_check(number,tmp_path):
     panel=next(p for p in json.loads((ROOT/'lib/sample-data.json').read_text())['panels'] if p['filename']==f'PN_PL_{number}.dxf')
+    # Preserve the previously reviewed material defaults for these regressions.
     result=run({'source':str(ROOT/'public/samples'/number/'flat.dxf'),
-                'output':str(tmp_path),'overrides':panel['overrides']})
-    assert result['status']=='PASS',result.get('issues')
+                'output':str(tmp_path),'settings':{'use_material_defaults':True},'overrides':panel['overrides']})
+    assert result['status']=='NEEDS_REVIEW',result.get('issues')
+    assert result['solid']['valid'] and result['solid']['solid_count']==1
+    assert all(c['chain_status']=='PASS' for c in result['section_checks'])
+    assert result['unfold_check']['symmetric_difference_percent']<.5
+    assert result['unfold_check']['local_boundary_check']['status']=='FAIL'
+    assert result['unfold_check']['local_boundary_check']['sampled_max_mm']==pytest.approx(2 if number=='1648' else 2**.5*2,abs=.01)
+    assert any(i['code']=='VALIDATION' for i in result['issues'])
     assert max(abs(a-b) for a,b in zip(result['bbox'],panel['report']['bbox']))<.001
 
 def test_gap_requires_explicit_review_before_step_export():
@@ -77,7 +84,7 @@ def test_gap_requires_explicit_review_before_step_export():
     source=fixture('PN_PL_18.dxf')
     with TestClient(app) as client:
         client.headers['X-Flatforge-Key']=os.environ['FLATFORGE_API_KEY']
-        client.put('/settings',json={'thickness':2,'radius':2,'deduction':4,'input_type':'flat_pattern'})
+        client.put('/settings',json={'thickness':2,'radius':2,'deduction':4,'input_type':'flat_pattern','use_material_defaults':True})
         project=client.post('/projects',json={'name':'Relief regression'}).json()
         with source.open('rb') as drawing:
             response=client.post(f"/projects/{project['id']}/upload",files=[('files',(source.name,drawing,'application/dxf'))])

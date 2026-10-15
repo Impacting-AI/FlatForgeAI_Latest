@@ -4,13 +4,14 @@ from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator, ValidationError
 from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
 from .db import init, Session, Project, Panel, Job, Setting
 from .storage import store
 from .dwg import available as dwg_available
-DEFAULTS={'thickness':2.,'radius':2.,'deduction':4.,'input_type':'flat_pattern'}
+from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS
+from .review_files import select_review, MAX_REVIEW_BYTES
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
 async def lifespan(app):
@@ -30,21 +31,88 @@ def get_panel(s,id):
  if not p or p.deleted_at is not None:raise HTTPException(404,'Panel not found')
  return p
 def pack_panel(p):
- return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':json.loads(p.settings),'overrides':json.loads(p.overrides),'report':json.loads(p.report),'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated}
-class Parameters(BaseModel):
- model_config=ConfigDict(extra='forbid')
- thickness:float=Field(default=2,gt=0,le=20)
- radius:float=Field(default=2,gt=0,le=100)
- deduction:float=Field(default=4,ge=0,le=100)
- input_type:Literal['flat_pattern','folded_dimensions']='flat_pattern'
+ configured={**DEFAULTS,**json.loads(p.settings)};report=json.loads(p.report)
+ # A queued revision must not display the preceding revision's measurements.
+ effective=report.get('settings',configured) if p.status not in ['QUEUED','CONVERTING','EXTRACTING','BUILDING'] else configured
+ return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':effective,'configured_settings':configured,'overrides':json.loads(p.overrides),'report':report,'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated}
 class ProjectInput(BaseModel):
  name:str=Field(min_length=1,max_length=160);client:str=Field(default='',max_length=160)
 class ReviewInput(BaseModel):
- model_config=ConfigDict(extra='forbid')
+ model_config=ConfigDict(extra='forbid',allow_inf_nan=False)
+ expected_revision:int|None=Field(default=None,ge=1)
  settings:Parameters|None=None
- bend_angles:dict[str,Literal[-90,90]]=Field(default_factory=dict)
+ parameter_overrides:ParameterOverrides=Field(default_factory=ParameterOverrides)
+ bend_angles:dict[str,float|None]=Field(default_factory=dict)
+ bend_parameters:dict[str,BendOverride]=Field(default_factory=dict)
+ section_choices:dict[str,str|None]=Field(default_factory=dict)
+ relief_radii:dict[str,float|None]=Field(default_factory=dict)
+ manual_bends:bool|None=None
+ review_note:str|None=Field(default=None,max_length=2000)
  confirm_parameters:bool=False;accept_partial_sections:bool=False
  accept_relief_extensions:bool=False
+ accept_corner_reliefs:bool=False
+ @field_validator('bend_angles')
+ @classmethod
+ def angles_valid(cls,values):
+  for angle in values.values():
+   if angle is not None:BendOverride(angle=angle)
+  return values
+
+def validate_review_decisions(report,body):
+ allowed={b['key'] for field in ('bends','unresolved_bends','unmapped_hinges') for b in report.get(field,[])}
+ if (set(body.bend_angles)|set(body.bend_parameters))-allowed:raise HTTPException(422,'Unknown bend key in review decision')
+ for key,values in body.bend_parameters.items():
+  if values.angle is not None and body.bend_angles.get(key) is not None and values.angle!=body.bend_angles[key]:
+   raise HTTPException(422,'Conflicting rotations supplied for the same bend')
+ circles={c['handle']:c for c in report.get('relief_circles',[])}
+ for handle,radius in body.relief_radii.items():
+  if handle not in circles:raise HTTPException(422,'Unknown corner-relief circle')
+  if radius is not None and not circles[handle]['original_radius_mm']<=radius<=circles[handle]['max_radius_mm']:
+   raise HTTPException(422,'Corner-relief radius is outside the permitted range; shrinking cuts is not allowed')
+ choices={row['profile']:{v['id'] for v in row.get('review_candidates',[])} for row in report.get('section_mapping',[])}
+ for profile,choice in body.section_choices.items():
+  if choice is not None and choice not in choices.get(profile,set()):raise HTTPException(422,'Unknown section chain. Refresh the drawing review before selecting it.')
+ return allowed
+
+@app.post('/panels/{id}/review-file',dependencies=[Depends(auth)])
+async def preview_review_file(id:str,file:UploadFile=File(...)):
+ # Preview only: source identity comes from this revision's extracted DXF.
+ raw=await file.read(MAX_REVIEW_BYTES+1)
+ if len(raw)>MAX_REVIEW_BYTES:raise HTTPException(413,'Review file exceeds 1 MB')
+ with Session() as s:
+  p=get_panel(s,id)
+  if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
+  report=json.loads(p.report);digest=report.get('source_sha256')
+  if not digest:raise HTTPException(409,'Extract the drawing successfully before importing review values')
+  try:
+   entry=select_review(raw,digest)
+   incoming=dict(entry['overrides'])
+   if {'settings','expected_revision'}&incoming.keys():raise ValueError('Put settings in the settings object; revision is assigned by the application.')
+   settings=Parameters(**{**DEFAULTS,**json.loads(p.settings),**entry['settings']})
+   body=ReviewInput(**incoming,settings=settings,expected_revision=p.revision)
+  except (ValueError,TypeError,ValidationError) as exc:
+   raise HTTPException(422,str(exc)) from exc
+  allowed=validate_review_decisions(report,body)
+  if (body.manual_bends or any(v is not None for v in body.relief_radii.values())) and not (body.review_note or '').strip():
+   raise HTTPException(422,'The review file must identify the source of confirmed bend or corner-cut values')
+  previous=json.loads(p.overrides)
+  result=body.model_dump()
+  # Imported values are explicit review decisions, not new workspace rules.
+  result['parameter_overrides']={field:entry['settings'].get(field) for field in ('thickness','radius','deduction')}
+  result['parameter_overrides'].update(body.parameter_overrides.model_dump(exclude_unset=True))
+  result['manual_bends']=body.manual_bends is True;result['review_note']=body.review_note or ''
+  # Replace prior decisions, including omitted angles, so stale values cannot
+  # silently complete an incomplete imported schedule.
+  for field,empty in [('bend_parameters',{}),('section_choices',None),('relief_radii',None)]:
+   result[field]={**{key:empty for key in previous.get(field,{})},**result[field]}
+  for key,angle in body.bend_angles.items():
+   if angle is not None:result['bend_parameters'][key]={**result['bend_parameters'].get(key,{}),'angle':angle}
+  result['bend_angles']={key:None for key in previous.get('bend_angles',{})}
+  explicit={key for key,values in result['bend_parameters'].items() if values.get('angle') is not None}
+  return {'review':result,'source_sha256':digest,'explicit_angles':len(explicit),
+          'missing_bend_keys':sorted(allowed-explicit) if body.manual_bends else [],
+          'inherited_settings':sorted(set(DEFAULTS)-entry['settings'].keys()),
+          'message':'Values are staged for inspection. Nothing is saved until Save & rebuild.'}
 class MeasurementInput(BaseModel):
  value:float|None=Field(default=None,gt=0,le=1000000)
  axis:Literal['flat_width','flat_height','folded_x','folded_y','folded_z']='flat_width'
@@ -59,7 +127,7 @@ def bootstrap():
  with Session() as s:
   projects=[{'id':p.id,'name':p.name,'client':p.client,'created':p.created} for p in s.scalars(select(Project).where(Project.deleted_at.is_(None)).order_by(Project.created.desc()))]
   panels=[pack_panel(p) for p in s.scalars(select(Panel).where(Panel.deleted_at.is_(None)).order_by(Panel.created))]
-  defaults=json.loads(s.get(Setting,'defaults').value)
+  defaults={**DEFAULTS,**json.loads(s.get(Setting,'defaults').value)}
  return {'mode':'live','capabilities':capabilities(),'settings':defaults,'projects':projects,'panels':panels}
 @app.put('/settings',dependencies=[Depends(auth)])
 def settings(p:Parameters):
@@ -112,13 +180,50 @@ def log(id:str):
 def review(id:str,body:ReviewInput):
  with Session.begin() as s:
   p=lock_panel(s,id)
+  if body.expected_revision is not None and p.revision!=body.expected_revision:raise HTTPException(409,'Drawing revision changed. Reload the panel and review its current values.')
   if p.status in ['QUEUED','CONVERTING','EXTRACTING','BUILDING']:raise HTTPException(409,'Wait for the current conversion to finish')
-  report=json.loads(p.report);allowed={b['key'] for b in report.get('bends',[])}|{b['key'] for b in report.get('unresolved_bends',[])}
-  if set(body.bend_angles)-allowed:raise HTTPException(422,'Unknown bend key in review decision')
-  overrides=json.loads(p.overrides);overrides['bend_angles']={**overrides.get('bend_angles',{}),**body.bend_angles}
-  if body.confirm_parameters:overrides['confirm_parameters']=True
-  if body.accept_partial_sections:overrides['accept_partial_sections']=True
-  if body.accept_relief_extensions:overrides['accept_relief_extensions']=True
+  report=json.loads(p.report);validate_review_decisions(report,body)
+  overrides=json.loads(p.overrides)
+  parameters={**overrides.get('parameter_overrides',{})}
+  explicit=body.parameter_overrides.model_dump(exclude_unset=True)
+  # Older clients send only settings. Preserve their intentional edits, but
+  # never turn unchanged displayed/detected fields into manual overrides.
+  if body.settings and 'parameter_overrides' not in body.model_fields_set:
+   previous={**DEFAULTS,**json.loads(p.settings),**report.get('settings',{})}
+   for field in ('thickness','radius','deduction'):
+    value=getattr(body.settings,field)
+    if value!=previous[field]:explicit[field]=value
+  for field,value in explicit.items():
+   if value is None:parameters.pop(field,None)
+   else:parameters[field]=value
+  overrides['parameter_overrides']=parameters
+  angles={**overrides.get('bend_angles',{})}
+  for key,value in body.bend_angles.items():
+   if value is None:angles.pop(key,None)
+   else:angles[key]=value
+  overrides['bend_angles']=angles
+  bends={**overrides.get('bend_parameters',{})}
+  for key,value in body.bend_parameters.items():
+   values=value.model_dump(exclude_none=True)
+   if values:bends[key]=values
+   else:bends.pop(key,None)
+  overrides['bend_parameters']=bends
+  selected={**overrides.get('section_choices',{})}
+  for key,value in body.section_choices.items():
+   if value is None:selected.pop(key,None)
+   else:selected[key]=value
+  overrides['section_choices']=selected
+  reliefs={**overrides.get('relief_radii',{})}
+  for key,value in body.relief_radii.items():
+   if value is None:reliefs.pop(key,None)
+   else:reliefs[key]=value
+  overrides['relief_radii']=reliefs
+  if body.manual_bends is not None:overrides['manual_bends']=body.manual_bends
+  if body.review_note is not None:overrides['review_note']=body.review_note.strip()
+  if overrides.get('manual_bends') and not overrides.get('review_note'):raise HTTPException(422,'Explain which confirmed values replace the missing or unreliable sections.')
+  if reliefs and not overrides.get('review_note'):raise HTTPException(422,'Identify the approved shape or dimensions for changed corner cuts in the review note.')
+  for flag in ('confirm_parameters','accept_partial_sections','accept_relief_extensions','accept_corner_reliefs'):
+   if flag in body.model_fields_set:overrides[flag]=getattr(body,flag)
   if body.settings:p.settings=json.dumps(body.settings.model_dump())
   p.overrides=json.dumps(overrides);p.revision+=1;p.status='QUEUED';p.error='';p.updated=time.time();p.artifacts='{}'
   s.add(Job(panel_id=p.id,revision=p.revision,log='Panel-only review decisions recorded. Queued for reconstruction.\n'))

@@ -8,6 +8,7 @@ import math
 import numpy as np
 from shapely.geometry import LineString
 from . import geometry as g
+from .parameters import normalized_angle
 
 
 def minimax_station(start, end, expected):
@@ -54,7 +55,21 @@ def directions(edges):
     return result
 
 
-def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
+def apply_normal(p,row,candidate,angle_tolerance=.1):
+    conflicts=[e['index'] for e,a in zip(candidate['hinges'],candidate['rotations']) if 'angle' in e and abs(e['angle']-a)>max(angle_tolerance,1e-5)]
+    if conflicts:
+        row.update(status='NEEDS_REVIEW',reason='Profile rotations conflict with another section or a manual value.',conflicting_hinges=conflicts)
+        return False
+    p.update(points=candidate['pts'],segments=candidate['segs'],main=candidate['main'],trace=candidate['trace'],cut_direction=candidate['direction'],cut_coordinate=candidate['c'],mapping='normal section matched by chain dimensions and paint marker')
+    for vertex,(e,angle) in enumerate(zip(candidate['hinges'],candidate['rotations']),1):
+        if not e.get('confirmed'):e['angle']=angle
+        e.setdefault('evidence',[]).append({'profile':p['name'],'vertex':vertex,'angle':angle,'handles_before':p['segments'][vertex-1]['handles'],'handles_after':p['segments'][vertex]['handles'],'paint_marker':p['paint_handle'],'layer':p.get('layer')})
+    row.update(status='PASS',max_strip_error_mm=candidate['error'],cut_direction=candidate['direction'].tolist(),cut_coordinate=candidate['c'])
+    row.pop('reason_code',None)
+    return True
+
+
+def map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k'):
     lookup={frozenset(e['faces']):e for e in edges}
     reports=[]
     for number,p in enumerate(profiles,1):
@@ -67,10 +82,10 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
             vectors=np.diff(pts,axis=0);lengths=np.linalg.norm(vectors,axis=1)
             hand=g.cross(g.unit(vectors[main]),p['paint_normal'])
             turns=np.array([math.degrees(math.atan2(g.cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
-            # Only remove measured sub-0.01-degree drafting noise at 90 deg.
-            angles=np.where(abs(abs(turns)-90)<.01,np.sign(turns)*90,turns)
+            angles=np.array([normalized_angle(a,angle_tolerance) for a in turns])
+            p['angle_adjustments']=[{'vertex':i+1,'drawn_deg':float(a),'used_deg':float(b)} for i,(a,b) in enumerate(zip(turns,angles)) if abs(a-b)>1e-7]
             if any(abs(a)<.1 or abs(a)>=179.9 for a in angles):continue
-            gain=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
+            gain=g.section_gains(angles,t,r,bd,bend_model=bend_model)
             expected=lengths-np.r_[0,gain]-np.r_[gain,0]
             for direction in directions(edges):
                 normal=np.array([-direction[1],direction[0]])
@@ -80,6 +95,10 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                     # Trace length varies affinely inside a vertex-free lane.
                     c=(low+high)/2;items=trace(faces,outer,direction,c)
                     if len(items)!=len(lengths):continue
+                    hinges=[lookup.get(frozenset((a[2],b[2]))) for a,b in zip(items,items[1:])]
+                    if any(e is None for e in hinges):continue
+                    gain=g.section_gains(angles,t,r,bd,hinges,bend_model)
+                    expected=lengths-np.r_[0,gain]-np.r_[gain,0]
                     eps=min(.001,(high-low)/10)
                     ends=[trace(faces,outer,direction,x) for x in (low+eps,high-eps)]
                     ids=[x[2] for x in items]
@@ -102,10 +121,10 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                         'segment':i+1,'face':items[i][2],
                         'source_handles':segs[i]['handles'],
                         'observed_flat_mm':float(a),'required_flat_mm':float(b),
-                        'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=.5)
+                        'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=strip_tolerance)
                     } for i,(a,b) in enumerate(zip(actual,expected))]
                     if nearest is None or error<nearest['max_strip_error_mm']:nearest=record
-                    if not normal_cut or error>.5:continue
+                    if not normal_cut or error>strip_tolerance:continue
                     rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
                     signature=tuple(sorted((e['index'],round(a,3)) for e,a in zip(hinges,rotations)))
                     candidates.append(dict(signature=signature,width=high-low,c=c,trace=items,direction=direction,pts=pts,segs=segs,main=main,hinges=hinges,rotations=rotations,error=error))
@@ -127,22 +146,10 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd):
                 reason='The closest chain crosses nonparallel hinges; its apparent section turns cannot be used as bend rotations.'
             else:
                 code='STRIP_LENGTH_MISMATCH'
-                reason=f"Closest normal chain exceeds the 0.5 mm strip tolerance (maximum {nearest['max_strip_error_mm']:.3f} mm). Check its segment diagnostics and bend parameters."
+                reason=f"Closest normal chain exceeds the {strip_tolerance:g} mm strip tolerance (maximum {nearest['max_strip_error_mm']:.3f} mm). Check its segment diagnostics and bend parameters."
             row.update(status='NEEDS_REVIEW',reason_code=code,reason=reason)
             reports.append(row);continue
         candidate=min(candidates,key=lambda c:(-c['width'],c['error'],c['c'],c['signature']))
-        conflicts=[e['index'] for e,a in zip(candidate['hinges'],candidate['rotations']) if 'angle' in e and abs(e['angle']-a)>1]
-        if conflicts:
-            row.update(status='NEEDS_REVIEW',reason='Profile rotations conflict with another section.',conflicting_hinges=conflicts)
-            reports.append(row);continue
-        p.update(points=candidate['pts'],segments=candidate['segs'],main=candidate['main'],trace=candidate['trace'],
-                 cut_direction=candidate['direction'],cut_coordinate=candidate['c'],
-                 mapping='unique normal section matched by full chain dimensions and paint marker')
-        for vertex,(e,angle) in enumerate(zip(candidate['hinges'],candidate['rotations']),1):
-            e['angle']=angle
-            e.setdefault('evidence',[]).append({'profile':p['name'],'vertex':vertex,'angle':angle,
-                'handles_before':p['segments'][vertex-1]['handles'],'handles_after':p['segments'][vertex]['handles'],
-                'paint_marker':p['paint_handle'],'layer':p.get('layer')})
-        row.update(status='PASS',max_strip_error_mm=candidate['error'],cut_direction=candidate['direction'].tolist(),cut_coordinate=candidate['c'])
+        apply_normal(p,row,candidate,angle_tolerance)
         reports.append(row)
     return reports
