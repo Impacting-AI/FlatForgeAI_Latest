@@ -12,6 +12,7 @@ from .storage import store
 from .dwg import available as dwg_available
 from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS
 from .review_files import select_review, MAX_REVIEW_BYTES
+from . import tolerance_policy
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
 async def lifespan(app):
@@ -119,7 +120,7 @@ class MeasurementInput(BaseModel):
 def capabilities():
  with Session() as s:
   heartbeat=s.get(Setting,'worker_heartbeat');last=float(heartbeat.value) if heartbeat else 0
- return {'engine':'python-opencascade','connected':True,'worker_online':time.time()-last<60,'dwg':dwg_available(),'max_upload_mb':MAX_BYTES//1024//1024,'exports':['step','glb','stl','dxf','csv','json']+(['dwg'] if dwg_available() else [])}
+ return {'engine':'python-opencascade','connected':True,'worker_online':time.time()-last<60,'dwg':dwg_available(),'max_upload_mb':MAX_BYTES//1024//1024,'drawing_tolerances_enforced':tolerance_policy.ENFORCE_DRAWING_TOLERANCES,'exports':['step','glb','stl','dxf','csv','json']+(['dwg'] if dwg_available() else [])}
 @app.get('/health')
 def health():return {'status':'ok','service':'FlatForge CAD API'}
 @app.get('/bootstrap',dependencies=[Depends(auth)])

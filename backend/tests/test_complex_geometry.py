@@ -62,7 +62,9 @@ def test_arbitrary_axis_solid_sections_unfold_and_step(tmp_path,angle,plan,mirro
         assert hashlib.sha256((tmp_path/'again/panel.step').read_bytes()).digest()==before
 
 
-def test_conflicting_section_lengths_do_not_export_solid(tmp_path):
+def test_conflicting_section_lengths_do_not_export_solid(tmp_path,monkeypatch):
+    from flatforge import tolerance_policy
+    monkeypatch.setattr(tolerance_policy,'ENFORCE_DRAWING_TOLERANCES',True)
     source=tmp_path/'source.dxf';channel(source,60)
     doc=ezdxf.readfile(source)
     # Change a real panel strip width while preserving all its section evidence.

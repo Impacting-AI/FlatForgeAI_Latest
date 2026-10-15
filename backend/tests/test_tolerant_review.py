@@ -34,7 +34,9 @@ def test_duplicate_closure_does_not_destroy_rotated_fold_topology(tmp_path):
     assert any(r['kind']=='duplicate_contour_closure' for r in g.read_drawing.repairs)
 
 
-def test_length_tolerance_is_used_in_mapping_and_actual_solid_checks(tmp_path):
+def test_length_tolerance_is_used_in_mapping_and_actual_solid_checks(tmp_path,monkeypatch):
+    from flatforge import tolerance_policy
+    monkeypatch.setattr(tolerance_policy,'ENFORCE_DRAWING_TOLERANCES',True)
     source=tmp_path/'channel.dxf';channel(source)
     doc=ezdxf.readfile(source);line=next(iter(doc.modelspace().query('LINE[layer=="KIFOF"]')))
     shift=.65*np.array([math.cos(math.radians(37)),math.sin(math.radians(37)),0.])
@@ -110,7 +112,9 @@ def test_review_api_accepts_non_square_values_rejects_unknown_keys_and_clears(tm
 
 
 @pytest.mark.parametrize('index',[0,1])
-def test_supplied_drawings_keep_outside_tolerance_choices_unselectable(tmp_path,index):
+def test_supplied_drawings_keep_outside_tolerance_choices_unselectable(tmp_path,index,monkeypatch):
+    from flatforge import tolerance_policy
+    monkeypatch.setattr(tolerance_policy,'ENFORCE_DRAWING_TOLERANCES',True)
     folder=os.getenv('FLATFORGE_PAIR_DXF_DIR')
     if not folder:pytest.skip('Set FLATFORGE_PAIR_DXF_DIR for private drawing regressions')
     drawings=sorted(Path(folder).glob('*.dxf'))

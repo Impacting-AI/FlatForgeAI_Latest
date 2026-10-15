@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import ezdxf
 from .parameters import allowance, hinge_parameters
+from .tolerance_policy import matching_candidates
 from ezdxf import path as dxfpath
 from shapely import set_precision, union_all
 from shapely.geometry import Polygon,LineString,Point,box
@@ -346,7 +347,7 @@ def section_trace(faces,outer,dim,coordinate):
     items.sort()
     return items
 
-def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,strip_tolerance=.5):
+def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,strip_tolerance=.5,enforce_tolerances=True):
     # Sharp midsurface setback minus half bend allowance. 90-degree rule.
     ba=2*(r+t)-bd;gain=r+t/2-ba/2
     edge_lookup={frozenset(e['faces']):e for e in edges}
@@ -380,11 +381,13 @@ def map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,strip_tolerance=.5):
             trace=section_trace(faces,outer,dim,c)
             if len(trace)!=len(lengths):continue
             err=max(abs((b-a)-target) for (a,b,_),target in zip(trace,flat_target))
-            if err<=strip_tolerance:valid.append((err,-width,c,trace))
+            valid.append({'error':err,'value':(err,-width,c,trace)})
+        valid=[v['value'] for v in matching_candidates(valid,strip_tolerance,enforce_tolerances)]
         if not valid:raise ValueError(f'{p["name"]}: section vertex count or strip lengths do not match any cut; STOP chain')
         # Prefer widest equivalent lane; otherwise minimum geometric residual.
         err,nw,c,trace=min(valid,key=lambda v:(v[1],v[0],v[2]))
         p.update(cut_coordinate=c,trace=trace,mapping=mapping,max_mapping_error=err)
+        if not enforce_tolerances and err>strip_tolerance:p['tolerance_bypassed']=True
         vmain=unit(pts[m+1]-pts[m]);hand=cross(vmain,p['paint_normal'])
         if abs(abs(hand)-1)>1e-6:raise ValueError('Paint marker not normal to main section segment')
         checks=[]

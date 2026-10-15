@@ -9,6 +9,7 @@ import numpy as np
 from shapely.geometry import LineString
 from . import geometry as g
 from .parameters import normalized_angle
+from .tolerance_policy import matching_candidates
 
 
 def minimax_station(start, end, expected):
@@ -69,7 +70,7 @@ def apply_normal(p,row,candidate,angle_tolerance=.1):
     return True
 
 
-def map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k'):
+def map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k',enforce_tolerances=True,defer_outside_tolerance=False):
     lookup={frozenset(e['faces']):e for e in edges}
     reports=[]
     for number,p in enumerate(profiles,1):
@@ -124,16 +125,20 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,ang
                         'residual_mm':float(a-b),'within_tolerance':bool(abs(a-b)<=strip_tolerance)
                     } for i,(a,b) in enumerate(zip(actual,expected))]
                     if nearest is None or error<nearest['max_strip_error_mm']:nearest=record
-                    if not normal_cut or error>strip_tolerance:continue
+                    if not normal_cut:continue
                     rotations=[float(a*g.cross(g.support(e)[0],direction)*(1 if e['parent']==left[2] else -1)) for a,e,left in zip(angles,hinges,items)]
                     signature=tuple(sorted((e['index'],round(a,3)) for e,a in zip(hinges,rotations)))
                     candidates.append(dict(signature=signature,width=high-low,c=c,trace=items,direction=direction,pts=pts,segs=segs,main=main,hinges=hinges,rotations=rotations,error=error))
+        candidates=matching_candidates(candidates,strip_tolerance,enforce_tolerances)
         signatures={c['signature'] for c in candidates}
         # Keep full candidates for the repeated-detail convention resolver.
         # Internal geometry arrays are never copied into the public report.
         p['_normal_candidates']=candidates
         row={'profile':p['name'],'section_layer':p.get('layer'),'paint_marker':p['paint_handle'],
              'source_handles':[s['handles'] for s in p['segments']], 'candidate_chains':len(signatures),'nearest_candidate':nearest}
+        if not enforce_tolerances and candidates and min(c['error'] for c in candidates)>strip_tolerance:
+            row['tolerance_bypassed']=True
+            row['matching_policy']='Closest normal-section fit; dimensional cutoff disabled for experiment.'
         if len(signatures)!=1:
             if signatures:
                 code='AMBIGUOUS_CHAIN'
@@ -150,6 +155,11 @@ def map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,ang
             row.update(status='NEEDS_REVIEW',reason_code=code,reason=reason)
             reports.append(row);continue
         candidate=min(candidates,key=lambda c:(-c['width'],c['error'],c['c'],c['signature']))
+        if defer_outside_tolerance and candidate['error']>strip_tolerance:
+            # Give existing normal matches and closer local details priority.
+            # A distant normal fit must not overwrite their angle evidence.
+            row.update(status='NEEDS_REVIEW',reason_code='EXPERIMENTAL_MATCH',reason='Closest normal-section candidate awaits comparison with local edge evidence.')
+            reports.append(row);continue
         apply_normal(p,row,candidate,angle_tolerance)
         reports.append(row)
     return reports

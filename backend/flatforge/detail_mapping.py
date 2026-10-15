@@ -14,6 +14,7 @@ import numpy as np
 from . import geometry as g
 from .section_mapping import map_normal_sections, apply_normal
 from .parameters import normalized_angle
+from .tolerance_policy import matching_candidates
 
 
 def profile_values(p,t,r,bd,angle_tolerance=.1,bend_model='constant_k',hinges=None):
@@ -144,9 +145,9 @@ def candidate_summary(c,kind):
             'max_strip_error_mm':c['error']}
 
 
-def map_details(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k',selections=None):
+def map_details(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k',selections=None,enforce_tolerances=True):
     selections=selections or {}
-    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance,angle_tolerance,bend_model)
+    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance,angle_tolerance,bend_model,enforce_tolerances,defer_outside_tolerance=not enforce_tolerances)
     pending=[]
     for p,row in zip(profiles,reports):
         if row['status']=='PASS' and not selections.get(p['name']):continue
@@ -167,7 +168,10 @@ def map_details(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_toler
                 row.pop('reason_code',None)
                 continue
         measured=local_candidates(p,faces,edges,t,r,bd,strip_tolerance,angle_tolerance,bend_model,diagnostic=True)
-        candidates=[c for c in measured if c['error']<=strip_tolerance]
+        candidates=matching_candidates(measured,strip_tolerance,enforce_tolerances)
+        if not enforce_tolerances and candidates and min(c['error'] for c in candidates)>strip_tolerance:
+            row['tolerance_bypassed']=True
+            row['matching_policy']='Closest local-edge fit; dimensional cutoff disabled for experiment.'
         if measured:
             nearest=min(measured,key=lambda c:c['error'])
             row['nearest_local_candidate']={**candidate_summary(nearest,'local'),
@@ -183,6 +187,15 @@ def map_details(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_toler
         row['review_candidates']=[candidate_summary(c,kind) for kind,c in options.values()]
         row['angle_adjustments']=p.get('angle_adjustments',[])
         selected=selections.get(p['name'])
+        if not enforce_tolerances and not selected:
+            normal=p.get('_normal_candidates',[])
+            if len({c['signature'] for c in normal})==1:
+                closest=min(normal,key=lambda c:(c['error'],-c['width'],c['c']))
+                if closest['error']<=min((c['error'] for c in candidates),default=float('inf')):
+                    if apply_normal(p,row,closest,angle_tolerance):
+                        row['matching_policy']='Closest normal-section fit; dimensional cutoff disabled for experiment.'
+                        row.pop('reason',None)
+                        continue
         if selected:
             if selected not in options:
                 row.update(status='NEEDS_REVIEW',reason_code='STALE_SECTION_CHOICE',reason='The selected chain no longer fits the current values. Choose a current candidate or return to automatic matching.')
@@ -200,7 +213,8 @@ def map_details(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_toler
             if not any(signatures_agree(c['signature'],s,angle_tolerance) for s in signatures):signatures.append(c['signature'])
         if candidates:
             row['normal_reason']=row.get('reason')
-            row.update(reason_code='LOCAL_CONFIRMATION',reason=f"Local edge candidates fit within {strip_tolerance:g} mm, but their chain or orientation needs confirmation. Select a candidate or supply confirmed bend values.",local_max_strip_error_mm=min(c['error'] for c in candidates))
+            fit=f'fit within {strip_tolerance:g} mm' if min(c['error'] for c in candidates)<=strip_tolerance else 'are available with the dimensional cutoff disabled'
+            row.update(reason_code='LOCAL_CONFIRMATION',reason=f"Local edge candidates {fit}, but their chain or orientation needs confirmation. Select a candidate or supply confirmed bend values.",local_max_strip_error_mm=min(c['error'] for c in candidates))
         if len(signatures)==1:
             candidate=min(candidates,key=lambda c:(c['error'],c['chain'],c['boundary']))
             pending.append((p,row,candidate))
@@ -214,6 +228,9 @@ def map_details(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_toler
         row.update(status='PASS',method='corroborated_local_edge_profile',reason='Opposite painted profiles agree on the same hinge chain and rotations.',
                    matched_faces=c['chain'],max_strip_error_mm=c['error'],corroborating_profiles=[x[0]['name'] for x in peers])
         row.pop('reason_code',None)
+    if not enforce_tolerances:
+        for row in reports:
+            row['tolerance_bypassed']=row['status']=='PASS' and row.get('max_strip_error_mm',0)>strip_tolerance
     return reports
 
 

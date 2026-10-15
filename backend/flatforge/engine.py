@@ -6,6 +6,7 @@ import ezdxf
 from shapely.geometry import Point,LineString
 from . import geometry as g
 from . import dwg
+from . import tolerance_policy
 from .detail_mapping import map_details, normal_instances, check_local_profiles
 from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS, hinge_parameters
 from .drawing_parameters import drawing_evidence, resolve_parameters, thickness_evidence, right_angle_deduction
@@ -127,6 +128,11 @@ def run(config):
  overrides['parameter_overrides']=ParameterOverrides(**overrides.get('parameter_overrides',{})).model_dump(exclude_none=True)
  manual=bool(overrides.get('manual_bends'));t,r,bd=settings['thickness'],settings['radius'],settings['deduction']
  strip_tol=settings['strip_tolerance'];angle_tol=settings['angle_tolerance'];bend_model=settings['bend_model']
+ enforce=tolerance_policy.ENFORCE_DRAWING_TOLERANCES
+ report['tolerance_policy']={'enforced':enforce,'linear_reference_mm':strip_tol,'angular_reference_deg':angle_tol,
+                             'mode':'standard' if enforce else 'experimental_no_tolerance_gates'}
+ report['tolerance_deviations']=[]
+ if not enforce:report['warnings'].append('Experimental build: drawing tolerance limits do not block matching or export. Inspect the measured deviations before accepting the model.')
  def checkpoint(phase,message):
   report['phase_message']=message
   print(message,flush=True)
@@ -246,14 +252,16 @@ def run(config):
  report['matching_tolerances']={'strip_mm':strip_tol,'angle_deg':angle_tol,'topology_grid_mm':g.GRID}
  mapped=[]
  if not manual:
-  if general:mapped=map_details(faces,outer,edges,profs,t,r,bd,strip_tol,angle_tol,bend_model,overrides.get('section_choices'))
+  if general:mapped=map_details(faces,outer,edges,profs,t,r,bd,strip_tol,angle_tol,bend_model,overrides.get('section_choices'),enforce)
   else:
-   try:mapped=g.map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,strip_tol)
+   try:mapped=g.map_sections(doc,origin,faces,outer,edges,profs,t,r,bd,strip_tol,enforce)
    except ValueError as exc:
     if str(exc)!='Unmapped hinge; no default direction is allowed':
      issue('SECTION_CORRESPONDENCE',str(exc)+'. Adjust the matching tolerance or supply confirmed values.')
-   mapped=[{'profile':p['name'],'status':'PASS' if 'trace' in p else 'NEEDS_REVIEW','cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping'),'reason':'Section needs review.' if 'trace' not in p else ''} for p in profs]
+   mapped=[{'profile':p['name'],'status':'PASS' if 'trace' in p else 'NEEDS_REVIEW','cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping'),'reason':'Section needs review.' if 'trace' not in p else '', 'tolerance_bypassed':p.get('tolerance_bypassed',False),'max_strip_error_mm':p.get('max_mapping_error')} for p in profs]
  report['section_mapping']=mapped
+ for row in mapped:
+  if row.get('tolerance_bypassed'):report['tolerance_deviations'].append({'code':'SECTION_MATCH','profile':row['profile'],'message':row.get('matching_policy','Section matched without the dimensional cutoff.')})
  propagate_continuous_bends(faces,edges,angle_tol)
  # Do not overwrite selected values after mapping; they participated in conflict
  # checks above. Keep every unresolved hinge visible even when a section fails.
@@ -275,7 +283,10 @@ def run(config):
  report['deduction_evidence']=deduction
  report['input_evidence']={'classification':'user_confirmed_flat_pattern' if manual else 'flat_pattern_supported' if deduction['value'] is not None else 'not_proven','reason':'User-confirmed flat pattern and bend values' if manual else 'Matched section / flat-strip dimensions' if deduction['value'] is not None else 'Input interpretation requires user confirmation'}
  if deduction['value'] is not None and abs(deduction['value']-bd)>strip_tol:
-  issue('DEDUCTION',f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm.",field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
+  message=f"Section dimensions support {deduction['value']:g} mm deduction; panel setting is {bd:g} mm."
+  if enforce:
+   issue('DEDUCTION',message,field='deduction',suggested=deduction['value']);return finish('NEEDS_REVIEW')
+  report['tolerance_deviations'].append({'code':'DEDUCTION','message':message,'drawing_value':deduction['value'],'used_value':bd})
  # Report missing values as editable review fields. Section matching is allowed
  # to run first so one pass exposes all unresolved geometry and parameters.
  if not (unresolved or unknown) and deduction.get('confidence')=='drawing' and resolved['deduction']['source']=='unresolved' and parameter_evidence['deduction'].get('confidence') not in ('conflict','invalid') and abs(deduction['value']-bd)<=strip_tol:
@@ -305,7 +316,11 @@ def run(config):
  unfold=g.unfold_solid(solid,tf,trimmed,edges,blank,t,r,bd,out,strip_tol,angle_tol)
  report.update(solid=stats,bbox=stats['bbox_mm'],section_checks=checks,unfold_check=unfold,k_factor=k,allowance=ba,corner_contacts=g.partition.contacts)
  report['bends']=bend_rows(edges)
- if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':issue('VALIDATION','Solid generated but section or local outline tolerances failed. Inspect validation results.')
+ if any(c['chain_status']!='PASS' for c in checks) or unfold['status']!='PASS':
+  if enforce or tolerance_policy.structural_validation_failed(checks,unfold):
+   issue('VALIDATION','Solid generated but section or local outline checks failed. Inspect validation results.')
+  else:
+   report['tolerance_deviations'].append({'code':'VALIDATION','message':'Section/outline/angle differences are retained in the report but do not block this experimental export.'})
  for c in checks:
   if c['chain_status']=='PASS' and c['full_plane_status']!='PASS' and not local_checks and not overrides.get('accept_partial_sections'):issue('PARTIAL_SECTION',f"{c['profile']} matches its documented chain, but the complete plane includes additional sheet regions. Confirm this is a partial detail.")
  if extensions and not overrides.get('accept_relief_extensions'):
@@ -315,7 +330,7 @@ def run(config):
  dump(out/'viewer.json',viewer_data(faces,trimmed,edges,tf,t,r,bd));paint_glb(solid,tf,edges,t,r,out/'panel.glb')
  rows=[]
  for e in edges:
-  rows.append({'bend_id':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'angle':abs(e['angle']),'signed_angle':e['angle'],'inside_radius_mm':e['radius'],'deduction_mm':e['deduction'],'bend_allowance_mm':e['allowance'],'bend_model':bend_model,'axis':str(e['axis'].tolist()),'source':'; '.join(f"{v['profile']} vertex {v.get('vertex','—')}" for v in e['evidence']),'confidence':'user confirmed' if e.get('confirmed') else 'drawing','status':'NEEDS_REVIEW' if issues else 'PASS'})
+  rows.append({'bend_id':' / '.join(l['id'] for l in e['source']),'parent':e['parent'],'child':e['child'],'angle':abs(e['angle']),'signed_angle':e['angle'],'inside_radius_mm':e['radius'],'deduction_mm':e['deduction'],'bend_allowance_mm':e['allowance'],'bend_model':bend_model,'axis':str(e['axis'].tolist()),'source':'; '.join(f"{v['profile']} vertex {v.get('vertex','—')}" for v in e['evidence']),'confidence':'user confirmed' if e.get('confirmed') else 'drawing','status':'NEEDS_REVIEW' if issues else 'PASS' if enforce else 'EXPERIMENTAL'})
  with (out/'fold_table.csv').open('w',newline='') as f:w=csv.DictWriter(f,fieldnames=rows[0]);w.writeheader();w.writerows(rows)
  import cadquery as cq
  cq.exporters.export(solid,str(out/'panel.stl'))

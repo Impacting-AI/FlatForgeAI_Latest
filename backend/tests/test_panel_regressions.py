@@ -61,7 +61,9 @@ def test_missing_bend_data_stays_unknown(tmp_path):
     assert not (tmp_path/'panel.step').exists()
 
 @pytest.mark.parametrize('number',['1570','1619','1648'])
-def test_previous_references_expose_local_errors_hidden_by_area_check(number,tmp_path):
+def test_previous_references_expose_local_errors_hidden_by_area_check(number,tmp_path,monkeypatch):
+    from flatforge import tolerance_policy
+    monkeypatch.setattr(tolerance_policy,'ENFORCE_DRAWING_TOLERANCES',True)
     panel=next(p for p in json.loads((ROOT/'lib/sample-data.json').read_text())['panels'] if p['filename']==f'PN_PL_{number}.dxf')
     # Preserve the previously reviewed material defaults for these regressions.
     result=run({'source':str(ROOT/'public/samples'/number/'flat.dxf'),
