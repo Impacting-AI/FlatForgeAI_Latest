@@ -75,6 +75,26 @@ def map_review(edges,overrides,bend_parameters=None):
 def bend_rows(edges):
  return [{'id':e['index'],'bend_ids':[l['id'] for l in e['source']],'parent':e['parent'],'child':e['child'],'angle':e.get('angle'),'key':e['review_key'],'source':e.get('evidence',[]),'confirmed':e.get('confirmed',False),'radius':e.get('radius'),'deduction':e.get('deduction')} for e in edges]
 
+def extraction_data(outer,blank,lines,faces,material,edges,doc,origin):
+ """Flat review geometry, available even when bend values cannot be resolved.
+
+ A source DXF line can belong to several hinges. Export each actual shared
+ boundary with its review key; never infer its location from a face bounding box.
+ """
+ def polygons(shape):
+  return [{'outer':list(p.exterior.coords),'holes':[list(h.coords) for h in p.interiors]} for p in g.poly_parts(shape)]
+ def segments(shape):
+  if shape.geom_type=='LineString':return [list(shape.coords)]
+  return [line for part in getattr(shape,'geoms',[]) for line in segments(part)]
+ return {'version':2,'units':'mm','bounds':list(outer.bounds),'outline':polygons(blank),
+  'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],
+  'faces':[{'id':i,'name':f'F{i}','bounds':list(f.bounds),'polygons':polygons(material[i]),
+            'label_point':list(material[i].representative_point().coords[0]) if not material[i].is_empty else None} for i,f in enumerate(faces)],
+  'bends':[{'key':e['review_key'],'id':e['index'],'bend_ids':[l['id'] for l in e['source']],
+            'parent':e['parent'],'child':e['child'],'segments':segments(e['geom'])} for e in edges],
+  'paint_labels':[g.vec(e.get_points()[0])-origin for e in doc.modelspace().query('LWPOLYLINE[layer=="צבע"]')],
+  'corner_reliefs':getattr(g.partition,'corner_reliefs',[])}
+
 def propagate_continuous_bends(faces,edges,angle_tolerance):
  """One original straight axis can bound separate tabs; preserve fold sense."""
  for e in edges:
@@ -205,7 +225,7 @@ def run(config):
  if any(c['changed'] for c in g.read_drawing.relief_circles):
   shutil.copyfile(source,out/'original_flat.dxf');doc.saveas(out/'flat.dxf')
  else:shutil.copyfile(source,out/'flat.dxf')
- extract={'bounds':list(outer.bounds),'lines':[{'id':l['id'],'handle':l['handle'],'start':l['a'],'end':l['b']} for l in lines],'faces':[{'id':i,'bounds':list(f.bounds)} for i,f in enumerate(faces)]};dump(out/'extraction.json',extract)
+ dump(out/'extraction.json',extraction_data(outer,blank,lines,faces,material,edges,doc,origin))
  checkpoint('EXTRACTING','Rendered numbered bend axes and contour. Checking drawing parameters…')
  for field,record in resolved.items():
   if record['needs_review'] and record['evidence'].get('confidence')=='invalid':
