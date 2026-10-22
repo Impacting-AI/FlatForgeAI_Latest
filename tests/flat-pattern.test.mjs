@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { reviewedBend, hingeAnchor, flatProjection, matchesHinge, calloutLayout } from '../components/flatforge/flat-pattern.ts';
+import { reviewedBend, hingeAnchor, flatProjection, matchesHinge, calloutLayout, editableHinge } from '../components/flatforge/flat-pattern.ts';
+import { updateBendParameters, bendInputValue, bendValueError, bendDraftText } from '../components/flatforge/bend-review.ts';
 
 const settings = { thickness: 2, radius: 2, deduction: 4, input_type: 'flat_pattern' };
 const bend = { id: 0, key: 'axis:F0:F2', bend_ids: ['C07'], parent: 0, child: 2, angle: -60, source: [] };
@@ -66,5 +67,56 @@ test('complex fixture keeps every hinge mapped and callouts separate at differen
         if (i) assert.ok(card.y >= group[i - 1].y + cardHeight + 11.999);
       });
     }
+  }
+});
+
+test('shared updates preserve every other bend, other review decisions and numeric precision', () => {
+  const original = { ...review, review_note: 'Keep this', relief_radii: { corner: 2 },
+    bend_parameters: { [bend.key]: { angle: -60, deduction: 4 }, other: { angle: 120, radius: 3 } } };
+  const updated = updateBendParameters(original, bend.key, { radius: 2.123456789 });
+  assert.deepEqual(updated.bend_parameters[bend.key], { angle: -60, deduction: 4, radius: 2.123456789 });
+  assert.equal(updated.bend_parameters.other, original.bend_parameters.other);
+  assert.equal(updated.relief_radii, original.relief_radii);
+  assert.equal(updated.review_note, 'Keep this');
+  assert.equal(original.bend_parameters[bend.key].radius, undefined);
+  assert.deepEqual(updateBendParameters(updated, bend.key, null).bend_parameters, { [bend.key]: {}, other: original.bend_parameters.other });
+});
+
+test('editor and table share empty-value and manual/default precedence, without turning zero into missing', () => {
+  const cleared = updateBendParameters(review, bend.key, { angle: null, radius: null, deduction: 0 });
+  assert.equal(bendInputValue(bend, settings, cleared, 'angle'), '');
+  assert.equal(bendInputValue(bend, settings, cleared, 'radius'), '');
+  assert.equal(bendInputValue(bend, settings, cleared, 'deduction'), 0);
+  assert.equal(bendInputValue(bend, settings, review, 'angle'), -60);
+  assert.equal(bendInputValue(bend, settings, review, 'radius'), 2);
+  assert.equal(bendInputValue({ ...bend, angle: null }, settings, review, 'angle'), '');
+});
+
+test('required editor fields and existing engineering ranges reject invalid numbers', () => {
+  const valid = { angle: 60.123456789, radius: 2.123456789, deduction: 0 };
+  assert.equal(bendValueError(valid, true), null);
+  for (const patch of [{ angle: null }, { radius: null }, { deduction: null }, { angle: 0 }, { angle: 180 },
+    { angle: -180 }, { angle: NaN }, { radius: 0 }, { radius: -1 }, { radius: 101 }, { radius: Infinity },
+    { deduction: -1 }, { deduction: 101 }, { deduction: NaN }]) assert.ok(bendValueError({ ...valid, ...patch }, true));
+  // Automatic reset and incomplete table drafts retain their existing semantics.
+  assert.equal(bendValueError({}), null);
+});
+
+test('a shared field change wins over a stale popover draft while other fields stay staged', () => {
+  const draft = { angle: { base: '-60', text: '120' }, radius: { base: '2', text: '3' } };
+  assert.equal(bendDraftText(draft, 'angle', '-60'), '120');
+  assert.equal(bendDraftText(draft, 'angle', '75'), '75');
+  assert.equal(bendDraftText(draft, 'radius', '2'), '3');
+});
+
+test('only unique verified hinge identities with actual geometry are editable', () => {
+  const data = JSON.parse(readFileSync(new URL('../public/samples/1648/extraction.json', import.meta.url)));
+  const report = JSON.parse(readFileSync(new URL('../public/samples/1648/report.json', import.meta.url)));
+  for (const hinge of data.bends) assert.ok(editableHinge(data, report.bends, hinge.key));
+  const hinge = data.bends[0];
+  assert.equal(editableHinge(data, [...report.bends, report.bends[0]], hinge.key), false);
+  assert.equal(editableHinge({ ...data, bends: [...data.bends, hinge] }, report.bends, hinge.key), false);
+  for (const bad of [{ ...hinge, child: 999 }, { ...hinge, segments: [] }, { ...hinge, segments: [[[NaN, 0], [1, 2]]] }]) {
+    assert.equal(editableHinge({ ...data, bends: [bad, ...data.bends.slice(1)] }, report.bends, hinge.key), false);
   }
 });

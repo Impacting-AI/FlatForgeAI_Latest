@@ -2,6 +2,7 @@
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { BendValues, Panel, Settings, ParameterValues } from './types';
+import { bendInputValue, bendValueError, type BendChange } from './bend-review';
 
 export type ReviewValues={parameter_overrides:ParameterValues;relief_radii:Record<string,number|null>;bend_parameters:Record<string,BendValues>;section_choices:Record<string,string|null>;manual_bends:boolean;review_note:string;accept_corner_reliefs:boolean};
 export const emptyReview:ReviewValues={parameter_overrides:{},relief_radii:{},bend_parameters:{},section_choices:{},manual_bends:false,review_note:'',accept_corner_reliefs:false};
@@ -17,20 +18,14 @@ export function reviewError(value:ReviewValues,settings:Settings):string|null {
   [settings.strip_tolerance??.5,0,5,'Length tolerance',false],[settings.angle_tolerance??.1,0,2,'Angle tolerance',true],[settings.default_angle??90,0,180,'Missing angle',false],
  ];
  for(const [n,min,max,name,zero] of ranges)if(!Number.isFinite(n)||(zero?n<min:n<=min)||n>max||(name==='Missing angle'&&n===180))return `${name}: enter a value ${zero?'from':'above'} ${min} and ${name==='Missing angle'?'below':'up to'} ${max}.`;
- for(const bend of Object.values(value.bend_parameters)){
-  if(bend.angle!=null&&(!Number.isFinite(bend.angle)||bend.angle===0||Math.abs(bend.angle)>=180))return 'Signed bend angles must be greater than −180°, less than 180°, and nonzero.';
-  if(bend.radius!=null&&(!Number.isFinite(bend.radius)||bend.radius<=0||bend.radius>100))return 'Each bend radius must be above 0 and at most 100 mm.';
-  if(bend.deduction!=null&&(!Number.isFinite(bend.deduction)||bend.deduction<0||bend.deduction>100))return 'Each bend deduction must be from 0 to 100 mm.';
- }
+ for(const bend of Object.values(value.bend_parameters)){const error=bendValueError(bend);if(error)return error;}
  for(const radius of Object.values(value.relief_radii))if(radius!=null&&(!Number.isFinite(radius)||radius<=0))return 'Corner-relief radii must be positive numbers.';
  return (value.manual_bends||Object.values(value.relief_radii).some(r=>r!=null))&&!value.review_note.trim()?'Add a note stating where your confirmed bend or corner-cut values came from.':null;
 }
 
-export default function ReviewControls({panel,settings,value,onChange}:{panel:Panel;settings:Settings;value:ReviewValues;onChange:(v:ReviewValues)=>void}){
+export default function ReviewControls({panel,settings,value,onChange,onBendChange}:{panel:Panel;settings:Settings;value:ReviewValues;onChange:(v:ReviewValues)=>void;onBendChange:BendChange}){
  const setBend=(key:string,field:keyof BendValues,input:string|number)=>{
-  const values={...value.bend_parameters[key]};
-  values[field]=input===''?null:Number(input);
-  onChange({...value,bend_parameters:{...value.bend_parameters,[key]:values}});
+  onBendChange(key,{[field]:input===''?null:Number(input)});
  };
  const unresolved=panel.report.unresolved_bends??[];
  const candidates=panel.report.section_mapping?.filter(s=>(s.status!=='PASS'&&s.review_candidates?.length)||value.section_choices[s.profile]);
@@ -56,7 +51,7 @@ export default function ReviewControls({panel,settings,value,onChange}:{panel:Pa
   </div>)}
   {!!panel.report.bends?.length&&<details className="bend-overrides"><summary>Correct individual bends · angle, radius or deduction</summary>
    <p>Fields show the current values. Edit only what needs correcting. Use automatic to remove your edits and read that bend from the drawing again; missing angles remain blank.</p>
-   <div className="table-wrap"><table className="calculation-table"><thead><tr><th>Bend</th><th>Signed rotation °</th><th>Inside radius mm</th><th>Deduction mm</th><th>Value source</th></tr></thead><tbody>{panel.report.bends.map(b=><tr key={b.key}><td>{b.bend_ids.join(' / ')}<small>F{b.parent} → F{b.child}{b.angle!=null?` · detected / current ${b.angle.toFixed(3)}°`:''}</small></td>{(['angle','radius','deduction'] as const).map(field=><td key={field}><input type="number" step="any" aria-label={`${field} for ${b.bend_ids.join('/')}`} placeholder={field==='angle'?'Not established':settings[field].toString()} value={value.bend_parameters[b.key]?.[field]===null?'':value.bend_parameters[b.key]?.[field]??(field==='angle'?(b.confirmed?b.source.find(s=>s.profile!=='USER CONFIRMED')?.angle??'':b.angle??''):settings[field])} onChange={e=>setBend(b.key,field,e.target.value)}/></td>)}<td><small>{Object.values(value.bend_parameters[b.key]??{}).some(v=>v!=null)?'Manual correction':b.confirmed?'Automatic after rebuild':b.angle!=null?'Drawing angle · panel radius/deduction':'Angle required'}</small>{Object.values(value.bend_parameters[b.key]??{}).some(v=>v!=null)&&<Button type="button" variant="ghost" size="sm" onClick={()=>onChange({...value,bend_parameters:{...value.bend_parameters,[b.key]:{}}})}>Use automatic</Button>}</td></tr>)}</tbody></table></div>
+   <div className="table-wrap"><table className="calculation-table"><thead><tr><th>Bend</th><th>Signed rotation °</th><th>Inside radius mm</th><th>Deduction mm</th><th>Value source</th></tr></thead><tbody>{panel.report.bends.map(b=><tr key={b.key}><td>{b.bend_ids.join(' / ')}<small>F{b.parent} → F{b.child}{b.angle!=null?` · detected / current ${b.angle.toFixed(3)}°`:''}</small></td>{(['angle','radius','deduction'] as const).map(field=><td key={field}><input type="number" step="any" aria-label={`${field} for ${b.bend_ids.join('/')}`} placeholder={field==='angle'?'Not established':settings[field].toString()} value={bendInputValue(b,settings,value,field)} onChange={e=>setBend(b.key,field,e.target.value)}/></td>)}<td><small>{Object.values(value.bend_parameters[b.key]??{}).some(v=>v!=null)?'Manual correction':b.confirmed?'Automatic after rebuild':b.angle!=null?'Drawing angle · panel radius/deduction':'Angle required'}</small>{Object.values(value.bend_parameters[b.key]??{}).some(v=>v!=null)&&<Button type="button" variant="ghost" size="sm" onClick={()=>onBendChange(b.key,null)}>Use automatic</Button>}</td></tr>)}</tbody></table></div>
   </details>}
   {!!panel.report.relief_circles?.length&&<details className="bend-overrides"><summary>Adjust corner-relief cuts</summary>
    <p>Enter the radius required by the approved shape. Blank restores the original DXF cut. These changes are recorded and included in the exported flat drawing.</p>

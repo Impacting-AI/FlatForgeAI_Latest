@@ -4,15 +4,17 @@ import { useEffect, useRef, useState } from 'react';
 import type { Panel, Settings } from './types';
 import { fileUrl } from './types';
 import type { ReviewValues } from './ReviewControls';
-import { calloutLayout, flatProjection, matchesHinge, polygonPath, reviewedBend } from './flat-pattern';
+import { calloutLayout, editableHinge, flatProjection, hingeAnchor, matchesHinge, polygonPath, reviewedBend } from './flat-pattern';
 import type { FlatExtraction, Point2 } from './flat-pattern';
+import { bendFields, bendInputValue, type BendChange } from './bend-review';
+import BendEditor from './BendEditor';
 import styles from './FlatPatternViewer.module.css';
 
 const number = (value: number | null, unit: string, signed = false) => value == null || !Number.isFinite(value)
   ? 'Not established' : `${signed && value > 0 ? '+' : ''}${value.toFixed(unit === '°' ? 3 : 2).replace(/\.000$/, '')}${unit === '°' ? '' : ' '}${unit}`;
 
-export default function FlatPatternViewer({ panel, settings, review, zoom }: {
-  panel: Panel; settings: Settings; review: ReviewValues; zoom: number;
+export default function FlatPatternViewer({ panel, settings, review, zoom, onBendChange }: {
+  panel: Panel; settings: Settings; review: ReviewValues; zoom: number; onBendChange: BendChange;
 }) {
   const [geometry, setGeometry] = useState<FlatExtraction | null>(null);
   const [error, setError] = useState('');
@@ -20,6 +22,11 @@ export default function FlatPatternViewer({ panel, settings, review, zoom }: {
   const [allValues, setAllValues] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [width, setWidth] = useState(820);
+  const [viewportHeight, setViewportHeight] = useState(560);
+  const [scroll, setScroll] = useState({ x: 0, y: 0 });
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editorNotice, setEditorNotice] = useState('');
+  const editorTrigger = useRef<SVGElement | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const url = `${fileUrl(panel, 'extraction.json')}?revision=${panel.revision}&updated=${panel.updated}`;
   const hasGeometry = panel.artifacts.includes('extraction.json');
@@ -41,7 +48,10 @@ export default function FlatPatternViewer({ panel, settings, review, zoom }: {
   useEffect(() => {
     const node = viewport.current;
     if (!node) return;
-    const observer = new ResizeObserver(entries => setWidth(entries[0].contentRect.width));
+    const observer = new ResizeObserver(entries => {
+      setWidth(entries[0].contentRect.width);
+      setViewportHeight(entries[0].contentRect.height);
+    });
     observer.observe(node);
     return () => observer.disconnect();
   }, [geometry]);
@@ -73,6 +83,26 @@ export default function FlatPatternViewer({ panel, settings, review, zoom }: {
   const faceName = (id: number) => geometry.faces.find(face => face.id === id)?.name ?? `F${id}`;
   const path = (points: Point2[]) => 'M ' + points.map(point => project(point).join(',')).join(' L ');
   const activeBend = bends.find(bend => bend.key === active?.key);
+  const editHinge = linked.find(hinge => hinge.key === editing);
+  const editBend = editHinge && editableHinge(geometry, bends, editHinge.key)
+    ? bends.find(bend => bend.key === editHinge.key) : undefined;
+  const editPoint = editHinge ? hingeAnchor(editHinge) : null;
+  const editAnchor = editPoint ? project(editPoint) : null;
+  const editTop = editAnchor ? Math.max(8, Math.min(viewportHeight - 410, editAnchor[1] * displayScale - scroll.y - 24)) : 8;
+  const editLeft = editAnchor && editAnchor[0] * displayScale - scroll.x > width / 2
+    ? Math.max(8, width - 288) : 8;
+  function openEditor(key: string, trigger: SVGElement) {
+    setSelected(key);
+    if (!editableHinge(geometry!, bends, key)) {
+      setEditing(null); setEditorNotice('This bend’s identity or location is uncertain. Rebuild the panel before editing it.'); return;
+    }
+    editorTrigger.current = trigger;
+    setEditorNotice(''); setEditing(key);
+  }
+  function closeEditor() {
+    setEditing(null);
+    if (editorTrigger.current?.isConnected) editorTrigger.current.focus({ preventScroll: true });
+  }
   const detail = activeBend ? reviewedBend(activeBend, settings, review) : null;
   const required = (field: 'radius' | 'deduction', key: string) => review.bend_parameters[key]?.[field] == null
     && review.parameter_overrides[field] == null && panel.report.parameter_resolution?.[field]?.needs_review;
@@ -84,9 +114,10 @@ export default function FlatPatternViewer({ panel, settings, review, zoom }: {
   return <div className={styles.viewer}>
     <div className={styles.options}>
       <label><input type="checkbox" checked={allValues} onChange={event => setAllValues(event.target.checked)}/>All bend values</label>
-      <p>Select a line or label to highlight its parent and child regions. Scroll to inspect; use zoom above.</p>
+      <p>Select a line or label to edit its bend values. Scroll to inspect; use zoom above.</p>
     </div>
-    <div className={styles.canvas} ref={viewport}>
+    <div className={styles.canvasShell}>
+    <div className={styles.canvas} ref={viewport} onScroll={event => setScroll({ x: event.currentTarget.scrollLeft, y: event.currentTarget.scrollTop })}>
       <svg className={styles.drawing} width={layoutWidth * displayScale} height={height * displayScale} viewBox={`0 0 ${layoutWidth} ${height}`} aria-label="Flat pattern with geometry-linked bend values">
         <path className={styles.outline} d={polygonPath(geometry.outline, project)} fillRule="evenodd"/>
         {geometry.faces.filter(face => face.id === active?.parent || face.id === active?.child).map(face => <path key={face.id} className={face.id === active?.parent ? styles.parent : styles.child} d={polygonPath(face.polygons, project)} fillRule="evenodd"/>)}
@@ -97,7 +128,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom }: {
           <path className={`${styles.leader} ${hinge.key === active?.key ? styles.activeLeader : ''}`} d={`M ${left ? x + 220 : x} ${y + cardHeight / 2} L ${left ? x + 232 : x - 12} ${y + cardHeight / 2} L ${anchor[0]} ${anchor[1]}`}/>
           <circle className={styles.anchor} cx={anchor[0]} cy={anchor[1]} r={3}/>
         </g>)}
-        {linked.map(hinge => <g key={hinge.key} onClick={() => setSelected(hinge.key)}>
+        {linked.map(hinge => <g key={hinge.key} tabIndex={-1} onClick={event => openEditor(hinge.key, event.currentTarget)}>
           {hinge.segments.map((segment, i) => <g key={i}>
             <path d={path(segment)} className={`${styles.hinge} ${hinge.key === active?.key ? styles.activeHinge : ''}`}/>
             <path d={path(segment)} className={styles.hit}><title>{hinge.bend_ids.join(' / ')} · {faceName(hinge.parent)} → {faceName(hinge.child)}</title></path>
@@ -116,7 +147,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom }: {
           return <g key={hinge.key} className={`${styles.card} ${hinge.key === active?.key ? styles.selected : ''}`}
             role="button" tabIndex={0} aria-pressed={hinge.key === active?.key}
             aria-label={`${title}, ${relation}, rotation ${rotation}, inside radius ${radius}, deduction ${deduction}${values.calibrated ? ' at 90 degrees' : ''}`}
-            onClick={() => setSelected(hinge.key)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelected(hinge.key); } }}>
+            onClick={event => openEditor(hinge.key, event.currentTarget)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openEditor(hinge.key, event.currentTarget); } }}>
             <title>{title} · {relation}</title>
             <rect x={x} y={y} width={220} height={cardHeight} rx={6}/>
             <text className={styles.title} x={x + 10} y={y + 18}>{title}</text>
@@ -131,7 +162,26 @@ export default function FlatPatternViewer({ panel, settings, review, zoom }: {
         })}
       </svg>
     </div>
+    {editBend && editHinge && <BendEditor
+      key={editBend.key + JSON.stringify([bendFields.map(field => bendInputValue(editBend, settings, review, field)), review.bend_parameters[editBend.key], settings.bend_model])}
+      bend={editBend}
+      names={`${faceName(editBend.parent)} → ${faceName(editBend.child)}`} settings={settings} review={review}
+      resolution={panel.report.parameter_resolution}
+      style={{ left: editLeft, top: editTop, maxHeight: viewportHeight - editTop - 8 }}
+      onCancel={closeEditor}
+      onApply={patch => {
+        if (!editableHinge(geometry, bends, editBend.key)) return;
+        if (Object.keys(patch).length) onBendChange(editBend.key, patch);
+        setEditorNotice('Bend review updated. Save & rebuild panel to apply it to the 3D model.'); closeEditor();
+      }}
+      onAutomatic={() => {
+        if (!editableHinge(geometry, bends, editBend.key)) return;
+        onBendChange(editBend.key, null);
+        setEditorNotice('Overrides cleared for this bend. Save & rebuild to detect its values again.'); closeEditor();
+      }}/>}
+    </div>
     <div className={styles.note} aria-live="polite">
+      {editorNotice && <p>{editorNotice}</p>}
       {active && detail && <p><strong>{active.bend_ids.join(' / ')} · {faceName(active.parent)} → {faceName(active.child)}</strong> — rotation {number(detail.angle, '°', true)} · inside radius {number(detail.radius, 'mm')} · deduction{detail.calibrated ? ' at 90°' : ''} {number(detail.deduction, 'mm')}. Parent is green; child is amber.</p>}
       <p>{draft ? 'Showing current review edits. Save & rebuild applies them to the 3D model.' : 'Values follow the current panel and individual bend settings.'} {linked.some(b => required('radius', b.key) || required('deduction', b.key)) && '* This panel value still needs review.'}</p>
       {bends.length !== linked.length && <p>Some bend locations do not match this extraction. Rebuild the panel to refresh the geometry; unmatched bends are not placed by guesswork.</p>}

@@ -61,6 +61,19 @@ export function matchesHinge(hinge: FlatHinge, bend: Bend) {
     && hinge.bend_ids.every(id => bend.bend_ids.includes(id));
 }
 
+/** Editing requires one verified identity, actual line segments and both faces. */
+export function editableHinge(geometry: FlatExtraction, bends: Bend[], key: string) {
+  const hinges = geometry.bends.filter(hinge => hinge.key === key);
+  const rows = bends.filter(bend => bend.key === key);
+  if (hinges.length !== 1 || rows.length !== 1) return false;
+  const hinge = hinges[0];
+  return matchesHinge(hinge, rows[0]) && hinge.parent !== hinge.child
+    && [hinge.parent, hinge.child].every(id => geometry.faces.filter(face => face.id === id).length === 1)
+    && hinge.segments.length > 0
+    && hinge.segments.every(segment => segment.length >= 2 && segment.every(point => point.length === 2 && point.every(Number.isFinite)))
+    && hingeAnchor(hinge) !== null;
+}
+
 export function flatProjection(bounds: FlatExtraction['bounds'], width: number, height: number, insetX = 250) {
   const [minX, minY, maxX, maxY] = bounds;
   const scale = Math.min((width - 2 * insetX) / (maxX - minX), (height - 64) / (maxY - minY));
