@@ -43,8 +43,15 @@
 .face-sel{border:1px solid #d3e0d9;border-radius:4px;padding:3px 4px;font-size:9px;background:white;color:#446b5a;max-width:80px}
 .target-sel{border:1px solid #d3e0d9;border-radius:4px;padding:3px 4px;font-size:9px;background:white;color:#446b5a;max-width:60px}
 .conn-arrow{color:#9ab5aa}
-.asm-gap-row{display:flex;align-items:center;gap:5px;font-size:10px;color:#7a948a;margin-top:8px}
-.asm-gap-row input{width:52px;border:1px solid #d3e0d9;border-radius:4px;padding:3px 6px;font-size:10px;background:white}
+.asm-spacing{border-top:1px solid #e0e9e3;margin-top:10px;padding-top:8px}
+.asm-spacing-heading{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#446b5a}
+.asm-spacing-heading button{border:0;background:none;color:#0d6e62;font-size:10px;cursor:pointer;padding:3px}
+.asm-spacing-field{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px;font-size:10px;color:#607870;margin-top:8px}
+.asm-spacing-input{display:flex;align-items:center;gap:4px}
+.asm-spacing-input input{width:76px;max-width:100%;border:1px solid #d3e0d9;border-radius:4px;padding:5px;font-size:11px;background:white;color:#304d43}
+.asm-spacing-input input[aria-invalid=true]{border-color:#b52c36}
+.asm-spacing-error{color:#b52c36;flex-basis:100%;font-size:10px;line-height:1.5}
+.asm-spacing-note{font-size:9px;line-height:1.6;color:#607870;margin:8px 0 0}
 .asm-add-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:10px;border:1px dashed #b6cdc4;border-radius:6px;background:none;font-size:11px;color:#5a8577;cursor:pointer;margin-top:4px}
 .asm-add-btn:hover:not(:disabled){background:#f1f7f4;border-color:#78b09c;color:#37674f}
 .asm-add-btn:disabled{opacity:.45;cursor:not-allowed}

@@ -18,6 +18,9 @@ import FlatPatternViewer from './FlatPatternViewer';
 import { applyBendReview, reviewError, type BendChange } from './bend-review';
 import ReviewControls from './ReviewControls';
 import { emptyReview, savedReview, type ReviewValues } from './review-state';
+import AssemblySpacing, { AssemblyNumber } from './AssemblySpacing';
+import { DEFAULT_ASSEMBLY_GAP_MM, removeAssemblyBranch, setAssemblyTargetFace } from './assembly-geometry';
+import { useAssemblyState } from './useAssemblyState';
 import AssemblyViewer, { AssemblyViewerHandle, ClashResult } from './AssemblyViewer';
 import { AssemblyEntry, Bootstrap, Face, Panel, Settings, api, fileUrl } from './types';
 const FACES:[Face,string][]=[
@@ -46,8 +49,9 @@ export default function FlatForge(){
  const [deleteTarget,setDeleteTarget]=useState<{kind:'projects'|'panels';id:string;name:string}|null>(null);const [drawingName,setDrawingName]=useState('');const [replacement,setReplacement]=useState<File|null>(null);
  const [defaults,setDefaults]=useState<Settings>({thickness:2,radius:2,deduction:4,input_type:'flat_pattern'});const [panelSettings,setPanelSettings]=useState(defaults);const [reviewValues,setReviewValues]=useState<ReviewValues>(emptyReview);const [confirm,setConfirm]=useState(false),[partial,setPartial]=useState(false),[relief,setRelief]=useState(false);const [logs,setLogs]=useState<{revision:number;log:string;status:string}[]>([]);
  const [fraction,setFraction]=useState(1),[playing,setPlaying]=useState(false),[paint,setPaint]=useState(true),[wire,setWire]=useState(false),[view3d,setView3d]=useState('iso');const [hover,setHover]=useState<string|null>(null);const [assembly,setAssembly]=useState(false),[compare,setCompare]=useState<string[]>([]),[gap,setGap]=useState(100),[alignment,setAlignment]=useState('center');const [zoom,setZoom]=useState(1);
- const [asmEntries,setAsmEntries]=useState<AssemblyEntry[]>([]);
- const [addPanelId,setAddPanelId]=useState('');const [addTargetId,setAddTargetId]=useState('');const [addMyFace,setAddMyFace]=useState<Face>('-X');const [addTargetFace,setAddTargetFace]=useState<Face>('+X');const [addGap,setAddGap]=useState(10);
+ const [asmEntries,setAsmEntries,asmStorageError]=useAssemblyState(projectId);
+ const [asmReady,setAsmReady]=useState(false);
+ const [addPanelId,setAddPanelId]=useState('');const [addTargetId,setAddTargetId]=useState('');const [addMyFace,setAddMyFace]=useState<Face>('-X');const [addTargetFace,setAddTargetFace]=useState<Face>('+X');const [addGap,setAddGap]=useState(DEFAULT_ASSEMBLY_GAP_MM);
  const asmViewRef=useRef<AssemblyViewerHandle|null>(null);
  const [clashResults,setClashResults]=useState<ClashResult[]|null>(null);
  const [clashRunning,setClashRunning]=useState(false);
@@ -58,18 +62,18 @@ export default function FlatForge(){
  useEffect(()=>{setPlaying(false);setFraction(1);if(panel){setPanelSettings(panel.settings);setReviewValues(savedReview(panel));setPartial(panel.overrides.accept_partial_sections===true);setRelief(panel.overrides.accept_relief_extensions===true);setConfirm(panel.overrides.confirm_parameters===true);setZoom(1)}},[panel?.id,panel?.revision,panel?.status]);
  useEffect(()=>{if(!playing)return;let raf=0;const started=performance.now();function step(t:number){const p=Math.min(1,(t-started)/2400);setFraction(p*p*(3-2*p));if(p<1)raf=requestAnimationFrame(step);else setPlaying(false)}setFraction(0);raf=requestAnimationFrame(step);return()=>cancelAnimationFrame(raf)},[playing]);
  useEffect(()=>{if(dialog!=='logs'||!panel||panel.sample)return;let cancelled=false;const id=setInterval(async()=>{try{const r=await api<{jobs:{revision:number;log:string;status:string}[]}>(`/panels/${panel.id}/log`,undefined,'GET');if(!cancelled)setLogs(r.jobs)}catch{/* Initial errors are shown by showLogs. */}},2000);return()=>{cancelled=true;clearInterval(id)}},[dialog,panel?.id]);
- const chooseProject=(id:string)=>{setProjectId(id);setPanelId(data?.panels.find(p=>p.project_id===id)?.id||'');setCompare([]);setAssembly(false);setAsmEntries([]);setTab('panels');setScreen('workspace')};
+ const chooseProject=(id:string)=>{setProjectId(id);setPanelId(data?.panels.find(p=>p.project_id===id)?.id||'');setCompare([]);setAssembly(false);setTab('panels');setScreen('workspace')};
  const goHome=()=>{setScreen('home')};
  function asmAddEntry(){if(!addPanelId)return;const isRoot=asmEntries.length===0;setAsmEntries(prev=>[...prev,{id:Math.random().toString(36).slice(2,8),panelId:addPanelId,myFace:addMyFace,targetId:isRoot?null:addTargetId||null,targetFace:isRoot?null:addTargetFace,gap:addGap}]);setDialog(null);setAddPanelId('');}
- function asmRemove(id:string){setAsmEntries(prev=>prev.filter(e=>e.id!==id&&e.targetId!==id));}
+ function asmRemove(id:string){setAsmEntries(prev=>removeAssemblyBranch(prev,id));}
  function asmSetMyFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,myFace:f}:e));}
- function asmSetTargetFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,targetFace:f}:e));}
+ function asmSetTargetFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?setAssemblyTargetFace(e,f):e));}
  function asmSetTarget(id:string,targetId:string){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,targetId}:e));}
- function asmSetGap(id:string,g:number){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,gap:Math.max(0,g)}:e));}
+ function asmUpdateEntry(entry:AssemblyEntry){setAsmEntries(prev=>prev.map(e=>e.id===entry.id?entry:e));}
  // Clear clash results whenever the assembly configuration changes
  useEffect(()=>{setClashResults(null);asmViewRef.current?.clearClash();},[asmEntries]);
  async function runClashCheck(){
-  if(!asmViewRef.current||asmEntries.length<2) return;
+  if(!asmViewRef.current||!asmReady||asmEntries.length<2) return;
   setClashRunning(true);setClashResults(null);asmViewRef.current.clearClash();
   await new Promise(r=>setTimeout(r,60)); // yield so UI shows "Checking…"
   const results=asmViewRef.current.runClash();
@@ -248,17 +252,19 @@ export default function FlatForge(){
          {asmEntries.slice(0,i).map((e2,j)=>{const p2=ready.find(p=>p.id===e2.panelId);return <option key={e2.id} value={e2.id}>{String.fromCharCode(65+j)} · {p2?.filename.replace(/\.(dxf|dwg)$/i,'')}</option>;})}
         </select>
        </div>}
-      {entry.targetId!==null&&<div className="asm-gap-row">Gap <input type="number" min={0} step={1} value={entry.gap} onChange={e=>asmSetGap(entry.id,Number(e.target.value))}/> mm</div>}
+      {entry.targetId!==null&&<AssemblySpacing entry={entry} onChange={asmUpdateEntry}/>}
      </div>
     );
    })}
-   <button className="asm-add-btn" disabled={!ready.length} onClick={()=>{setAddPanelId('');setAddTargetId(asmEntries[asmEntries.length-1]?.id||'');setAddMyFace('-X');setAddTargetFace('+X');setDialog('assembly_add');}}><Plus size={15}/>{asmEntries.length===0?'Add first panel':'Add next panel'}</button>
+   <button className="asm-add-btn" disabled={!ready.length} onClick={()=>{setAddPanelId('');setAddTargetId(asmEntries[asmEntries.length-1]?.id||'');setAddMyFace('-X');setAddTargetFace('+X');setAddGap(DEFAULT_ASSEMBLY_GAP_MM);setDialog('assembly_add');}}><Plus size={15}/>{asmEntries.length===0?'Add first panel':'Add next panel'}</button>
    {!ready.length&&<p className="asm-hint">Process panels to completion (PASS) to enable assembly.</p>}
+   <p className="asm-hint">Layouts save in this browser per project. Export assembly GLB from the viewer; STEP/STL exports remain individual panels.</p>
+   {asmStorageError&&<p role="alert" className="asm-spacing-error">{asmStorageError}</p>}
    {asmEntries.length>1&&<div className="asm-summary"><span>{asmEntries.length} panels</span><span>·</span><span>{asmEntries.length-1} connection{asmEntries.length>2?'s':''}</span></div>}
   </div>
   {/* 3D viewer */}
   <div className="asm-viewer-wrap">
-   <AssemblyViewer ref={asmViewRef} entries={asmEntries} panels={ready} paint={paint} wire={wire}/>
+   <AssemblyViewer key={projectId} onReadyChange={setAsmReady} ref={asmViewRef} entries={asmEntries} panels={ready} paint={paint} wire={wire}/>
   </div>
   {/* Right: face reference */}
   <div className="asm-inspector">
@@ -276,7 +282,7 @@ export default function FlatForge(){
     <label><Checkbox checked={wire} onCheckedChange={c=>setWire(c===true)}/>Wireframe</label>
    </div>
    <p className="inspector-section" style={{marginTop:22}}>CLASH DETECTION</p>
-   <Button size="sm" variant="outline" className="clash-check-btn" disabled={asmEntries.length<2||clashRunning} onClick={runClashCheck}>
+   <Button size="sm" variant="outline" className="clash-check-btn" disabled={!asmReady||asmEntries.length<2||clashRunning} onClick={runClashCheck}>
     {clashRunning?<LoaderCircle size={13} className="spin"/>:<ScanLine size={13}/>}
     {clashRunning?'Checking…':'Run clash check'}
    </Button>
@@ -309,7 +315,8 @@ export default function FlatForge(){
    <ol className="asm-how">
     <li>Add the <strong>root panel</strong> — it anchors the assembly at the origin.</li>
     <li>Add each <strong>next panel</strong>, pick which face of the new panel meets which face of an existing panel.</li>
-    <li>Set the <strong>gap</strong> in mm (sealant / structural gap between faces).</li>
+    <li>Set the connection <strong>gap</strong> and two axis <strong>offsets</strong> in mm. Choose Top / Bottom for vertical stacking, or Front / Back for depth spacing.</li>
+    <li>Gap measures bounding-plane separation, not the shortest surface clearance of folded or rotated panels. Panels keep their original orientation.</li>
     <li>Edit any connection inline, or remove and re-add a panel to change it.</li>
    </ol>
   </div>
@@ -346,7 +353,7 @@ export default function FlatForge(){
     <span className="face-row-arrow">→</span>
     <div className="field"><Label>Target panel's mating face</Label><FacePicker value={addTargetFace} onChange={setAddTargetFace}/></div>
    </div>
-   <div className="field"><Label>Gap between faces</Label><div className="unit-input"><Input type="number" min={0} step={1} value={addGap} onChange={e=>setAddGap(Math.max(0,Number(e.target.value)))}/><span>mm</span></div></div>
+   <AssemblyNumber label="Connection gap (bounding planes)" min={0} value={addGap} onChange={setAddGap}/>
   </>}
   <Button disabled={!addPanelId||(asmEntries.length>0&&!addTargetId)} onClick={asmAddEntry}><Plus/>Add to assembly</Button>
  </>}

@@ -2,27 +2,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { Camera, LoaderCircle, Maximize2, Box } from 'lucide-react';
+import { Camera, LoaderCircle, Maximize2, Box, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { AssemblyEntry, Face, Panel, fileUrl } from './types';
-
-// ── Geometry helpers ──────────────────────────────────────────────────────────
-const NORMALS: Record<Face, THREE.Vector3> = {
- '+X':new THREE.Vector3(1,0,0),'-X':new THREE.Vector3(-1,0,0),
- '+Y':new THREE.Vector3(0,1,0),'-Y':new THREE.Vector3(0,-1,0),
- '+Z':new THREE.Vector3(0,0,1),'-Z':new THREE.Vector3(0,0,-1),
-};
-function faceOff(face:Face,hs:THREE.Vector3):THREE.Vector3{
- switch(face){
-  case'+X':return new THREE.Vector3(hs.x,0,0);
-  case'-X':return new THREE.Vector3(-hs.x,0,0);
-  case'+Y':return new THREE.Vector3(0,hs.y,0);
-  case'-Y':return new THREE.Vector3(0,-hs.y,0);
-  case'+Z':return new THREE.Vector3(0,0,hs.z);
-  case'-Z':return new THREE.Vector3(0,0,-hs.z);
- }
-}
+import { AssemblyEntry, Panel, fileUrl } from './types';
+import { assemblyModel, assemblyPlacements } from './assembly-geometry';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 export type ClashResult = {
@@ -46,13 +31,14 @@ type Props = {
  panels: Panel[];
  paint: boolean;
  wire: boolean;
+ onReadyChange: (ready:boolean) => void;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({entries,panels,paint,wire},ref){
+ function AssemblyViewer({entries,panels,paint,wire,onReadyChange},ref){
   const host = useRef<HTMLDivElement>(null);
-  const viewApi = useRef<{fit:()=>void;screenshot:()=>void}|null>(null);
+  const viewApi = useRef<{fit:()=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
   const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
   const runClashRef = useRef<()=>ClashResult[]>(()=>[]);
   const clearClashRef = useRef<()=>void>(()=>{});
@@ -61,6 +47,12 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   const wireLatest = useRef(wire);
   const [msg,setMsg] = useState('');
   const [err,setErr] = useState(false);
+  const [ready,setReady] = useState(false);
+  const [exporting,setExporting] = useState(false);
+  const entriesLatest = useRef(entries);
+  const layoutRef = useRef<(()=>void)|null>(null);
+  useEffect(()=>{entriesLatest.current=entries;layoutRef.current?.();},[entries]);
+  useEffect(()=>{onReadyChange(ready);},[ready,onReadyChange]);
 
   // Keep latest-value refs up to date without triggering re-mount
   useEffect(()=>{ paintLatest.current=paint; wireLatest.current=wire; },[paint,wire]);
@@ -71,13 +63,15 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    clearClash: ()=>clearClashRef.current(),
   }),[]);
 
-  // Re-mount Three.js scene only when panel set / connections change
-  const key = entries.map(e=>`${e.id}:${e.panelId}:${e.myFace}:${e.targetId}:${e.targetFace}:${e.gap}`).join('|');
+  // Reload models only when panel artifacts change. Spacing/connections preserve the camera.
+  const key = entries.map(e=>{const panel=panels.find(p=>p.id===e.panelId);return `${e.id}:${e.panelId}:${panel?.revision}:${panel?fileUrl(panel,'panel.glb'):''}`;}).join('|');
 
   useEffect(()=>{
+   setReady(false);
    if(!entries.length){
     setMsg('');
     applyRef.current=null;
+    layoutRef.current=null;
     runClashRef.current=()=>[];
     clearClashRef.current=()=>{};
     return;
@@ -107,51 +101,36 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
    const panelMap=new Map(panels.map(p=>[p.id,p]));
    const loader=new GLTFLoader();
-   type Item={group:THREE.Group;localCenter:THREE.Vector3;halfSize:THREE.Vector3};
+   type Item={group:THREE.Group;bounds:THREE.Box3};
    const items=new Map<string,Item>();
    const clashOverlays:THREE.Object3D[]=[];
+   const originalColours=new Map<THREE.Material,THREE.Color>();
 
    Promise.all(entries.map(async entry=>{
     const panel=panelMap.get(entry.panelId);
     if(!panel) throw new Error('Panel not found');
     const gltf=await loader.loadAsync(fileUrl(panel,'panel.glb'));
     if(!alive) return;
-    const group=gltf.scene;
-    group.scale.setScalar(.001);
-    group.updateMatrixWorld(true);
-    const bounds=new THREE.Box3().setFromObject(group);
-    const localCenter=bounds.getCenter(new THREE.Vector3());
-    const halfSize=bounds.getSize(new THREE.Vector3()).multiplyScalar(.5);
-    scene.add(group);
-    items.set(entry.id,{group,localCenter,halfSize});
+    const item=assemblyModel(gltf.scene);
+    item.group.name=`Assembly ${entry.id}`;
+    item.group.userData={entryId:entry.id,panelId:entry.panelId};
+    item.group.traverse(o=>{if(o instanceof THREE.Mesh) for(const mat of Array.isArray(o.material)?o.material:[o.material])
+     if(mat instanceof THREE.MeshStandardMaterial) originalColours.set(mat,mat.color.clone());});
+    scene.add(item.group);
+    items.set(entry.id,item);
    })).then(()=>{
     if(!alive) return;
 
     // ── Position panels from connection tree ──────────────────────────────
-    const worldCenter=new Map<string,THREE.Vector3>();
-    for(const entry of entries){
-     const item=items.get(entry.id);
-     if(!item) continue;
-     if(entry.targetId===null){
-      worldCenter.set(entry.id,new THREE.Vector3(0,0,item.halfSize.z));
-     } else {
-      const tItem=items.get(entry.targetId);
-      const tWC=worldCenter.get(entry.targetId);
-      if(!tItem||!tWC||!entry.targetFace) continue;
-      const tFacePos=tWC.clone().add(faceOff(entry.targetFace,tItem.halfSize));
-      const normal=NORMALS[entry.targetFace].clone();
-      const myOff=faceOff(entry.myFace,item.halfSize);
-      const wc=tFacePos.clone().addScaledVector(normal,entry.gap/1000).sub(myOff);
-      if(entry.targetFace!=='+Z'&&entry.targetFace!=='-Z'&&entry.myFace!=='+Z'&&entry.myFace!=='-Z'){
-       wc.z=item.halfSize.z; // keep panels resting on ground for lateral connections
-      }
-      worldCenter.set(entry.id,wc);
-     }
+    function layout(){
+     try {
+      clearClash();
+      const placements=assemblyPlacements(entriesLatest.current,new Map([...items].map(([id,item])=>[id,item.bounds])));
+      for(const [id,placement] of placements){const group=items.get(id)!.group;group.position.copy(placement.translation);group.updateMatrixWorld(true);}
+      setMsg('');setErr(false);setReady(true);
+     } catch(error) {setMsg((error as Error).message);setErr(true);setReady(false);}
     }
-    for(const[id,wc]of worldCenter){
-     const item=items.get(id);
-     if(item) item.group.position.copy(wc.clone().sub(item.localCenter));
-    }
+    layoutRef.current=layout;
 
     // ── Paint / wireframe ─────────────────────────────────────────────────
     function doApply(p:boolean,w:boolean){
@@ -160,6 +139,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
        if(o instanceof THREE.Mesh){
         for(const mat of Array.isArray(o.material)?o.material:[o.material]){
          if('wireframe' in mat)(mat as THREE.MeshStandardMaterial).wireframe=w;
+         if(mat instanceof THREE.MeshStandardMaterial&&originalColours.has(mat)) mat.color.copy(originalColours.get(mat)!);
          if(mat instanceof THREE.MeshStandardMaterial&&o.name.includes('_paint'))
           mat.color.set(p?0x39a88e:0xb7c5c7);
         }
@@ -168,13 +148,13 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      }
     }
     applyRef.current=doApply;
-    doApply(paint,wire);
+    doApply(paintLatest.current,wireLatest.current);
 
     // ── Clash detection ───────────────────────────────────────────────────
     function runClash():ClashResult[]{
      const results:ClashResult[]=[];
      const ray=new THREE.Raycaster();
-     const entryList=entries.filter(e=>items.has(e.id));
+     const entryList=entriesLatest.current.filter(e=>items.has(e.id));
      // Two orthogonal test directions for inside-solid parity test
      const DIRS=[new THREE.Vector3(1,0,0),new THREE.Vector3(0,1,0)];
 
@@ -296,10 +276,21 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     }
     viewApi.current={
      fit,
-     screenshot:()=>{renderer.render(scene,camera);const a=document.createElement('a');a.href=renderer.domElement.toDataURL('image/png');a.download='FlatForge_Assembly.png';a.click();}
+     screenshot:()=>{renderer.render(scene,camera);const a=document.createElement('a');a.href=renderer.domElement.toDataURL('image/png');a.download='FlatForge_Assembly.png';a.click();},
+     exportGLB:async()=>{
+      const snapshot=new THREE.Scene();
+      snapshot.userData={units:'metres',source_units:'mm',assemblyEntries:entriesLatest.current};
+      for(const entry of entriesLatest.current) snapshot.add(items.get(entry.id)!.group.clone(true));
+      snapshot.updateMatrixWorld(true);
+      const result=await new GLTFExporter().parseAsync(snapshot,{binary:true});
+      if(!(result instanceof ArrayBuffer)) throw new Error('Assembly export failed.');
+      const url=URL.createObjectURL(new Blob([result],{type:'model/gltf-binary'}));
+      const a=document.createElement('a');a.href=url;a.download='FlatForge_Assembly.glb';a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+     }
     };
-    fit(); setMsg('');
-   }).catch(()=>{if(alive){setMsg('Could not load one or more panels.');setErr(true);}});
+    layout(); fit();
+   }).catch(error=>{if(alive){setMsg(`Could not load assembly: ${(error as Error).message}`);setErr(true);setReady(false);}});
 
    const resize=new ResizeObserver(()=>{const w=root.clientWidth,h=root.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();});
    resize.observe(root);
@@ -309,6 +300,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    return()=>{
     alive=false; cancelAnimationFrame(frame); resize.disconnect(); controls.dispose();
     applyRef.current=null;
+    layoutRef.current=null;
     runClashRef.current=()=>[];
     clearClashRef.current=()=>{};
     scene.traverse(o=>{if(o instanceof THREE.Mesh){o.geometry.dispose();for(const m of Array.isArray(o.material)?o.material:[o.material])m.dispose();}});
@@ -321,12 +313,13 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   useEffect(()=>{applyRef.current?.(paint,wire);},[paint,wire]);
 
   return(
-   <div className="viewer-stage">
+   <div className="viewer-stage" data-assembly-ready={ready}>
     <div ref={host} className="webgl-host"/>
     {msg&&<div className="viewer-loading">{err?<Box/>:<LoaderCircle className="spin"/>}<span>{msg}</span></div>}
     {!entries.length&&!msg&&<div className="viewer-empty"><Box size={42}/><h3>Assembly is empty</h3><p>Add panels on the left and define how their faces connect.</p></div>}
     <div className="viewport-actions">
      <Button variant="outline" size="icon" aria-label="Fit to view" onClick={()=>viewApi.current?.fit()}><Maximize2/></Button>
+     <Button variant="outline" size="icon" aria-label="Export assembly GLB" title="Export assembly GLB (metres)" disabled={!ready||exporting} onClick={async()=>{setExporting(true);try{await viewApi.current?.exportGLB();}catch(error){setMsg((error as Error).message);setErr(true);}finally{setExporting(false);}}}>{exporting?<LoaderCircle className="spin"/>:<Download/>}</Button>
      <Button variant="outline" size="icon" aria-label="Screenshot" onClick={()=>viewApi.current?.screenshot()}><Camera/></Button>
     </div>
     <div className="axis-key"><span className="x">X</span><span className="y">Y</span><span className="z">Z</span><small>mm</small></div>
