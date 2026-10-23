@@ -52,6 +52,22 @@
 .asm-spacing-input input[aria-invalid=true]{border-color:#b52c36}
 .asm-spacing-error{color:#b52c36;flex-basis:100%;font-size:10px;line-height:1.5}
 .asm-spacing-note{font-size:9px;line-height:1.6;color:#607870;margin:8px 0 0}
+.drawing-source-card{border:1px solid #d8e2df;border-radius:9px;padding:24px;background:#fff}
+.project-drawings{margin:0 34px}
+@media(max-width:1200px){.project-drawings{margin:0 23px}}
+@media(max-width:600px){.project-drawings{margin:0 15px}}
+.drawing-source-card .heading-actions,.page-heading>.heading-actions{flex-wrap:wrap}
+.source-summary{display:flex;gap:18px;align-items:flex-start;padding:18px 0;color:#416758}
+.source-summary h3{font-size:17px;color:#244d3e;margin:0 0 7px;overflow-wrap:anywhere}
+.source-summary p{font-size:12px;line-height:1.7;margin:4px 0;color:#647b72}
+.source-facts{display:flex;flex-wrap:wrap;gap:16px 36px;margin:0 0 24px;font-size:12px}
+.source-facts dt{color:#7a938b;margin-bottom:5px}.source-facts dd{margin:0;color:#304d43}
+.breadcrumb-step{font-size:10px;color:#789084;white-space:nowrap}
+.selected-drawing-name{font-size:13px;overflow-wrap:anywhere}
+.review-unsaved,.review-conflict{font-size:12px;line-height:1.7;padding:10px 14px;background:#fff8e8;border:1px solid #ead6a5;border-radius:5px;color:#785f23}
+.review-conflict button{color:#0d6e62;text-decoration:underline}
+.manual-entry button{font-size:10px;height:28px}
+@media(max-width:700px){.drawing-source-card{padding:16px}.breadcrumb{flex-wrap:wrap;gap:5px}.breadcrumb strong{overflow-wrap:anywhere}.source-summary{gap:10px}.source-facts{flex-direction:column;gap:12px}.workflow-tabs{overflow-x:auto;justify-content:flex-start}.workflow-tabs [data-slot=tabs-trigger]{flex-shrink:0}}
 .asm-add-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:10px;border:1px dashed #b6cdc4;border-radius:6px;background:none;font-size:11px;color:#5a8577;cursor:pointer;margin-top:4px}
 .asm-add-btn:hover:not(:disabled){background:#f1f7f4;border-color:#78b09c;color:#37674f}
 .asm-add-btn:disabled{opacity:.45;cursor:not-allowed}

@@ -11,7 +11,11 @@ export type Panel={id:string;project_id:string;filename:string;status:string;set
 export type Project={id:string;name:string;client:string;created:number};
 export type Bootstrap={mode:'sample'|'live';settings:Settings;projects:Project[];panels:Panel[];service_message?:string;capabilities:{connected:boolean;worker_online:boolean;dwg:boolean;max_upload_mb:number;drawing_tolerances_enforced?:boolean;exports?:string[]}};
 export const fileUrl=(p:Panel,name:string)=>p.sample?`${p.asset_base}/${name}`:`/api/engine/panels/${p.id}/files/${encodeURIComponent(name)}`;
-export async function api<T=Record<string,unknown>>(path:string,body?:unknown,method='POST'):Promise<T>{
- const form=body instanceof FormData;const r=await fetch('/api/engine'+path,{method,headers:form?undefined:{'content-type':'application/json'},body:body===undefined?undefined:form?body:JSON.stringify(body)});
+export async function api<T=Record<string,unknown>>(path:string,body?:unknown,method='POST',projectId?:string):Promise<T>{
+ const form=body instanceof FormData;const r=await fetch('/api/engine'+path,{method,headers:{...(!form?{'content-type':'application/json'}:{}),...(projectId?{'x-flatforge-project-id':projectId}:{})},body:body===undefined?undefined:form?body:JSON.stringify(body)});
  if(!r.ok){let data:{detail:unknown};try{data=await r.json() as {detail:unknown}}catch{data={detail:'Request failed'}}throw new Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail))}return r.json() as Promise<T>;
+}
+export function panelApi<T=Record<string,unknown>>(panel:Panel,suffix:string,body?:unknown,method='POST'):Promise<T>{
+ if(!panel?.id||!panel.project_id)throw new Error('Select a drawing in its project first.');
+ return api<T>(`/panels/${encodeURIComponent(panel.id)}${suffix}`,body,method,panel.project_id);
 }

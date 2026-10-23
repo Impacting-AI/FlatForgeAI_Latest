@@ -42,7 +42,7 @@ try {
   const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('flatforge.assemblies.v1')));
   async function openProject(name = project.name) {
     await page.getByRole('button', { name: 'Open ' + name, exact: true }).click();
-    await page.getByRole('tab', { name: /06.*Assembly/ }).click();
+    await page.getByRole('button', { name: '06 Assembly drawings', exact: true }).click();
   }
   async function loaded() { await page.locator('[data-assembly-ready="true"]').waitFor({ timeout: 45000 }); }
   async function add(panel, first = false) {
@@ -103,7 +103,8 @@ try {
   await page.getByRole('button', { name: 'Fit to view', exact: true }).click();
   await page.locator('.asm-studio').screenshot({ path: path.join(output, 'assembly-desktop.png') });
   const saved = (await stored()).projects[project.id];
-  await page.reload({ waitUntil: 'networkidle' }); await openProject(); await loaded();
+  await page.reload({ waitUntil: 'networkidle' }); await loaded();
+  assert.equal(new URL(page.url()).pathname, `/projects/${project.id}/assembly`);
   assert.equal(await entries.count(), 3);
   assert.equal(await field(1, vertical).inputValue(), '50');
   assert.deepEqual((await stored()).projects[project.id], saved);

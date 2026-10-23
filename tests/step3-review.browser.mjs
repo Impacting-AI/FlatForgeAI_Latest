@@ -29,6 +29,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.FLATFORGE_CHROMIUM || undefined,
     headless: true, args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  page.on('dialog', dialog => dialog.accept()); // Explicitly discard drafts when this regression switches drawings.
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const sample = JSON.parse(fs.readFileSync(path.join(root, 'lib/sample-data.json')));
@@ -55,14 +56,17 @@ try {
   const card = bend => drawing.locator('g[role="button"]')
     .filter({ hasText: `F${bend.parent} → F${bend.child}` }).filter({ hasText: 'Bend ' + bend.bend_ids.join(' / ') });
   const materialRule = page.getByRole('checkbox', { name: 'Use material defaults when the drawing does not establish a value' });
-  async function select(panel) {
-    await page.getByLabel('Panel to review').selectOption(panel.id);
+  async function select(panel, expectedBends = panel.report.bends.length) {
+    if (await page.getByRole('button', { name: 'Project Drawings', exact: true }).count()) await page.getByRole('button', { name: 'Project Drawings', exact: true }).click();
+    await page.getByRole('button', { name: 'Open drawing ' + panel.filename, exact: true }).click();
+    await page.getByRole('tab', { name: /Extract/ }).click();
     await drawing.waitFor();
-    await page.waitForFunction(count => document.querySelectorAll('svg[aria-label="Flat pattern with geometry-linked bend values"] g[role="button"]').length === count, panel.report.bends.length);
+    await page.waitForFunction(count => document.querySelectorAll('svg[aria-label="Flat pattern with geometry-linked bend values"] g[role="button"]').length === count, expectedBends);
   }
-  async function reviewPage() {
-    await page.getByRole('button', { name: 'Open ' + sample.projects[0].name, exact: true }).click();
-    await page.getByRole('tab', { name: /Extract/ }).click(); await select(target);
+  async function reviewPage(expectedBends = target.report.bends.length) {
+    const openProject = page.getByRole('button', { name: 'Open ' + sample.projects[0].name, exact: true });
+    if (new URL(page.url()).pathname === '/') await openProject.click();
+    await select(target, expectedBends);
   }
   async function open(bend) {
     await card(bend).click(); await editor.waitFor();
@@ -199,8 +203,7 @@ try {
     geometry.bends[0].child = 999; await route.fulfill({ json: geometry });
   });
   target.revision++; await page.reload({ waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: 'Open ' + sample.projects[0].name, exact: true }).click();
-  await page.getByRole('tab', { name: /Extract/ }).click(); await drawing.waitFor();
+  await reviewPage(target.report.bends.length - 1); await drawing.waitFor();
   assert.equal(await card(first).count(), 0); assert.equal(await editor.count(), 0);
   assert.equal(errors.length, 0, JSON.stringify(errors));
   console.log('PASS: 53 source mappings; removed circled controls/text; automatic section recovery; empty-note rebuild; automatic restore; global defaults; viewer editing and validation; shared state; hidden relief persistence; true/false fallback settings; save/reload; missing values; repeated IDs; zoom/pan; mobile bounds; uncertain identity.');

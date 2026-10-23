@@ -2,7 +2,7 @@ import os, json, time, uuid, tempfile, hashlib, hmac, zipfile, shutil
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Literal
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field, ConfigDict, field_validator, ValidationError
 from sqlalchemy import select, func, update
@@ -24,9 +24,17 @@ async def lifespan(app):
  except IntegrityError:pass
  yield
 app=FastAPI(title='FlatForge CAD API',version='1.1.0',lifespan=lifespan)
-def auth(x_flatforge_key:str=Header(default='')):
+def auth(request:Request,x_flatforge_key:str=Header(default=''),x_flatforge_project_id:str|None=Header(default=None)):
  expected=os.getenv('FLATFORGE_API_KEY','')
  if not expected or not hmac.compare_digest(x_flatforge_key,expected):raise HTTPException(401,'Authentication required')
+ # Current clients send their route's project context. Check it before any
+ # panel read/write; retain compatibility with existing workspace API clients.
+ if x_flatforge_project_id is not None and request.url.path.startswith('/panels/'):
+  with Session() as s:
+   panel=s.get(Panel,request.path_params.get('id'))
+   project=s.get(Project,x_flatforge_project_id)
+   if not panel or panel.project_id!=x_flatforge_project_id or not project or project.deleted_at is not None:
+    raise HTTPException(404,'Drawing is not available in this project')
 def get_panel(s,id):
  p=s.get(Panel,id)
  if not p or p.deleted_at is not None:raise HTTPException(404,'Panel not found')

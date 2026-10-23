@@ -1,2 +1,2 @@
-import FlatForge from '@/components/flatforge/FlatForge';
-export default function Page(){return <FlatForge/>}
+// The shared root layout owns the workspace, so route changes preserve drafts.
+export default function Page() { return null; }

@@ -7,6 +7,7 @@ async function proxy(request:Request,{params}:{params:Promise<{path:string[]}>})
  if(path.some(p=>p==='..'||p.includes('/')||p.includes('\\'))||!['bootstrap','settings','projects','panels'].includes(path[0]))return Response.json({detail:'Invalid API route'},{status:400});
  const destination=new URL(url.replace(/\/$/,'')+'/'+path.map(encodeURIComponent).join('/'));destination.search=new URL(request.url).search;
  const headers=new Headers({'x-flatforge-key':key});const contentType=request.headers.get('content-type');if(contentType)headers.set('content-type',contentType);
+ const projectId=request.headers.get('x-flatforge-project-id');if(projectId)headers.set('x-flatforge-project-id',projectId);
  try{
   const upstream=await fetch(destination,{method:request.method,headers,body:['GET','HEAD'].includes(request.method)?undefined:request.body,redirect:'manual',signal:AbortSignal.timeout(120000)});
   const resultHeaders=new Headers(upstream.headers);resultHeaders.set('cache-control','private, no-store');resultHeaders.delete('access-control-allow-origin');

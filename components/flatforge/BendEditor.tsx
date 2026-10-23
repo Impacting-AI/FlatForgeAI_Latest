@@ -52,6 +52,7 @@ export default function BendEditor({ bend, names, settings, review, resolution, 
   }
   const manual = Object.values(review.bend_parameters[bend.key] ?? {}).some(value => value != null);
   return <form ref={form} className={styles.editor} style={style} role="dialog" aria-modal="false" aria-labelledby={id + '-title'}
+    data-unsaved-bend={bendFields.some(field => input(field) !== current(field))}
     noValidate onSubmit={event => { event.preventDefault(); apply(); }}
     onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); } }}>
     <div className={styles.editorBody}>
