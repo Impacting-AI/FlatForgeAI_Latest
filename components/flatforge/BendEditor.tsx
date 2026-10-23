@@ -2,8 +2,9 @@
 
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import type { Bend, BendValues, Panel, Settings } from './types';
-import type { ReviewValues } from './ReviewControls';
+import type { ReviewValues } from './review-state';
 import { bendDraftText, bendFields, bendInputValue, bendValueError, type BendDraft, type BendField } from './bend-review';
+import { bendSourceReferences } from './flat-pattern';
 import styles from './FlatPatternViewer.module.css';
 
 export default function BendEditor({ bend, names, settings, review, resolution, style, onApply, onAutomatic, onCancel }: {
@@ -17,7 +18,7 @@ export default function BendEditor({ bend, names, settings, review, resolution, 
   const form = useRef<HTMLFormElement>(null);
   const id = useId();
   useEffect(() => {
-    // Refreshing from a table edit must not steal focus from that table input.
+    // Refreshing from another review control must not steal its input focus.
     const active = document.activeElement;
     if (active?.matches('input, textarea, select') && !form.current?.contains(active)) return;
     first.current?.focus({ preventScroll: true });
@@ -50,7 +51,9 @@ export default function BendEditor({ bend, names, settings, review, resolution, 
   return <form ref={form} className={styles.editor} style={style} role="dialog" aria-modal="false" aria-labelledby={id + '-title'}
     noValidate onSubmit={event => { event.preventDefault(); apply(); }}
     onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); } }}>
+    <div className={styles.editorBody}>
     <h4 id={id + '-title'}>Bend {bend.bend_ids.join(' / ')} — {names}</h4>
+    <div className={styles.editorSource}><strong>Source section / vertex</strong>{bendSourceReferences(bend).map(source => <p key={source}>{source}</p>)}</div>
     <p className={styles.editorHelp}>Edit this bend’s review values.</p>
     {bendFields.map(field => <label key={field} className={styles.editorField}>
       <span>{field === 'angle' ? 'Signed rotation (°)' : field === 'radius' ? 'Inside radius (mm)' : settings.bend_model === 'fixed_deduction' ? 'Bend deduction (mm)' : 'Bend deduction at 90° (mm)'}</span>
@@ -61,6 +64,7 @@ export default function BendEditor({ bend, names, settings, review, resolution, 
     </label>)}
     {error && <p className={styles.editorError} id={id + '-error'} role="alert">{error}</p>}
     <p className={styles.editorHelp}>Apply updates the review. Save &amp; rebuild runs the full bend and geometry checks and updates the 3D model.</p>
+    </div>
     <div className={styles.editorActions}>
       {manual && <button type="button" className={styles.automatic} onClick={onAutomatic}>Use automatic</button>}
       <button type="button" onClick={onCancel}>Cancel</button>

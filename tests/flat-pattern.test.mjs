@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { reviewedBend, hingeAnchor, flatProjection, matchesHinge, calloutLayout, editableHinge } from '../components/flatforge/flat-pattern.ts';
+import { bendSourceReferences, reviewedBend, hingeAnchor, flatProjection, matchesHinge, calloutLayout, editableHinge } from '../components/flatforge/flat-pattern.ts';
 import { updateBendParameters, bendInputValue, bendValueError, bendDraftText } from '../components/flatforge/bend-review.ts';
 
 const settings = { thickness: 2, radius: 2, deduction: 4, input_type: 'flat_pattern' };
@@ -54,7 +54,7 @@ test('complex fixture keeps every hinge mapped and callouts separate at differen
   const report = JSON.parse(readFileSync(new URL('../public/samples/1648/report.json', import.meta.url)));
   assert.equal(data.bends.length, report.bends.length);
   for (const hinge of data.bends) assert.equal(report.bends.filter(b => matchesHinge(hinge, b)).length, 1);
-  for (const cardHeight of [40, 126]) for (const width of [820, 1400]) {
+  for (const cardHeight of [40, 182]) for (const width of [820, 1400]) {
     const height = Math.max(500, Math.ceil(data.bends.length / 2) * (cardHeight + 12) + 32);
     const project = flatProjection(data.bounds, width, height);
     const cards = calloutLayout(data.bends, project, width, height, cardHeight);
@@ -82,7 +82,7 @@ test('shared updates preserve every other bend, other review decisions and numer
   assert.deepEqual(updateBendParameters(updated, bend.key, null).bend_parameters, { [bend.key]: {}, other: original.bend_parameters.other });
 });
 
-test('editor and table share empty-value and manual/default precedence, without turning zero into missing', () => {
+test('editor and shared review state retain empty-value and manual/default precedence, without turning zero into missing', () => {
   const cleared = updateBendParameters(review, bend.key, { angle: null, radius: null, deduction: 0 });
   assert.equal(bendInputValue(bend, settings, cleared, 'angle'), '');
   assert.equal(bendInputValue(bend, settings, cleared, 'radius'), '');
@@ -98,7 +98,7 @@ test('required editor fields and existing engineering ranges reject invalid numb
   for (const patch of [{ angle: null }, { radius: null }, { deduction: null }, { angle: 0 }, { angle: 180 },
     { angle: -180 }, { angle: NaN }, { radius: 0 }, { radius: -1 }, { radius: 101 }, { radius: Infinity },
     { deduction: -1 }, { deduction: 101 }, { deduction: NaN }]) assert.ok(bendValueError({ ...valid, ...patch }, true));
-  // Automatic reset and incomplete table drafts retain their existing semantics.
+  // Automatic reset and incomplete review drafts retain their existing semantics.
   assert.equal(bendValueError({}), null);
 });
 
@@ -119,4 +119,58 @@ test('only unique verified hinge identities with actual geometry are editable', 
   for (const bad of [{ ...hinge, child: 999 }, { ...hinge, segments: [] }, { ...hinge, segments: [[[NaN, 0], [1, 2]]] }]) {
     assert.equal(editableHinge({ ...data, bends: [bad, ...data.bends.slice(1)] }, report.bends, hinge.key), false);
   }
+});
+
+
+test('source references preserve actual section IDs and vertex zero, deduplicate corroboration, and identify missing evidence', () => {
+  const first = { profile: 'SECTION_01', vertex: 0, angle: 60 };
+  const second = { profile: 'B-B', vertex: 4, angle: 60 };
+  assert.deepEqual(bendSourceReferences({ ...bend, source: [first, first, second] }), ['SECTION_01 / vertex 0', 'B-B / vertex 4']);
+  assert.deepEqual(bendSourceReferences({ ...bend, source: [] }), ['Source section / vertex not established']);
+  assert.deepEqual(bendSourceReferences({ ...bend, source: [{ ...first, vertex: null }] }), ['SECTION_01 / vertex not established']);
+  assert.deepEqual(bendSourceReferences({ ...bend, confirmed: true, source: [{ profile: 'USER CONFIRMED', vertex: null, angle: 60 }] }), ['USER CONFIRMED · no extracted vertex']);
+  assert.deepEqual(bendSourceReferences({ ...bend, angle: null, source: [first, second] }), ['Unresolved source mapping', 'SECTION_01 / vertex 0', 'B-B / vertex 4']);
+});
+
+test('each fixture hinge retains its own source references, including multiple corroborating sections', () => {
+  for (const sample of ['1570', '1619', '1648']) {
+    const geometry = JSON.parse(readFileSync(new URL(`../public/samples/${sample}/extraction.json`, import.meta.url)));
+    const report = JSON.parse(readFileSync(new URL(`../public/samples/${sample}/report.json`, import.meta.url)));
+    for (const hinge of geometry.bends) {
+      const rows = report.bends.filter(b => matchesHinge(hinge, b));
+      assert.equal(rows.length, 1);
+      assert.ok(editableHinge(geometry, report.bends, hinge.key));
+      const references = bendSourceReferences(rows[0]);
+      for (const source of rows[0].source) assert.ok(references.includes(source.profile === 'USER CONFIRMED'
+        ? 'USER CONFIRMED · no extracted vertex' : `${source.profile} / vertex ${source.vertex}`));
+    }
+  }
+});
+
+test('saved review hydration preserves hidden relief values, notes, approvals and legacy bend angles', async () => {
+  const { savedReview } = await import('../components/flatforge/review-state.ts');
+  const overrides = { relief_radii: { cut: 3.25 }, review_note: 'Approved shape measurement',
+    bend_angles: { legacy: 60, existing: -90 }, bend_parameters: { existing: { angle: 120, radius: 3 } },
+    parameter_overrides: { deduction: 4.5 }, section_choices: { 'A-A': 'candidate-1' },
+    manual_bends: true, accept_corner_reliefs: true };
+  const loaded = savedReview({ overrides });
+  assert.deepEqual(loaded.bend_parameters, { legacy: { angle: 60 }, existing: { angle: 120, radius: 3 } });
+  const edited = updateBendParameters(loaded, 'existing', { deduction: 5 });
+  for (const field of ['relief_radii', 'review_note', 'parameter_overrides', 'section_choices', 'manual_bends', 'accept_corner_reliefs']) {
+    assert.deepEqual(edited[field], overrides[field]);
+  }
+  assert.equal(overrides.bend_parameters.existing.deduction, undefined);
+  loaded.relief_radii.cut = 4;
+  assert.equal(overrides.relief_radii.cut, 3.25);
+});
+
+test('hidden corner controls retain existing validation and required review notes', async () => {
+  const { reviewError } = await import('../components/flatforge/bend-review.ts');
+  const { savedReview } = await import('../components/flatforge/review-state.ts');
+  const loaded = savedReview({ overrides: { relief_radii: { cut: 3 }, review_note: 'Approved shape' } });
+  assert.equal(reviewError(loaded, settings), null);
+  assert.match(reviewError({ ...loaded, review_note: '' }, settings), /Add a note/);
+  assert.match(reviewError({ ...loaded, relief_radii: { cut: -1 } }, settings), /positive numbers/);
+  assert.match(reviewError({ ...loaded, bend_parameters: { [bend.key]: { angle: 180 } } }, settings), /Signed bend angles/);
+  assert.equal(reviewError(savedReview({ overrides: {} }), settings), null);
 });

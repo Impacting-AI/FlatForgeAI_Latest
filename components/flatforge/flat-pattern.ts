@@ -1,5 +1,5 @@
 import type { Bend, Settings } from './types';
-import type { ReviewValues } from './ReviewControls';
+import type { ReviewValues } from './review-state';
 
 export type Point2 = [number, number];
 export type FlatPolygon = { outer: Point2[]; holes: Point2[][] };
@@ -17,7 +17,20 @@ export type FlatExtraction = {
   corner_reliefs: { outline: Point2[]; area_mm2: number }[];
 };
 
-/** Same draft precedence as the individual-bend controls. Never use default_angle. */
+/** Report provenance belongs to this hinge, even while its review values change.
+ * A vertex is the extracted index, not a coordinate or a new editable value.
+ */
+export function bendSourceReferences(bend: Bend): string[] {
+  const sources = [...new Set((bend.source ?? []).map(source => {
+    const profile = source.profile?.trim() || 'Section not established';
+    if (profile === 'USER CONFIRMED') return 'USER CONFIRMED · no extracted vertex';
+    return `${profile} / ${Number.isInteger(source.vertex) && source.vertex! >= 0 ? `vertex ${source.vertex}` : 'vertex not established'}`;
+  }))];
+  if (!sources.length) return ['Source section / vertex not established'];
+  return bend.angle == null ? ['Unresolved source mapping', ...sources] : sources;
+}
+
+/** Same draft precedence as the shared bend review state. Never use default_angle. */
 export function reviewedBend(bend: Bend, settings: Settings, review: ReviewValues) {
   const edit = review.bend_parameters[bend.key];
   const automaticAngle = bend.confirmed

@@ -14,7 +14,7 @@ without confirmation. Keep it editable for exceptions.
 
 ## Controls
 
-Drawing Review and Material Defaults now expose:
+Drawing Review and Material Defaults use the following parameters:
 
 | Control | Default | Meaning |
 | --- | --- | --- |
@@ -24,9 +24,9 @@ Drawing Review and Material Defaults now expose:
 | Bend calculation | Material model | Preserve the previous constant-K calibration at 90°, or explicitly choose fixed deduction at each angle for a shape model. |
 | Individual bend values | Drawing / panel values | Current values are displayed. Edit a signed rotation, radius or deduction only when needed; **Use automatic** removes that bend’s corrections. |
 | Inside bend radius | 2 mm | Applied automatically when absent from the DXF, without confirmation. Editable in Material Defaults or for an individual panel. |
-| Use material defaults | Off | Explicitly permit configured fallback thickness and deduction where DXF evidence is absent. Drawing values still take priority. |
+| Use material defaults | Off | Set in Material Defaults for future uploads. Step 3 preserves the panel's saved policy without a checkbox. Permits configured fallback thickness/deduction where DXF evidence is absent; drawing values take priority. |
 | Bend ends | Straight | Existing jobs retain constant-length ends. Select **Follow cut outline** for stepped ends, oblique end cuts and holes crossing a bend. |
-| Corner-relief radius | Original DXF | Enlarge a selected existing circular cut at a nonparallel bend junction. The original radius, new radius, location and removed area are recorded. |
+| Corner-relief radius | Original DXF | Adjustment controls are temporarily hidden. Saved approved radii and their recorded locations/removed area remain active. |
 
 Angles are rotations from flat. A 60° rotation leaves a 120° inside angle.
 Positive rotations follow the reported canonical hinge axis using the right-hand
@@ -92,8 +92,9 @@ the drawing value or configured default. Existing geometry validation still appl
 3. Where local or normal section candidates fit, select the intended numbered
    bend chain. Selections are checked against current candidates on rebuild;
    a stale or conflicting selection returns to review.
-4. Fill remaining signed rotations. Expand individual corrections only when a
-   bend needs its own angle, radius or deduction.
+4. Fill remaining signed rotations. Click a bend annotation or line in the flat
+   viewer to edit its angle, radius or deduction. Source section / vertex
+   references are read-only and remain associated with the exact hinge.
 5. If sections or finish markers are missing/unreliable, select **Use reviewed
    bend values instead of missing or unreliable section drawings**. Detected
    rotations are copied for review; missing ones still require input. Supply a
@@ -108,12 +109,13 @@ sections, use the explicit manual mode. Corrections are stored per panel;
 workspace defaults and other panels are unaffected. Replacing a source drawing
 clears its old decisions through the existing source-replacement workflow.
 
-## Optional saved reviews
+## Saved review support utilities
 
-**Advanced · load a saved review** contains the old review-file import for
-support/reproduction work. It is not part of the normal upload flow. No client
-needs to create a JSON alongside a drawing. Its file values mean measured
-thickness, radius, deduction, signed rotations, and recorded review choices.
+Step 3 no longer contains the saved-review upload interface. Existing project
+reviews still load automatically, and the backend review-file endpoint and
+rebuild script remain available for support/reproduction work. No client needs
+to create a JSON alongside a drawing. Its file values mean measured thickness,
+radius, deduction, signed rotations, and recorded review choices.
 
 Import matches the SHA-256 of the extracted source DXF, never its filename or the
 package's panel label. A renamed identical file works. A changed drawing, an
@@ -191,7 +193,8 @@ The report retains the raw visible-surface unfold, numerical seam changes,
 contact proof, local-distance bounds, angular results and Boolean attempts.
 Local coverage is not a claim of a certified 3D Hausdorff match to a client STEP.
 
-Corner-radius changes require a review note. Only identified junction circles
+The corner-radius adjustment UI is temporarily hidden; its backend rules and
+existing saved values are preserved. Changes require a review note. Only identified junction circles
 can be enlarged, by at most 4 mm; arbitrary holes cannot be changed through this
 control. Clearing a value restores the original. A changed `flat.dxf` contains
 the approved radii, and `original_flat.dxf` preserves the source. STEP export is
@@ -211,9 +214,10 @@ PYTHONPATH=backend python backend/scripts/rebuild_reference.py --review-file /pr
 ```
 
 The runner refuses a changed source hash. In the application, select
-**Advanced · load a saved review → Import reviewed values** to load the same JSON into the review fields, or select
-**Follow cut outline** and enter the values manually. Record any corner
-corrections before rebuilding. Local geometry PASS does not establish exact
+**Follow cut outline** when appropriate and enter bend values through the flat
+viewer. Existing saved corner corrections remain active; their adjustment UI is
+temporarily hidden. The support runner can still reproduce reviewed corner
+corrections. Local geometry PASS does not establish exact
 surface agreement with an external reference model. Use
 `backend/scripts/inspect_step.py` to distinguish basic validity from detected
 self-interference when examining a reference STEP.

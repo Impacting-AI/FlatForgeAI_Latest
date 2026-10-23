@@ -1,7 +1,7 @@
 # Geometry-linked bend annotations in Extract & Review
 
 The flat-pattern viewer displays each physical hinge's bend IDs, parent and child
-face names, signed rotation, inside radius and deduction. Leader lines terminate
+face names, signed rotation, inside radius, deduction and source section / vertex. Leader lines terminate
 on the actual hinge boundary. Selecting a line or callout highlights that hinge
 and its two face regions. Turn off **All bend values** for compact ID labels;
 the selected bend's values remain visible below the drawing. Existing zoom
@@ -10,10 +10,10 @@ controls apply to geometry and annotations together.
 Click a callout or the corresponding hinge line to open a compact editor inside
 the drawing viewport. Bend IDs and face relationships are read-only. **Apply**
 updates the shared review state; **Cancel** or Escape discards the local draft.
-**Use automatic** clears only that bend's overrides, just as it does in the table.
+**Use automatic** clears only that bend's overrides.
 The editor stays within the viewport during zoom/pan and on small screens.
 
-The editor, quick-angle buttons and individual-bend table use the same
+The editor and quick-angle buttons use the same
 `changeBend`/`updateBendParameters` update path. They share input-value resolution
 and `bendValueError` with the existing Save & rebuild validation. Unchanged
 automatic values are not promoted to manual overrides. Numeric precision is
@@ -22,8 +22,8 @@ a finite nonzero angle strictly between −180° and 180°, radius above 0 and a
 most 100 mm, and deduction from 0 to 100 mm. Full allowance, material-model and
 solid-geometry checks remain in the existing backend rebuild workflow.
 
-Changes from the table or an imported review refresh the open editor, discarding
-stale local drafts for that bend. Edits stay in the existing `bend_parameters`
+Changes from panel parameters or quick-angle controls refresh the open editor,
+discarding stale local drafts for that bend. Edits stay in the existing `bend_parameters`
 state and use the unchanged review API and saved-review format. **Save & rebuild
 panel** persists them and generates the updated solid. Apply alone does not save
 to the server or rebuild the 3D model. Ambiguous identities, missing face links,
@@ -52,8 +52,43 @@ face bounding box. Both geometry and labels use one aspect-preserving projection
 
 This data is emitted before section-value validation, so panels with unknown
 angles can still be reviewed. No folding, extraction interpretation, tolerance,
-parameter-default, or export policy is changed. The remaining Step 3 sections
-retain their existing controls and layout.
+parameter-default, or export policy is changed.
+
+## Source references and Step 3 cleanup
+
+Source references come from the matched report bend's `source` entries. Section
+identifiers and vertex indices are displayed unchanged; repeated references are
+deduplicated. A vertex index of zero is valid. Missing vertices are explicitly
+unavailable, `USER CONFIRMED` is identified as having no extracted vertex, and
+unresolved rotations with source evidence show an unresolved mapping status.
+Pending manual edits do not rewrite extracted provenance. Callouts show a compact
+two-line source preview; selecting the bend exposes every full reference in the
+read-only editor and the selected-bend details. Long identifiers wrap. Apply and
+Cancel remain visible while long editor content scrolls.
+
+The redundant bend information and individual-bend editing tables are removed.
+`review-state.ts` owns saved-state hydration and the review type; `bend-review.ts`
+owns shared updates, input resolution and validation. The viewer remains connected
+to the existing review API, including legacy saved bend angles.
+
+The material-default checkbox is hidden only in Step 3. Its backend flag is
+meaningful: when enabled, missing thickness/deduction use configured defaults;
+when disabled, they need confirmation unless already reviewed. Drawing values
+still take priority and conflicting/invalid drawing values still need review.
+The configured inside radius continues without confirmation. Each panel's saved
+`use_material_defaults` setting survives unchanged, and the existing global
+Material defaults dialog still controls future uploads. Step 3 explains the
+panel's current fallback policy and retains per-field correction/confirmation.
+
+`CornerReliefControls.tsx` retains the adjustment UI behind the internal
+`SHOW_CORNER_RELIEF_CONTROLS = false` switch in `ReviewControls.tsx`. It is not
+rendered or interactive. Saved relief radii, notes, approval flags, backend
+validation and export behavior remain intact. Necessary corner-region approval
+and reviewed-bend confirmation controls remain visible when applicable.
+
+The saved-review upload component and its exclusive handler/types are deleted.
+The shared review API, stored overrides, project data, backend review-file utility
+and rebuild support script remain available. No historical data is deleted.
 
 Existing uploaded panels need one **Save & rebuild panel** after restarting the
 updated API/worker and frontend. The original drawing remains visible until the
@@ -75,3 +110,20 @@ unresolved angles, live value precedence, oblique deduction and callout placemen
 The edit workflow check saves all three parameters through the real review API,
 rebuilds and re-imports STEP, measures cylinder radii, checks the fold-table
 allowance, previews saved-review import, and clears one bend independently.
+
+
+Browser checks (install Playwright/Chromium in your test environment):
+
+```bash
+node tests/step3-review.browser.mjs
+```
+
+The script starts Vite locally. Optional environment variables are
+`FLATFORGE_TEST_URL` (reuse a running frontend), `PLAYWRIGHT_MODULE` (module path),
+`FLATFORGE_CHROMIUM` (browser executable), and `FLATFORGE_QA_OUTPUT` (screenshots
+and server log). It checks all 53 reference hinges, missing/unresolved sources,
+read-only references, editing, invalid inputs, independent repeated IDs, shared
+state updates, restored saved values, hidden relief preservation, both saved
+material-fallback settings, removed controls, global defaults, zoom/pan and mobile
+editor bounds. API transport is mocked here; the pytest workflow tests execute
+the real review API, CAD rebuild, STEP re-import and corner-relief export.

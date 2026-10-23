@@ -1,11 +1,11 @@
 import type { Bend, BendValues, Settings } from './types';
-import type { ReviewValues } from './ReviewControls';
+import type { ReviewValues } from './review-state';
 
 export const bendFields = ['angle', 'radius', 'deduction'] as const;
 export type BendField = typeof bendFields[number];
 export type BendChange = (key: string, patch: BendValues | null) => void;
 
-/** One update path for table fields, quick angles and the viewer editor.
+/** One update path for quick angles and the viewer editor.
  * null clears this bend's overrides using the existing review API convention.
  */
 export function updateBendParameters(review: ReviewValues, key: string, patch: BendValues | null): ReviewValues {
@@ -41,4 +41,15 @@ export type BendDraft = Partial<Record<BendField, { text: string; base: string }
  */
 export function bendDraftText(draft: BendDraft, field: BendField, current: string) {
   return draft[field]?.base === current ? draft[field].text : current;
+}
+
+export function reviewError(value:ReviewValues,settings:Settings):string|null {
+ const ranges:[number,number,number,string,boolean][]=[
+  [settings.thickness,0,20,'Thickness',false],[settings.radius,0,100,'Radius',false],[settings.deduction,0,100,'Deduction',true],
+  [settings.strip_tolerance??.5,0,5,'Length tolerance',false],[settings.angle_tolerance??.1,0,2,'Angle tolerance',true],[settings.default_angle??90,0,180,'Missing angle',false],
+ ];
+ for(const [n,min,max,name,zero] of ranges)if(!Number.isFinite(n)||(zero?n<min:n<=min)||n>max||(name==='Missing angle'&&n===180))return `${name}: enter a value ${zero?'from':'above'} ${min} and ${name==='Missing angle'?'below':'up to'} ${max}.`;
+ for(const bend of Object.values(value.bend_parameters)){const error=bendValueError(bend);if(error)return error;}
+ for(const radius of Object.values(value.relief_radii))if(radius!=null&&(!Number.isFinite(radius)||radius<=0))return 'Corner-relief radii must be positive numbers.';
+ return (value.manual_bends||Object.values(value.relief_radii).some(r=>r!=null))&&!value.review_note.trim()?'Add a note stating where your confirmed bend or corner-cut values came from.':null;
 }

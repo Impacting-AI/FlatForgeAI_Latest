@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Panel, Settings } from './types';
 import { fileUrl } from './types';
-import type { ReviewValues } from './ReviewControls';
-import { calloutLayout, editableHinge, flatProjection, hingeAnchor, matchesHinge, polygonPath, reviewedBend } from './flat-pattern';
+import type { ReviewValues } from './review-state';
+import { bendSourceReferences, calloutLayout, editableHinge, flatProjection, hingeAnchor, matchesHinge, polygonPath, reviewedBend } from './flat-pattern';
 import type { FlatExtraction, Point2 } from './flat-pattern';
 import { bendFields, bendInputValue, type BendChange } from './bend-review';
 import BendEditor from './BendEditor';
@@ -73,7 +73,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
   const bends = panel.report.bends ?? [];
   const linked = geometry.bends.filter(hinge => bends.some(bend => matchesHinge(hinge, bend)));
   const active = linked.find(hinge => hinge.key === selected) ?? linked[0];
-  const cardHeight = allValues ? 126 : 40;
+  const cardHeight = allValues ? 182 : 40;
   const height = Math.max(500, Math.ceil(linked.length / 2) * (cardHeight + 12) + 32);
   const layoutWidth = Math.max(820, width);
   // Fit desktop widths, but preserve legible labels on phones; the canvas pans.
@@ -88,7 +88,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
     ? bends.find(bend => bend.key === editHinge.key) : undefined;
   const editPoint = editHinge ? hingeAnchor(editHinge) : null;
   const editAnchor = editPoint ? project(editPoint) : null;
-  const editTop = editAnchor ? Math.max(8, Math.min(viewportHeight - 410, editAnchor[1] * displayScale - scroll.y - 24)) : 8;
+  const editTop = editAnchor ? Math.max(8, Math.min(viewportHeight - 500, editAnchor[1] * displayScale - scroll.y - 24)) : 8;
   const editLeft = editAnchor && editAnchor[0] * displayScale - scroll.x > width / 2
     ? Math.max(8, width - 288) : 8;
   function openEditor(key: string, trigger: SVGElement) {
@@ -114,7 +114,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
   return <div className={styles.viewer}>
     <div className={styles.options}>
       <label><input type="checkbox" checked={allValues} onChange={event => setAllValues(event.target.checked)}/>All bend values</label>
-      <p>Select a line or label to edit its bend values. Scroll to inspect; use zoom above.</p>
+      <p>Select a line or label to edit its bend values and read full source references. Scroll to inspect; use zoom above.</p>
     </div>
     <div className={styles.canvasShell}>
     <div className={styles.canvas} ref={viewport} onScroll={event => setScroll({ x: event.currentTarget.scrollLeft, y: event.currentTarget.scrollTop })}>
@@ -143,12 +143,13 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
           const rotation = number(values.angle, '°', true);
           const radius = number(values.radius, 'mm');
           const deduction = number(values.deduction, 'mm');
+          const sources = bendSourceReferences(bend).join('; ');
           const showDerived = values.calibrated && values.angle != null && Math.abs(values.angle) !== 90;
           return <g key={hinge.key} className={`${styles.card} ${hinge.key === active?.key ? styles.selected : ''}`}
             role="button" tabIndex={0} aria-pressed={hinge.key === active?.key}
-            aria-label={`${title}, ${relation}, rotation ${rotation}, inside radius ${radius}, deduction ${deduction}${values.calibrated ? ' at 90 degrees' : ''}`}
+            aria-label={`${title}, ${relation}, rotation ${rotation}, inside radius ${radius}, deduction ${deduction}${values.calibrated ? ' at 90 degrees' : ''}, source section / vertex: ${sources}`}
             onClick={event => openEditor(hinge.key, event.currentTarget)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openEditor(hinge.key, event.currentTarget); } }}>
-            <title>{title} · {relation}</title>
+            <title>{title} · {relation} · Source section / vertex: {sources}</title>
             <rect x={x} y={y} width={220} height={cardHeight} rx={6}/>
             <text className={styles.title} x={x + 10} y={y + 18}>{title}</text>
             <text className={styles.relationship} x={x + 10} y={y + 33}>{relation}</text>
@@ -157,6 +158,10 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
               <text x={x + 10} y={y + 73}>Inside radius: {radius}{required('radius', hinge.key) ? ' *' : ''}</text>
               <text x={x + 10} y={y + 93}>Deduction{values.calibrated ? ' (90°)' : ''}: {deduction}{required('deduction', hinge.key) ? ' *' : ''}</text>
               {showDerived && <text x={x + 10} y={y + 113} className={styles.relationship}>At this rotation: {number(values.atAngle, 'mm')}</text>}
+              <text x={x + 10} y={y + 133} className={styles.relationship}>Source section / vertex</text>
+              <foreignObject x={x + 10} y={y + 139} width={200} height={36}>
+                <div className={styles.sourcePreview} title={sources}>{sources}</div>
+              </foreignObject>
             </>}
           </g>;
         })}
@@ -183,6 +188,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
     <div className={styles.note} aria-live="polite">
       {editorNotice && <p>{editorNotice}</p>}
       {active && detail && <p><strong>{active.bend_ids.join(' / ')} · {faceName(active.parent)} → {faceName(active.child)}</strong> — rotation {number(detail.angle, '°', true)} · inside radius {number(detail.radius, 'mm')} · deduction{detail.calibrated ? ' at 90°' : ''} {number(detail.deduction, 'mm')}. Parent is green; child is amber.</p>}
+      {activeBend && <p className={styles.sourceDetails}><strong>Source section / vertex:</strong> {bendSourceReferences(activeBend).join('; ')}.</p>}
       <p>{draft ? 'Showing current review edits. Save & rebuild applies them to the 3D model.' : 'Values follow the current panel and individual bend settings.'} {linked.some(b => required('radius', b.key) || required('deduction', b.key)) && '* This panel value still needs review.'}</p>
       {bends.length !== linked.length && <p>Some bend locations do not match this extraction. Rebuild the panel to refresh the geometry; unmatched bends are not placed by guesswork.</p>}
     </div>

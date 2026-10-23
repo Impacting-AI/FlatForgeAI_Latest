@@ -24,13 +24,18 @@
 .card .title { fill: #1e5342; font-size: 13px; font-weight: 600; }
 .card .relationship { fill: #6b7f74; font-size: 11px; }
 .card .pending { fill: #956023; }
+.sourcePreview { color: #395d4d; font: 11px/17px sans-serif; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sourceDetails, .editorSource { overflow-wrap: anywhere; }
+.editorSource { font-size: 10px; line-height: 1.5; margin-top: 8px; }
+.editorSource p { margin: 2px 0; }
 .paint { font: 10px sans-serif; fill: #4b7966; }
 .note { padding: 10px 16px; color: #667d70; background: #fff; font-size: 11px; line-height: 1.6; border-top: 1px solid #e2eae4; }
 .note p { margin: 0; }
 .fallback { min-height: 340px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; color: #61796b; font-size: 12px; text-align: center; }
 .fallback img { max-height: 360px; width: 100%; object-fit: contain; }
 .fallback button { border: 1px solid #bdcec4; padding: 6px 12px; border-radius: 4px; }
-.editor { position: absolute; z-index: 2; width: min(280px, calc(100% - 16px)); padding: 14px; overflow: auto; background: white; border: 1px solid #b9803d; border-radius: 8px; box-shadow: 0 8px 24px #16372a26; color: #395d4d; }
+.editor { position: absolute; z-index: 2; width: min(280px, calc(100% - 16px)); padding: 14px; display: flex; flex-direction: column; overflow: hidden; background: white; border: 1px solid #b9803d; border-radius: 8px; box-shadow: 0 8px 24px #16372a26; color: #395d4d; }
+.editorBody { min-height: 0; overflow: auto; }
 .editor h4 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .editorHelp { margin: 7px 0 10px; font-size: 10px; line-height: 1.5; color: #687d72; }
 .editorField { display: flex; flex-direction: column; gap: 3px; margin: 9px 0; font-size: 11px; }
@@ -38,7 +43,7 @@
 .editorField input:focus { outline: 2px solid #348c77; outline-offset: 1px; }
 .editorField small { color: #778a7e; font-size: 10px; }
 .editorError { color: #a3352b; background: #fff0ed; border-radius: 4px; padding: 8px; font-size: 11px; line-height: 1.5; margin: 9px 0; }
-.editorActions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-top: 12px; }
+.editorActions { display: flex; flex-shrink: 0; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-top: 12px; }
 .editorActions button { border: 1px solid #b9cfc2; background: #fff; border-radius: 4px; padding: 6px 9px; font-size: 11px; cursor: pointer; }
 .editorActions .automatic { margin-right: auto; padding-inline: 4px; border-color: transparent; color: #4e7765; }
 .editorActions .apply { background: #087863; border-color: #087863; color: white; }
