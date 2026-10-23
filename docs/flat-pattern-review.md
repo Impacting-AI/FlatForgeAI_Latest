@@ -77,14 +77,30 @@ when disabled, they need confirmation unless already reviewed. Drawing values
 still take priority and conflicting/invalid drawing values still need review.
 The configured inside radius continues without confirmation. Each panel's saved
 `use_material_defaults` setting survives unchanged, and the existing global
-Material defaults dialog still controls future uploads. Step 3 explains the
-panel's current fallback policy and retains per-field correction/confirmation.
+Material defaults dialog still controls future uploads. Step 3 retains per-field
+correction/confirmation without the generic helper paragraphs below the fields.
 
 `CornerReliefControls.tsx` retains the adjustment UI behind the internal
 `SHOW_CORNER_RELIEF_CONTROLS = false` switch in `ReviewControls.tsx`. It is not
 rendered or interactive. Saved relief radii, notes, approval flags, backend
 validation and export behavior remain intact. Necessary corner-region approval
-and reviewed-bend confirmation controls remain visible when applicable.
+controls remain visible when applicable.
+
+The separate reviewed-bend checkbox, its explanation/note field and the warning
+paragraphs below it are removed from Step 3. Reports and their warnings remain
+intact. When section/finish evidence is missing or unreliable, applying an angle
+in the viewer (including confirming its displayed value) enables the existing
+reviewed-section recovery mode. Known rotations are retained; unknown and
+deliberately cleared rotations stay unresolved. Radius/deduction changes alone
+in shared state do not enable recovery, and geometry, collision, material and
+relief errors cannot be classified as section failures. **Use automatic** clears
+only that bend's overrides and returns processing to drawing-based section checks.
+
+Bend-review notes are optional in the API, engine and frontend. Existing notes
+are retained without manufacturing a source description. Saved corner-cut notes
+and the backend requirement for approved corner-cut provenance remain unchanged;
+their note editor stays with the temporarily hidden corner controls. The report
+still identifies reviewed-section builds and the checks they could not perform.
 
 The saved-review upload component and its exclusive handler/types are deleted.
 The shared review API, stored overrides, project data, backend review-file utility

@@ -94,8 +94,8 @@ async def preview_review_file(id:str,file:UploadFile=File(...)):
   except (ValueError,TypeError,ValidationError) as exc:
    raise HTTPException(422,str(exc)) from exc
   allowed=validate_review_decisions(report,body)
-  if (body.manual_bends or any(v is not None for v in body.relief_radii.values())) and not (body.review_note or '').strip():
-   raise HTTPException(422,'The review file must identify the source of confirmed bend or corner-cut values')
+  if any(v is not None for v in body.relief_radii.values()) and not (body.review_note or '').strip():
+   raise HTTPException(422,'The review file must identify the source of corner-cut values')
   previous=json.loads(p.overrides)
   result=body.model_dump()
   # Imported values are explicit review decisions, not new workspace rules.
@@ -221,7 +221,8 @@ def review(id:str,body:ReviewInput):
   overrides['relief_radii']=reliefs
   if body.manual_bends is not None:overrides['manual_bends']=body.manual_bends
   if body.review_note is not None:overrides['review_note']=body.review_note.strip()
-  if overrides.get('manual_bends') and not overrides.get('review_note'):raise HTTPException(422,'Explain which confirmed values replace the missing or unreliable sections.')
+  # Bend confirmation is performed in the viewer. Notes remain optional and
+  # existing notes are preserved; corner-cut provenance retains its own rule.
   if reliefs and not overrides.get('review_note'):raise HTTPException(422,'Identify the approved shape or dimensions for changed corner cuts in the review note.')
   for flag in ('confirm_parameters','accept_partial_sections','accept_relief_extensions','accept_corner_reliefs'):
    if flag in body.model_fields_set:overrides[flag]=getattr(body,flag)

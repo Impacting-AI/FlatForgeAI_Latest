@@ -7,9 +7,9 @@ import { bendDraftText, bendFields, bendInputValue, bendValueError, type BendDra
 import { bendSourceReferences } from './flat-pattern';
 import styles from './FlatPatternViewer.module.css';
 
-export default function BendEditor({ bend, names, settings, review, resolution, style, onApply, onAutomatic, onCancel }: {
+export default function BendEditor({ bend, names, settings, review, resolution, sectionReviewRequired, style, onApply, onAutomatic, onCancel }: {
   bend: Bend; names: string; settings: Settings; review: ReviewValues;
-  resolution: Panel['report']['parameter_resolution']; style: CSSProperties;
+  resolution: Panel['report']['parameter_resolution']; sectionReviewRequired: boolean; style: CSSProperties;
   onApply: (patch: BendValues) => void; onAutomatic: () => void; onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<BendDraft>({});
@@ -25,14 +25,17 @@ export default function BendEditor({ bend, names, settings, review, resolution, 
   }, []);
   const current = (field: BendField) => String(bendInputValue(bend, settings, review, field));
   const input = (field: BendField) => bendDraftText(draft, field, current(field));
-  const needsConfirmation = (field: BendField) => field !== 'angle'
-    && review.bend_parameters[bend.key]?.[field] == null && review.parameter_overrides[field] == null
-    && resolution?.[field]?.needs_review;
+  const needsConfirmation = (field: BendField) => field === 'angle'
+    ? sectionReviewRequired && !review.manual_bends
+    : review.bend_parameters[bend.key]?.[field] == null && review.parameter_overrides[field] == null
+      && resolution?.[field]?.needs_review;
   const source = (field: BendField) => {
     if (draft[field]?.base === current(field) && input(field) !== current(field)) return 'Pending edit';
     if (current(field) === '') return 'Missing · enter a value, or use automatic and rebuild';
     if (review.bend_parameters[bend.key]?.[field] != null) return 'Manual correction';
-    if (needsConfirmation(field)) return 'Panel value · Apply confirms it for this bend';
+    if (needsConfirmation(field)) return field === 'angle'
+      ? 'Section needs review · Apply uses reviewed bends for reconstruction'
+      : 'Panel value · Apply confirms it for this bend';
     return field === 'angle' ? 'Drawing angle' : 'Panel value';
   };
   function apply() {

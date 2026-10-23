@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { bendSourceReferences, reviewedBend, hingeAnchor, flatProjection, matchesHinge, calloutLayout, editableHinge } from '../components/flatforge/flat-pattern.ts';
-import { updateBendParameters, bendInputValue, bendValueError, bendDraftText } from '../components/flatforge/bend-review.ts';
+import { applyBendReview, requiresReviewedSections, updateBendParameters, bendInputValue, bendValueError, bendDraftText } from '../components/flatforge/bend-review.ts';
 
 const settings = { thickness: 2, radius: 2, deduction: 4, input_type: 'flat_pattern' };
 const bend = { id: 0, key: 'axis:F0:F2', bend_ids: ['C07'], parent: 0, child: 2, angle: -60, source: [] };
@@ -164,13 +164,54 @@ test('saved review hydration preserves hidden relief values, notes, approvals an
   assert.equal(overrides.relief_radii.cut, 3.25);
 });
 
-test('hidden corner controls retain existing validation and required review notes', async () => {
+test('review validation keeps engineering ranges without requiring a hidden note field', async () => {
   const { reviewError } = await import('../components/flatforge/bend-review.ts');
   const { savedReview } = await import('../components/flatforge/review-state.ts');
   const loaded = savedReview({ overrides: { relief_radii: { cut: 3 }, review_note: 'Approved shape' } });
   assert.equal(reviewError(loaded, settings), null);
-  assert.match(reviewError({ ...loaded, review_note: '' }, settings), /Add a note/);
+  assert.equal(reviewError({ ...loaded, manual_bends: true, review_note: '' }, settings), null);
   assert.match(reviewError({ ...loaded, relief_radii: { cut: -1 } }, settings), /positive numbers/);
   assert.match(reviewError({ ...loaded, bend_parameters: { [bend.key]: { angle: 180 } } }, settings), /Signed bend angles/);
   assert.equal(reviewError(savedReview({ overrides: {} }), settings), null);
+});
+
+test('confirming an angle replaces failed sections without inventing other rotations or overwriting saved decisions', () => {
+  const state = { ...review, manual_bends: false, review_note: 'Existing measured values', relief_radii: { corner: 3 },
+    section_choices: { 'A-A': 'candidate' }, bend_parameters: { other: { radius: 3 }, cleared: { angle: null } } };
+  const report = { issues: [{ code: 'SECTION_CORRESPONDENCE' }], bends: [
+    { ...bend, angle: null }, { ...bend, key: 'other', angle: 120 }, { ...bend, key: 'missing', angle: null },
+    { ...bend, key: 'cleared', angle: 90 }, { ...bend, key: 'old', angle: -90, confirmed: true, source: [{ profile: 'USER CONFIRMED', angle: -90 }] },
+  ] };
+  const next = applyBendReview(state, bend.key, { angle: 60 }, report);
+  assert.equal(next.manual_bends, true);
+  assert.deepEqual(next.bend_parameters[bend.key], { angle: 60 });
+  assert.deepEqual(next.bend_parameters.other, { radius: 3, angle: 120 });
+  assert.equal(next.bend_parameters.missing, undefined);
+  assert.equal(next.bend_parameters.old, undefined);
+  assert.deepEqual(next.bend_parameters.cleared, { angle: null });
+  assert.equal(next.review_note, state.review_note); assert.equal(next.relief_radii, state.relief_radii);
+  assert.deepEqual(next.section_choices, { 'A-A': null });
+  assert.equal(state.bend_parameters.other.angle, undefined);
+});
+
+test('healthy drawings and non-section failures never switch to reviewed-section recovery', () => {
+  const state = { ...review, manual_bends: false };
+  for (const code of ['DRAWING_GEOMETRY', 'SELF_INTERSECTION', 'BEND_PARAMETERS', 'CORNER_RELIEF', 'PARAMETER_REQUIRED', 'VALIDATION']) {
+    const report = { issues: [{ code }] };
+    assert.equal(requiresReviewedSections(report), false);
+    assert.equal(applyBendReview(state, bend.key, { angle: 60 }, report).manual_bends, false);
+  }
+  assert.equal(applyBendReview(state, bend.key, { angle: 60 }, {}).manual_bends, false);
+  const report = { issues: [{ code: 'SECTION_EVIDENCE' }] };
+  for (const patch of [{ radius: 3 }, { angle: null }, { angle: 0 }, { angle: 180 }]) {
+    assert.equal(applyBendReview(state, bend.key, patch, report).manual_bends, false);
+  }
+});
+
+test('Use automatic exits reviewed-section recovery and clears only the selected bend', () => {
+  const state = { ...review, manual_bends: true, review_note: '', bend_parameters: { [bend.key]: { angle: 60 }, other: { angle: -90 } } };
+  const next = applyBendReview(state, bend.key, null, { issues: [{ code: 'SECTION_EVIDENCE' }] });
+  assert.equal(next.manual_bends, false);
+  assert.deepEqual(next.bend_parameters, { [bend.key]: {}, other: { angle: -90 } });
+  assert.equal(next.review_note, '');
 });

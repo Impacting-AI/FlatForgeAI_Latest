@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ParameterKey, ParameterResolution, ParameterValues, Settings } from './types';
 
-export default function ParameterFields({value,onChange,resolution,overrides,onOverride,fallbackValues,showMaterialDefaultsControl=true}:{value:Settings;onChange:(s:Settings)=>void;resolution?:Partial<Record<ParameterKey,ParameterResolution>>;overrides?:ParameterValues;onOverride?:(key:ParameterKey,value:number|null)=>void;fallbackValues?:Settings;showMaterialDefaultsControl?:boolean}) {
+export default function ParameterFields({value,onChange,resolution,overrides,onOverride,showMaterialDefaultsControl=true,showHelp=true}:{value:Settings;onChange:(s:Settings)=>void;resolution?:Partial<Record<ParameterKey,ParameterResolution>>;overrides?:ParameterValues;onOverride?:(key:ParameterKey,value:number|null)=>void;showMaterialDefaultsControl?:boolean;showHelp?:boolean}) {
  const numbers = [
   ['thickness','Material thickness',2,0.001,20,'mm'],
   ['radius','Inside bend radius',2,0.001,100,'mm'],
@@ -36,10 +36,10 @@ export default function ParameterFields({value,onChange,resolution,overrides,onO
   </div>
   <div className="field"><Label htmlFor="input-type">Input type</Label><select id="input-type" value={value.input_type} onChange={e=>onChange({...value,input_type:e.target.value as Settings['input_type']})}><option value="flat_pattern">Developed flat pattern</option><option value="folded_dimensions">Folded dimensions · review required</option></select></div>
   {showMaterialDefaultsControl&&<div className="parameter-help"><label><Checkbox checked={value.use_material_defaults===true} onCheckedChange={checked=>onChange({...value,use_material_defaults:checked===true})}/> Use material defaults when the drawing does not establish a value</label><p>Drawing values take priority. Inside bend radius defaults to 2 mm without confirmation and remains editable. Enable this rule only when the thickness and deduction defaults are approved for the job. Otherwise, those missing values require confirmation.</p></div>}
-  {!showMaterialDefaultsControl&&<p className="parameter-help">Drawing values take priority. This panel {value.use_material_defaults?'uses its configured material defaults for missing thickness and deduction values.':'requires confirmation of thickness and deduction when the drawing does not establish them.'} Inside bend radius uses the configured default without confirmation and remains editable.</p>}
-  {fallbackValues&&<p className="parameter-help">Fallback defaults: thickness {fallbackValues.thickness} mm · inside radius {fallbackValues.radius} mm · deduction {fallbackValues.deduction} mm. Change defaults in Material defaults for future uploads, or edit a field above for this panel.</p>}
+  {showHelp&&<>
   <p className="parameter-help">The length limit applies to drawing comparisons. The angle limit allows near-90° drawing turns to match 90°. Enter rotation from the flat sheet: a 60° rotation leaves a 120° inside angle. The missing-angle value is used only when you choose a bend direction below.</p>
   {value.bend_model==='fixed_deduction'&&<p className="parameter-help">Fixed deduction is an explicit shape convention. Review the result before using its dimensions for fabrication.</p>}
   {value.bend_end_mode==='contour'&&<p className="parameter-help">Bends follow stepped ends and cut-outs in the drawing. Local checks include material hidden where folded faces meet.</p>}
+  </>}
  </div>;
 }

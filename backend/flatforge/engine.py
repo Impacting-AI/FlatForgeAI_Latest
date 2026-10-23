@@ -163,8 +163,6 @@ def run(config):
   report['status']=status;report['review_decisions']=overrides;dump(out/'report.json',report)
   artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
   dump(out/'result.json',{'status':status,'report':report,'artifacts':artifacts});return report
- if manual and not str(overrides.get('review_note','')).strip():
-  issue('MANUAL_VALUES','Add a review note explaining the confirmed values that replace unreliable or missing sections.');return finish('NEEDS_REVIEW')
  report['conversion']={'input_format':source.suffix.lower()[1:],'status':'RUNNING' if source.suffix.lower()=='.dwg' else 'NOT_REQUIRED','engine':'ODA' if source.suffix.lower()=='.dwg' else 'Native DXF'}
  if source.suffix.lower()=='.dwg':
   checkpoint('CONVERTING','Converting DWG to DXF with ODA…')
@@ -234,7 +232,7 @@ def run(config):
  if 'KIFOF' in missing:
   issue('LAYERS','No bend axes were found. Add KIFOF bend positions in CAD and replace the drawing; a numeric angle cannot supply a missing axis.');return finish('NEEDS_REVIEW')
  if 'HAT' in missing and not manual:
-  issue('SECTION_EVIDENCE','Section drawings are missing. Enter the missing angles below and enable reviewed bend values with their source, or add the sections in CAD. No separate data file is required.');return finish('NEEDS_REVIEW')
+  issue('SECTION_EVIDENCE','Section drawings are missing. Enter or confirm the bend angles in the flat-pattern viewer and save to rebuild, or add the sections in CAD. No separate data file is required.');return finish('NEEDS_REVIEW')
  if unassigned:
   issue('UNASSIGNED_AXES','These bend entities do not bound a hinge after the 3 mm relief extension: '+', '.join(unassigned)+'. Check endpoint gaps and contour alignment; this alone does not prove an interior rib.');return finish('NEEDS_REVIEW')
  evidence=parameter_evidence['thickness']

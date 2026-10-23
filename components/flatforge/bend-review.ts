@@ -1,4 +1,4 @@
-import type { Bend, BendValues, Settings } from './types';
+import type { Bend, BendValues, Panel, Settings } from './types';
 import type { ReviewValues } from './review-state';
 
 export const bendFields = ['angle', 'radius', 'deduction'] as const;
@@ -17,6 +17,31 @@ export function updateBendParameters(review: ReviewValues, key: string, patch: B
 
 export function automaticBendAngle(bend: Bend) {
   return bend.confirmed ? bend.source.find(source => source.profile !== 'USER CONFIRMED')?.angle ?? null : bend.angle;
+}
+
+/** Only section/finish-evidence problems permit the existing reviewed mode.
+ * Geometry, material, collision and relief failures are not section failures.
+ */
+export function requiresReviewedSections(report: Panel['report']) {
+  return !!report.issues?.some(issue => ['SECTION_EVIDENCE', 'SECTION_CORRESPONDENCE', 'PAINT'].includes(issue.code))
+    || !!report.section_mapping?.some(section => section.status && section.status !== 'PASS');
+}
+
+/** Applying an angle now performs the recovery previously selected by checkbox.
+ * Keep known rotations, never fill missing/cleared ones, and retain saved notes.
+ */
+export function applyBendReview(review: ReviewValues, key: string, patch: BendValues | null, report: Panel['report']): ReviewValues {
+  const next = updateBendParameters(review, key, patch);
+  if (patch === null) return { ...next, manual_bends: false };
+  if (patch.angle == null || !Number.isFinite(patch.angle) || patch.angle === 0 || Math.abs(patch.angle) >= 180
+    || !requiresReviewedSections(report)) return next;
+  const bends = { ...next.bend_parameters };
+  for (const bend of report.bends ?? []) {
+    const angle = automaticBendAngle(bend);
+    if (bends[bend.key]?.angle === undefined && angle != null) bends[bend.key] = { ...bends[bend.key], angle };
+  }
+  return { ...next, manual_bends: true, bend_parameters: bends,
+    section_choices: Object.fromEntries(Object.keys(next.section_choices).map(profile => [profile, null])) };
 }
 
 /** Preserve a deliberately empty field. In particular, '' must never mean zero. */
@@ -51,5 +76,5 @@ export function reviewError(value:ReviewValues,settings:Settings):string|null {
  for(const [n,min,max,name,zero] of ranges)if(!Number.isFinite(n)||(zero?n<min:n<=min)||n>max||(name==='Missing angle'&&n===180))return `${name}: enter a value ${zero?'from':'above'} ${min} and ${name==='Missing angle'?'below':'up to'} ${max}.`;
  for(const bend of Object.values(value.bend_parameters)){const error=bendValueError(bend);if(error)return error;}
  for(const radius of Object.values(value.relief_radii))if(radius!=null&&(!Number.isFinite(radius)||radius<=0))return 'Corner-relief radii must be positive numbers.';
- return (value.manual_bends||Object.values(value.relief_radii).some(r=>r!=null))&&!value.review_note.trim()?'Add a note stating where your confirmed bend or corner-cut values came from.':null;
+ return null;
 }

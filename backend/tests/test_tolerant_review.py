@@ -96,7 +96,9 @@ def test_review_api_accepts_non_square_values_rejects_unknown_keys_and_clears(tm
         assert client.post(url+'/review',json={'bend_angles':{'unknown':60}}).status_code==422
         for angle in (0,180,-180):
             assert client.post(url+'/review',json={'bend_angles':{keys[0]:angle}}).status_code==422
-        assert client.post(url+'/review',json={'manual_bends':True}).status_code==422
+        assert client.post(url+'/review',json={'manual_bends':True}).status_code==202
+        worker.process(worker.claim());pending=client.get(url).json()
+        assert pending['status']=='NEEDS_REVIEW' and len(pending['report']['unresolved_bends'])==2
         assert client.post(url+'/review',json={'section_choices':{'invented':'local-1'}}).status_code==422
         response=client.post(url+'/review',json={'manual_bends':True,'review_note':'Reviewed two channel bends.','bend_angles':{keys[0]:60,keys[1]:-120}})
         assert response.status_code==202

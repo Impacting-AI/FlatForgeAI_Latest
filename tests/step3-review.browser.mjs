@@ -92,8 +92,10 @@ try {
   assert.equal(await page.getByLabel('Review values JSON', { exact: true }).count(), 0);
   assert.equal(await page.getByLabel('Corner radius test-corner', { exact: true }).count(), 0);
   assert.equal(await materialRule.count(), 0);
-  assert.equal(await page.getByRole('checkbox', { name: 'Use reviewed bend values instead of missing or unreliable section drawings' }).count(), 1);
-  assert.equal(await page.getByLabel('Source of confirmed values / reason for this decision').inputValue(), reviewNote);
+  assert.equal(await page.getByRole('checkbox', { name: 'Use reviewed bend values instead of missing or unreliable section drawings' }).count(), 0);
+  assert.equal(await page.getByLabel('Source of confirmed values / reason for this decision').count(), 0);
+  assert.equal(await page.locator('.review-decisions .parameter-help, .review-controls .review-warning').count(), 0);
+  await page.locator('.review-decisions').screenshot({ path: path.join(output, 'step3-clean-parameters.png') });
   // Global defaults retain their existing policy control; only Step 3 lost it.
   await page.getByRole('button', { name: 'Material defaults', exact: true }).click();
   await materialRule.waitFor();
@@ -159,6 +161,7 @@ try {
   target.settings.use_material_defaults = false; target.configured_settings.use_material_defaults = false;
   target.overrides = { relief_radii: hiddenReliefs, review_note: reviewNote, bend_parameters: { [first.key]: { radius: null, deduction: null } } };
   first.angle = null; first.source = []; target.revision++;
+  target.report.issues = [{ code: 'SECTION_EVIDENCE', message: 'Missing section profiles' }];
   target.report.unresolved_bends = [{ key: first.key, bend_ids: first.bend_ids, parent: first.parent, child: first.child, axis: '(1, 0, 0)', reason: 'Test missing section evidence' }];
   await page.reload({ waitUntil: 'networkidle' }); await reviewPage(); await open(first);
   assert.ok((await editor.textContent()).includes('Source section / vertex not established'));
@@ -167,9 +170,23 @@ try {
   await open(first); await input(0).fill('120');
   await page.getByLabel('Signed angle for ' + first.bend_ids.join('/'), { exact: true }).fill('75');
   assert.equal(await input(0).inputValue(), '75'); await cancel();
-  await page.getByRole('checkbox', { name: 'Use reviewed bend values instead of missing or unreliable section drawings' }).check();
   await save(); assert.equal(saved.manual_bends, true); assert.equal(saved.settings.use_material_defaults, false);
   assert.deepEqual(saved.relief_radii, hiddenReliefs); assert.equal(saved.review_note, reviewNote);
+  // A saved reviewed panel with an empty historical note must rebuild without a hidden field.
+  target.overrides.relief_radii = {}; target.overrides.review_note = '';
+  target.revision++; await page.reload({ waitUntil: 'networkidle' }); await reviewPage();
+  await save(); assert.equal(saved.manual_bends, true); assert.equal(saved.review_note, '');
+  // Use automatic clears the selected override and returns to drawing-based processing.
+  await page.reload({ waitUntil: 'networkidle' }); await reviewPage(); await open(first);
+  await editor.getByRole('button', { name: 'Use automatic', exact: true }).click();
+  await save(); assert.equal(saved.manual_bends, false); assert.deepEqual(saved.bend_parameters[first.key], {});
+  // Apply can confirm an unchanged detected angle when section correspondence failed.
+  first.angle = 60; first.source = originalSource;
+  target.overrides = {}; target.revision++;
+  await page.reload({ waitUntil: 'networkidle' }); await reviewPage(); await open(first); await apply();
+  await save(); assert.equal(saved.manual_bends, true); assert.equal(saved.bend_parameters[first.key].angle, 60);
+  assert.equal(saved.review_note, '');
+  first.angle = null;
   first.source = [{ profile: 'A_VERY_LONG_SECTION_IDENTIFIER_WITH_MULTIPLE_REFERENCES_01', vertex: 0, angle: 60 }, { profile: 'SECOND_SECTION', vertex: null, angle: 90 }];
   target.revision++; await page.reload({ waitUntil: 'networkidle' }); await reviewPage(); await open(first);
   assert.ok((await editor.textContent()).includes('Unresolved source mapping'));
@@ -186,7 +203,7 @@ try {
   await page.getByRole('tab', { name: /Extract/ }).click(); await drawing.waitFor();
   assert.equal(await card(first).count(), 0); assert.equal(await editor.count(), 0);
   assert.equal(errors.length, 0, JSON.stringify(errors));
-  console.log('PASS: 53 source mappings; removed controls; global defaults; viewer editing and validation; shared state; hidden relief persistence; true/false fallback settings; save/reload; missing values; repeated IDs; zoom/pan; mobile bounds; uncertain identity.');
+  console.log('PASS: 53 source mappings; removed circled controls/text; automatic section recovery; empty-note rebuild; automatic restore; global defaults; viewer editing and validation; shared state; hidden relief persistence; true/false fallback settings; save/reload; missing values; repeated IDs; zoom/pan; mobile bounds; uncertain identity.');
 } finally {
   await browser?.close(); server?.kill('SIGTERM');
   fs.writeFileSync(path.join(output, 'step3-server.log'), logs);

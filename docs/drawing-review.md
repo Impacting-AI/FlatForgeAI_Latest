@@ -95,10 +95,11 @@ the drawing value or configured default. Existing geometry validation still appl
 4. Fill remaining signed rotations. Click a bend annotation or line in the flat
    viewer to edit its angle, radius or deduction. Source section / vertex
    references are read-only and remain associated with the exact hinge.
-5. If sections or finish markers are missing/unreliable, select **Use reviewed
-   bend values instead of missing or unreliable section drawings**. Detected
-   rotations are copied for review; missing ones still require input. Supply a
-   note identifying the source of the values. The result explicitly records that
+5. If sections or finish markers are missing/unreliable, enter or confirm an
+   angle in the flat viewer. Applying it enables reviewed-section recovery;
+   known rotations are retained, while missing ones still require input. No
+   separate checkbox or note entry is required. **Use automatic** returns to
+   drawing-based section processing. The result explicitly records that
    section dimensions and paint orientation were not independently verified.
 6. Inspect any proposed corner relief. Its removal requires a separate recorded
    choice before final export. Clearing that choice revokes the approval.
@@ -123,7 +124,8 @@ unmatched DWG conversion, duplicate matches, unknown bend keys, conflicting
 rotations and invalid numbers are rejected. Missing rotations remain unknown;
 old saved rotations are cleared when omitted from the imported schedule. Values
 absent from the settings object keep the current panel setting and the preview
-explains this. The file must contain the source note for manual bend/cut values.
+explains this. Bend notes are optional; approved corner-cut values still require
+their source note. Existing notes are preserved.
 Import is a preview: it saves nothing and queues no work until the user saves.
 The save checks the panel revision, preventing a stale form from replacing newer
 decisions. Review files are measured inputs, not automatic STEP interpretation.

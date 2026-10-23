@@ -6,7 +6,7 @@ import { fileUrl } from './types';
 import type { ReviewValues } from './review-state';
 import { bendSourceReferences, calloutLayout, editableHinge, flatProjection, hingeAnchor, matchesHinge, polygonPath, reviewedBend } from './flat-pattern';
 import type { FlatExtraction, Point2 } from './flat-pattern';
-import { bendFields, bendInputValue, type BendChange } from './bend-review';
+import { bendFields, bendInputValue, requiresReviewedSections, type BendChange } from './bend-review';
 import BendEditor from './BendEditor';
 import styles from './FlatPatternViewer.module.css';
 
@@ -172,6 +172,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
       bend={editBend}
       names={`${faceName(editBend.parent)} → ${faceName(editBend.child)}`} settings={settings} review={review}
       resolution={panel.report.parameter_resolution}
+      sectionReviewRequired={requiresReviewedSections(panel.report)}
       style={{ left: editLeft, top: editTop, maxHeight: viewportHeight - editTop - 8 }}
       onCancel={closeEditor}
       onApply={patch => {

@@ -15,11 +15,6 @@ export default function ReviewControls({panel,settings,value,onChange,onBendChan
  };
  const unresolved=panel.report.unresolved_bends??[];
  const candidates=panel.report.section_mapping?.filter(s=>(s.status!=='PASS'&&s.review_candidates?.length)||value.section_choices[s.profile]);
- function manualMode(checked:boolean){
-  const bends={...value.bend_parameters};
-  if(checked)for(const bend of panel.report.bends??[])if(bend.angle!=null&&bends[bend.key]?.angle==null)bends[bend.key]={...bends[bend.key],angle:bend.angle};
-  onChange({...value,manual_bends:checked,bend_parameters:bends,section_choices:checked?Object.fromEntries(Object.keys(value.section_choices).map(key=>[key,null])):value.section_choices});
- }
  return <div className="review-controls">
   {!value.manual_bends&&candidates?.map(s=><div className="review-chain" key={s.profile}>
    <label htmlFor={'chain-'+s.profile}>{s.profile.replaceAll('_',' ')} · choose the matching bend chain</label>
@@ -36,11 +31,6 @@ export default function ReviewControls({panel,settings,value,onChange,onBendChan
    <div className="bend-quick-values"><Button type="button" variant="outline" size="sm" onClick={()=>setBend(b.key,'angle',settings.default_angle??90)}>+{settings.default_angle??90}°</Button><Button type="button" variant="outline" size="sm" onClick={()=>setBend(b.key,'angle',-(settings.default_angle??90))}>−{settings.default_angle??90}°</Button><input aria-label={'Signed angle for '+b.bend_ids.join('/')} type="number" step="any" min="-179.999" max="179.999" placeholder="Angle °" value={value.bend_parameters[b.key]?.angle??''} onChange={e=>setBend(b.key,'angle',e.target.value)}/></div>
   </div>)}
   {SHOW_CORNER_RELIEF_CONTROLS&&<CornerReliefControls panel={panel} value={value} onChange={onChange}/>}
-  <div className="manual-section-choice"><label><Checkbox checked={value.manual_bends} onCheckedChange={c=>manualMode(c===true)}/>Use reviewed bend values instead of missing or unreliable section drawings</label>
-   {value.manual_bends&&<p>Current detected angles are copied into the review values. Check them and fill every remaining rotation. The result records that section dimensions and paint orientation were not independently checked.</p>}
-   {(value.manual_bends||Object.values(value.relief_radii).some(r=>r!=null))&&<><label htmlFor="review-note">Source of confirmed values / reason for this decision</label><textarea id="review-note" maxLength={2000} value={value.review_note} onChange={e=>onChange({...value,review_note:e.target.value})} placeholder="For example: measured from the approved client STEP."/></>}
-  </div>
   {!!panel.report.corner_relief_proposals?.length&&<div className="manual-section-choice"><p>The highlighted corner regions contain {panel.report.corner_relief_proposals.reduce((sum,p)=>sum+p.area_mm2,0).toFixed(4)} mm² of material and have no original bend axis.</p><label><Checkbox checked={value.accept_corner_reliefs} onCheckedChange={c=>onChange({...value,accept_corner_reliefs:c===true})}/>I reviewed and approve removal of these corner regions as bend relief</label></div>}
-  {panel.report.warnings?.map((warning,i)=><p className="review-warning" key={i}>{warning}</p>)}
  </div>;
 }
