@@ -1,108 +1,184 @@
-# STEP 6 assembly spacing
+# STEP 6: directional clearances and assembly STEP export
 
-## Units and the corrected defect
+## Root cause and units
 
-The backend accepts millimetre DXFs (`$INSUNITS=4`) and unitless DXFs under the
-workspace's documented mm convention. Other declared units require review;
-assembly does not reinterpret them. CadQuery solids and STEP exports use mm.
-STL has no unit declaration; FlatForge writes its CAD coordinates in mm.
+The earlier millimetre fix remains: CAD/DXF/STEP coordinates are mm; the backend
+GLB exporter writes metres. The viewer must not scale the GLB a second time.
+Only assembly translations convert between mm and metres.
 
-Both backend GLB exporters already multiply tessellated CAD coordinates by
-0.001. AssemblyViewer previously applied another `scale.setScalar(.001)` to
-the loaded GLB, while correctly dividing gap inputs by 1000. This shrank panel
-dimensions by 1000 relative to the gap. The extra scale is removed. The loaded
-GLB and all original node transforms remain unchanged inside a translation-only
-wrapper. Only mm inputs are converted to metres for Three.js placement.
+The subsequent overlap problem had two causes:
 
-Measured GLB envelopes agree with the supplied reports (within 0.002 mm):
+1. Only the selected connection-face axis used a boundary gap. The other inputs
+   added signed translations to center/bottom alignment. They did not include
+   either panel's folded extents, so a 30 mm shift was not a 30 mm clearance.
+2. Non-opposing face selections used different signed half-extents while keeping
+   the panel's rotation unchanged. This could put a panel on the wrong side of
+   its target or inside it. The old sampled-vertex clash check was not an exact
+   solid-intersection test.
 
-| Fixture | X × Y × Z, mm |
-| --- | --- |
-| 1570 | 2034 × 670 × 358 |
-| 1619 | 2034 × 654 × 320 |
-| 1648 | 990 × 2917 × 55 |
+## Directional gap model
 
-## Control semantics
+FlatForge remains **Z-up**. Model coordinates and rotations are not swapped to
+match a different screen convention:
 
-The existing viewer and face picker are **Z-up**, so the three inputs are:
+| Control | Positive side | Negative side |
+| --- | --- | --- |
+| Horizontal (X) | Right | Left |
+| Vertical (Z) | Above | Below |
+| Front / back (Y) | Back | Front |
 
-- Horizontal (X): + right / − left.
-- Vertical (Z): + up / − down.
-- Front / back (Y): − front / + back.
+The connection face determines the primary axis and side. On each other axis,
+choose **Keep alignment** or an explicit positive/negative side. Keep alignment
+adds no directional gap. Selecting a side activates its non-negative gap input;
+zero then means touching support planes. This distinction avoids guessing which
+side of a target an additional gap should use.
 
-The axis of the selected target face uses the existing non-negative connection
-gap. For opposing faces, it is the separation between their axis-aligned bounding
-planes, measured along the target face's outward normal. The other two inputs
-are signed offsets from that face-connected placement. Changing the selected
-target face relabels the controls: the gap follows the new connection direction;
-any offset on that new gap axis resets to zero to avoid a hidden second spacing.
-Unchanged tangent offsets remain in place. Reset restores 10 mm gap and zero
-offsets. Choosing Top/Bottom stacks panels; choosing Front/Back arranges depth.
+For an active positive direction, the child minimum equals the target maximum
+plus the gap. For a negative direction, the child maximum equals the target
+minimum minus the gap. These are **support planes of the actual rotated folded
+geometry**, not extents of the flat DXF, center-to-center measurements, or a
+rotation of the unrotated bounding box. Active constraints apply independently
+on each world axis. Other axes retain the existing center/bottom alignment.
+Multiple active gaps produce a diagonal arrangement with the requested clearance
+on each selected axis; they do not claim that the shortest 3D surface distance
+is any single gap value.
 
-A 10 mm gap between overlapping parallel planar faces is a 10 mm physical
-clearance. For folded, non-overlapping or rotated surfaces this is **bounding-plane
-separation**, not a claim about the exact shortest distance between solids.
-Non-opposing face pairs retain the existing placement behavior and explicitly
-show “connection offset” instead of claiming a gap. Panels are never auto-rotated.
+Changing a gap leaves the root, rotations, other axis constraints and unrelated
+branches unchanged. Descendants follow their target and retain their own
+relationships. Non-opposing envelope faces are rejected for directional gap
+connections; select opposing faces instead of implicitly rotating the panel.
+Changing the connection face reassigns the primary gap to the new direction.
+Reset restores the 10 mm primary gap, aligned other axes and zero legacy shifts.
 
-`assemblyPlacements` is the shared placement calculation. It uses actual GLB
-vertex bounds including node transforms. The root is centered at XY origin with
-its bottom at Z=0. Lateral connections keep bottom alignment relative to their
-target; offsets then translate only that panel and its connected descendants.
-Vertical connections use face centers. Unrelated branches do not move. Broken
-references, cycles and invalid numbers fail explicitly. Removing a panel removes
-its connected descendants to avoid orphaned references.
+## One set of transformations
 
-## State, viewing and export
+`assembly-geometry.ts` is the only placement calculation used by the application.
+In live mode:
 
-- Spacing and connection edits update existing Three.js groups; the camera,
-  orbit, pan and zoom are preserved. Model revisions reload geometry.
-- Empty, negative-gap and non-finite input is rejected; the last valid value
-  remains applied, with a visible message. Signed tangent offsets accept negatives.
-- Versioned `flatforge.assemblies.v1` browser storage records each project's
-  ordered entries in mm, including gap, offsets and face relationships. Reloading
-  and switching projects restores them. Legacy gap-only entries imply zero offsets.
-- This is browser-local persistence, not server or cross-device synchronization.
-  Unreadable stored data is preserved and a session-only warning is shown.
-- **Export assembly GLB** clones the exact positioned panel groups in assembly
-  order, excludes lights/grid/clash overlays, and writes standard metre GLB
-  coordinates. Scene extras retain the connection settings in mm and wrapper
-  extras identify each assembly entry and source panel. Screenshot also uses the
-  current assembly scene.
-- Existing STEP/STL and project ZIP exports remain individual panel artifacts.
-  There was no assembled STEP/STL exporter; this change does not imply one exists.
-- Backend engineering calculations, individual geometry, and Steps 1–5 are unchanged.
+1. `POST /projects/{id}/assembly/geometry` checks project membership and panel
+   revisions, imports the existing approved `panel.step` BREP, applies the saved
+   rotation, and returns exact CAD support bounds in mm. OpenCascade's optimal
+   bounds use underlying geometry, without triangulation or inflated mesh boxes.
+2. The shared frontend engine computes the placements from those bounds and the
+   explicit connection tree. It creates column-major rigid matrices with
+   dimensionless rotation and mm translation. The viewer uses the same rotation
+   and divides only translation by 1000 for the existing metre GLBs. Source GLB
+   node transforms are preserved.
+3. `POST /projects/{id}/assembly/validate` receives those exact matrices. It checks
+   the measured CAD clearances, all panel-pair intersections, source ownership,
+   revisions and rigid unit scale. It does not recalculate or change placement.
+4. A valid result signs the exact matrices, source identities, artifact keys and
+   hashes. STEP export consumes that snapshot. GLB export contains those same
+   positioned groups and includes `cadTransformsMm` in scene metadata.
+
+Validation runs after spacing edits; outdated requests are cancelled and their
+responses ignored. CAD export is disabled while checking, on errors, or when
+conflicts exist. A late approval for an older gap cannot enable a different
+layout's export. Spacing edits update the existing canvas and preserve its camera,
+zoom, orbit and pan.
+
+Offline sample mode uses the same placement engine with GLB geometry bounds.
+It is explicitly labelled as a sample preview; exact CAD validation and assembly
+STEP export require the Python service. It does not fabricate STEP from meshes.
+
+## Collision and contact checks
+
+The backend first rejects disjoint bounding intervals, then uses OpenCascade
+BREP common-volume tests for potential intersections. This catches thin crossing
+solids that have no sampled vertices inside one another. It checks every pair,
+including siblings and unrelated branches, not just each child and its target.
+
+Touching surfaces with no positive common volume are reported as contacts and
+are permitted. Numerical thresholds are 0.00001 mm for clearance/contact checks
+and 0.000001 mm³ for intersection volume. These address kernel precision and
+are independent of the experimental drawing-tolerance switch. Intersections
+highlight the affected panels, identify the conflicting pair and block export.
+The application never moves other branches automatically to resolve a conflict.
+The original approximate mesh clash check remains available only for offline
+samples; live results use CAD common volume.
+
+## STEP export
+
+**Export assembly as STEP (.step)** downloads a single named CAD assembly. It
+reuses the original BREP solids and applies the signed preview matrices using
+CadQuery/OpenCascade locations. Each entry remains an individual named part;
+repeated instances of a source panel remain separate instances. The exporter
+uses normal assembly mode, never fused mode. Individual panel files, thickness,
+analytic bend surfaces, STEP 5 export and source geometry are unchanged.
+
+`POST /projects/{id}/assembly/step` rechecks the project, current approved panel
+revisions, artifact identities, clearances and collisions. It rejects altered
+or stale snapshots. Before returning the file it reimports it with the CAD kernel
+and verifies validity, expected solid count, placed bounds and volumes. Temporary
+files are removed after the response or on error. No partial file is returned
+when a panel is unavailable or a CAD check fails.
+
+## Existing layouts and application scope
+
+Browser-local `flatforge.assemblies.v1` data remains compatible. Optional
+`spacing` constraints and rotation quaternions are stored with the existing entry
+IDs and connection tree. Old offset layouts retain their saved positions; they
+are not silently reinterpreted as gaps. **Use directional gaps** explicitly
+converts an old entry while retaining its tangential alignment shifts. Those
+shifts are identified in the direction controls. Reset intentionally removes them.
+Previously invalid or intersecting layouts remain visible as conflicts and must
+be corrected before CAD export.
+
+If a source drawing returns to review or becomes unavailable, its saved assembly
+entry is retained with a recoverable error. Export cannot silently omit it.
+Restoring the approved drawing result restores the assembly with its saved gaps.
+
+No database migration, CAD rebuild or new material parameters are required.
+Deploy/restart both frontend and Python API together. Assemblies use approved
+CAD panel results, consistent with STEP 5's export policy. Source extraction,
+STEP 3 review state, STEP 4 calculations, individual drawing routes and project
+management are not changed.
 
 ## Verification
 
-Run from the repository root:
-
 ```sh
-node --experimental-strip-types --test tests/assembly.test.mjs tests/flat-pattern.test.mjs
+node --experimental-strip-types --test tests/*.test.mjs
 pnpm exec tsc --noEmit
-pnpm exec eslint components/flatforge/AssemblyViewer.tsx components/flatforge/AssemblySpacing.tsx components/flatforge/assembly-geometry.ts components/flatforge/assembly-storage.ts components/flatforge/useAssemblyState.ts
-PYTHONPATH=backend OPENBLAS_NUM_THREADS=1 python -m pytest backend/tests/test_panel_regressions.py backend/tests/test_bend_editor_workflow.py -q
+pnpm exec eslint components/flatforge/AssemblyViewer.tsx components/flatforge/AssemblySpacing.tsx components/flatforge/assembly-cad.ts components/flatforge/assembly-geometry.ts components/flatforge/assembly-storage.ts
+PYTHONPATH=backend OPENBLAS_NUM_THREADS=1 python -m pytest backend/tests/test_assembly_cad.py backend/tests/test_project_context.py backend/tests/test_workflow.py::test_upload_review_worker_exports_and_persistence backend/tests/test_bend_editor_workflow.py -q
 node tests/assembly.browser.mjs
 node tests/step3-review.browser.mjs
+node tests/drawing-workflow.browser.mjs
+pnpm build
 ```
 
-Browser tests require Playwright and Chromium. Set `PLAYWRIGHT_MODULE` and
-`FLATFORGE_CHROMIUM` for an external installation, and optionally
-`FLATFORGE_QA_OUTPUT` for screenshots/exported GLBs. The assembly test runs a real
-WebGL renderer with SwiftShader, exports and reloads GLBs, then measures their
-coordinates. API bootstrap uses bundled sample records; no external service is
-required. CAD tests use the real Python engine.
+Browser suites require Chromium and Playwright, with `FLATFORGE_CHROMIUM` and
+`PLAYWRIGHT_MODULE` available for external installations. Run them sequentially.
+The assembly suite launches a disposable real Python API using bundled folded
+STEP/GLB fixtures. Browser transport forwards to that API; CAD answers are not
+mocked. It downloads STEP and GLB files, measures GLB coordinates, and opens each
+STEP with CadQuery/OpenCascade to compare solids against the exact preview
+matrices, bounds, volumes and face types. FreeCAD GUI testing is not claimed.
 
-Coverage includes 1/5/10/25/50/100 mm gaps, all six connection directions,
-different panel dimensions, rotated nodes, repeated models, offset combinations,
-raised descendants, invalid input, reset, browser reload, project isolation,
-clash checking, viewport interactions and mobile controls. Original customer-DXF
-regressions skip when the seven external fixtures are unavailable; the three
-bundled folded-panel regressions still execute.
+Coverage includes 0/1/5/10/25/50/100 mm gaps, six directions, unequal and irregular
+folded parts, preserved rotations, combined gaps, branch collisions, thin solid
+crossings, permitted contact, repeated parts, invalid transforms, missing and
+foreign project sources, stale revisions/tokens, delayed validation, export
+errors/retry, legacy offsets, reload, project isolation, viewport interactions,
+mobile controls, and existing review/calculation/individual STEP workflows.
 
-Executed for this change: 27 Node tests passed (9 assembly, 18 flat-pattern),
-both browser suites passed, TypeScript and focused assembly lint passed, and
-`pnpm build` completed. The selected Python suites reported 5 passed and 7
-skipped because the external customer DXFs were absent. The existing
-`FlatForge.tsx` lint baseline remains 7 errors / 10 warnings; whole-project lint
-is not claimed to pass.
+Executed on 2026-10-24: **35 Node tests and 14 Python API/CAD/workflow tests
+passed**. The assembly, STEP 3 review and drawing-navigation browser suites all
+passed. The final assembly run verified five downloaded STEP assemblies with
+two or three solids each, plus an API regression exported four parts including
+a repeated panel. The tests reopened and measured these files with
+CadQuery/OpenCascade; they did not use FreeCAD's graphical interface.
+TypeScript and the focused assembly-file ESLint checks passed. Whole-application
+ESLint is not claimed by this report. The final production build passed, with
+Vinext's bundle-size warning and route-classification notice.
+
+## Changed files
+
+| Area | Files |
+| --- | --- |
+| Placement, persistence and types | `components/flatforge/assembly-geometry.ts`, `assembly-storage.ts`, `types.ts` |
+| STEP 6 UI and shared CAD requests | `components/flatforge/AssemblySpacing.tsx`, `AssemblyViewer.tsx`, `assembly-cad.ts`, `FlatForge.tsx`, `app/globals.css` |
+| CAD validation and export API | `backend/flatforge/assembly.py`, `backend/flatforge/api.py` |
+| Geometry and browser regression | `tests/assembly.test.mjs`, `assembly-placement.mjs`, `assembly.browser.mjs` |
+| CAD regression and browser fixtures | `backend/tests/test_assembly_cad.py`, `serve_assembly.py`, `verify_assembly_export.py` |
+| Implementation report | `docs/assembly-spacing.md` |

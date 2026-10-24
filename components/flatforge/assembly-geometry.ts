@@ -10,19 +10,34 @@ export const faceSign = (face: Face) => face[0] === '+' ? 1 : -1;
 export const opposingFaces = (entry: AssemblyEntry) => entry.targetFace !== null
   && faceAxis(entry.myFace) === faceAxis(entry.targetFace) && faceSign(entry.myFace) !== faceSign(entry.targetFace);
 export const zeroOffsets = () => ({ x: 0, y: 0, z: 0 });
+/** Explicit opt-in for old layouts: retain saved tangential alignment offsets. */
+export function withDirectionalGaps(entry: AssemblyEntry): AssemblyEntry {
+  const spacing = { x: { side: 0, gap: 0 }, y: { side: 0, gap: 0 }, z: { side: 0, gap: 0 } } as NonNullable<AssemblyEntry['spacing']>;
+  if (entry.targetFace) spacing[faceAxis(entry.targetFace)] = { side: faceSign(entry.targetFace), gap: entry.gap };
+  return { ...entry, spacing };
+}
+export function setAssemblySide(entry: AssemblyEntry, axis: AssemblyAxis, side: -1|0|1): AssemblyEntry {
+  const next = entry.spacing ? entry : withDirectionalGaps(entry);
+  if (entry.targetFace && axis === faceAxis(entry.targetFace) && side !== faceSign(entry.targetFace)) throw new Error('Change the connection face to change this direction.');
+  return { ...next, spacing: { ...next.spacing!, [axis]: { ...next.spacing![axis], side } } };
+}
 export function setAssemblySpacing(entry: AssemblyEntry, axis: AssemblyAxis, value: number): AssemblyEntry {
-  if (!Number.isFinite(value)) throw new Error('Enter a finite number in mm.');
-  if (entry.targetFace && axis === faceAxis(entry.targetFace)) {
-    if (value < 0) throw new Error('Connection gap must be zero or greater.');
-    return { ...entry, gap: value };
-  }
-  return { ...entry, offsets: { ...zeroOffsets(), ...entry.offsets, [axis]: value } };
+  if (!Number.isFinite(value) || value < 0) throw new Error('Gap must be a finite, non-negative number in mm.');
+  const next = entry.spacing ? entry : withDirectionalGaps(entry);
+  if (!next.spacing![axis].side) throw new Error('Choose the separation side for this axis first.');
+  return { ...next, gap: entry.targetFace && axis === faceAxis(entry.targetFace) ? value : entry.gap,
+    spacing: { ...next.spacing!, [axis]: { ...next.spacing![axis], gap: value } } };
 }
 export function setAssemblyTargetFace(entry: AssemblyEntry, face: Face): AssemblyEntry {
-  return { ...entry, targetFace: face, offsets: { ...zeroOffsets(), ...entry.offsets, [faceAxis(face)]: 0 } };
+  const next = { ...entry, targetFace: face, offsets: { ...zeroOffsets(), ...entry.offsets, [faceAxis(face)]: 0 } };
+  if (!entry.spacing) return next;
+  const spacing = { ...entry.spacing };
+  if (entry.targetFace) spacing[faceAxis(entry.targetFace)] = { side: 0, gap: 0 };
+  spacing[faceAxis(face)] = { side: faceSign(face), gap: entry.gap };
+  return { ...next, spacing };
 }
 export function resetAssemblySpacing(entry: AssemblyEntry): AssemblyEntry {
-  return { ...entry, gap: DEFAULT_ASSEMBLY_GAP_MM, offsets: zeroOffsets() };
+  return withDirectionalGaps({ ...entry, gap: DEFAULT_ASSEMBLY_GAP_MM, offsets: zeroOffsets() });
 }
 export function removeAssemblyBranch(entries: AssemblyEntry[], id: string) {
   const removed = new Set([id]);
@@ -52,7 +67,9 @@ export function assemblyModel(model: THREE.Object3D) {
   return { group, bounds };
 }
 
-/** Axis-aligned envelope-face placement, in metres; this does not rotate panels. */
+/** One placement engine for preview and CAD export. Bounds include the preserved
+ * rotation and, in live mode, come from the exact folded BREP, not a rotated box.
+ * Active axes are directional support-plane gaps; other axes keep alignment. */
 export function assemblyPlacements(entries: AssemblyEntry[], bounds: Map<string, THREE.Box3>) {
   const placed = new Map<string, { translation: THREE.Vector3; bounds: THREE.Box3 }>();
   const byId = new Map(entries.map(entry => [entry.id, entry]));
@@ -72,6 +89,7 @@ export function assemblyPlacements(entries: AssemblyEntry[], bounds: Map<string,
       const target = byId.get(entry.targetId);
       if (!target || !entry.targetFace) throw new Error('Assembly connection target is unavailable.');
       const targetBox = place(target).bounds;
+      if (entry.spacing && !opposingFaces(entry)) throw new Error('Choose opposing envelope faces for a gap connection. Panel rotations are preserved.');
       const targetHalf = targetBox.getSize(new THREE.Vector3()).multiplyScalar(.5);
       center = targetBox.getCenter(new THREE.Vector3())
         .add(faceOffset(entry.targetFace, targetHalf)).sub(faceOffset(entry.myFace, half));
@@ -86,6 +104,15 @@ export function assemblyPlacements(entries: AssemblyEntry[], bounds: Map<string,
         if (axis === faceAxis(entry.targetFace) && offset !== 0) throw new Error('Use the gap control along the connection direction.');
         center[axis] += offset / MM_PER_METRE;
       }
+      if (entry.spacing) {
+        for (const axis of ['x', 'y', 'z'] as const) {
+          const constraint = entry.spacing[axis];
+          if (!constraint || ![-1,0,1].includes(constraint.side) || !Number.isFinite(constraint.gap) || constraint.gap < 0) throw new Error('Invalid directional gap.');
+          if (axis === faceAxis(entry.targetFace) && (constraint.side !== faceSign(entry.targetFace) || constraint.gap !== entry.gap)) throw new Error('Connection face and gap direction disagree.');
+          if (constraint.side === 1) center[axis] = targetBox.max[axis] + constraint.gap / MM_PER_METRE + half[axis];
+          if (constraint.side === -1) center[axis] = targetBox.min[axis] - constraint.gap / MM_PER_METRE - half[axis];
+        }
+      }
     }
     const translation = center.sub(box.getCenter(new THREE.Vector3()));
     const result = { translation, bounds: box.clone().translate(translation) };
@@ -95,4 +122,16 @@ export function assemblyPlacements(entries: AssemblyEntry[], bounds: Map<string,
   }
   entries.forEach(place);
   return placed;
+}
+
+export function assemblyRotation(entry: AssemblyEntry) {
+  const values = entry.rotation ?? [0, 0, 0, 1];
+  if (values.length !== 4 || !values.every(Number.isFinite)) throw new Error('Invalid panel rotation.');
+  const rotation = new THREE.Quaternion(...values);
+  if (Math.abs(rotation.lengthSq() - 1) > 1e-8) throw new Error('Panel rotation must be a unit quaternion.');
+  return rotation;
+}
+/** Column-major rigid CAD matrix: dimensionless rotation and mm translation. */
+export function assemblyMatrix(entry: AssemblyEntry, translationMetres: THREE.Vector3) {
+  return new THREE.Matrix4().compose(translationMetres.clone().multiplyScalar(MM_PER_METRE), assemblyRotation(entry), new THREE.Vector3(1,1,1)).toArray();
 }

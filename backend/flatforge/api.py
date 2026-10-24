@@ -13,6 +13,7 @@ from .dwg import available as dwg_available
 from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS
 from .review_files import select_review, MAX_REVIEW_BYTES
 from . import tolerance_policy
+from . import assembly as assembly_cad
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
 async def lifespan(app):
@@ -266,6 +267,26 @@ def export_project(id:str,background_tasks:BackgroundTasks):
   background_tasks.add_task(shutil.rmtree,td,True)
   return FileResponse(archive,filename='FlatForge_project.zip',media_type='application/zip',background=background_tasks)
  except Exception:shutil.rmtree(td,ignore_errors=True);raise
+
+@app.post('/projects/{id}/assembly/geometry',dependencies=[Depends(auth)])
+def assembly_geometry(id:str,body:assembly_cad.AssemblyInput):
+ return assembly_cad.geometry(id,body)
+
+@app.post('/projects/{id}/assembly/validate',dependencies=[Depends(auth)])
+def assembly_validate(id:str,body:assembly_cad.AssemblyInput):
+ return assembly_cad.validate(id,body)
+
+@app.post('/projects/{id}/assembly/step',dependencies=[Depends(auth)])
+def assembly_step(id:str,body:assembly_cad.ExportInput,background_tasks:BackgroundTasks):
+ td=Path(tempfile.mkdtemp(prefix='ff-assembly-export-'));output=td/'FlatForge_Assembly.step'
+ try:
+  assembly_cad.export_step(id,body.token,output)
+  background_tasks.add_task(shutil.rmtree,td,True)
+  return FileResponse(output,filename='FlatForge_Assembly.step',media_type='application/step',background=background_tasks)
+ except HTTPException:shutil.rmtree(td,ignore_errors=True);raise
+ except Exception as error:
+  shutil.rmtree(td,ignore_errors=True)
+  raise HTTPException(422,'Assembly CAD export failed. No incomplete STEP file was returned.') from error
 
 
 def get_project(s,id,lock=False):

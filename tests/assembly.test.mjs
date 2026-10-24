@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { assemblyModel, assemblyPlacements, removeAssemblyBranch, resetAssemblySpacing, setAssemblySpacing, setAssemblyTargetFace } from '../components/flatforge/assembly-geometry.ts';
+import { assemblyModel, assemblyPlacements, removeAssemblyBranch, resetAssemblySpacing, setAssemblySpacing, setAssemblyTargetFace, setAssemblySide, withDirectionalGaps, assemblyMatrix, assemblyRotation } from '../components/flatforge/assembly-geometry.ts';
 import { decodeAssemblies, encodeAssemblies } from '../components/flatforge/assembly-storage.ts';
 
 globalThis.ProgressEvent ??= class ProgressEvent extends Event {
@@ -12,7 +12,7 @@ globalThis.ProgressEvent ??= class ProgressEvent extends Event {
 
 const close = (actual, expected, tolerance = 1e-7) => assert.ok(Math.abs(actual - expected) < tolerance, `${actual} != ${expected}`);
 const entry = (id, targetId = null, gap = 10, myFace = '-X', targetFace = '+X') =>
-  ({ id, panelId: id, targetId, gap, myFace, targetFace: targetId === null ? null : targetFace });
+  withDirectionalGaps({ id, panelId: id, targetId, gap, myFace, targetFace: targetId === null ? null : targetFace });
 const box = (x, y, z) => new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(x, y, z).multiplyScalar(.001));
 
 async function fixture(name) {
@@ -62,18 +62,22 @@ test('six face directions preserve exact envelope gaps at all requested distance
   }
 });
 
-test('three controls work independently and together without moving the root', () => {
+test('three directional gaps work independently and together without moving the root', () => {
   const a = entry('a');
   const bounds = new Map([['a', box(1000, 400, 80)], ['b', box(250, 600, 120)]]);
   const baseline = assemblyPlacements([a, entry('b', 'a')], bounds);
-  for (const y of [-50, 0, 50]) for (const z of [-25, 0, 25]) {
-    const b = setAssemblySpacing(setAssemblySpacing(setAssemblySpacing(entry('b', 'a'), 'x', 100), 'y', y), 'z', z);
+  for (const sy of [-1, 1]) for (const sz of [-1, 1]) for (const gap of [0, 1, 20, 50, 100]) {
+    let b = setAssemblySide(setAssemblySide(entry('b', 'a'), 'y', sy), 'z', sz);
+    b = setAssemblySpacing(setAssemblySpacing(setAssemblySpacing(b, 'x', 20), 'y', gap), 'z', 30);
     const placed = assemblyPlacements([a, b], bounds);
     assert.deepEqual(placed.get('a'), baseline.get('a'));
-    close((placed.get('b').bounds.min.x - placed.get('a').bounds.max.x) * 1000, 100);
-    close((placed.get('b').translation.y - baseline.get('b').translation.y) * 1000, y);
-    close((placed.get('b').translation.z - baseline.get('b').translation.z) * 1000, z);
+    const first = placed.get('a').bounds, next = placed.get('b').bounds;
+    close((next.min.x-first.max.x)*1000, 20);
+    close((sy===1?next.min.y-first.max.y:first.min.y-next.max.y)*1000, gap);
+    close((sz===1?next.min.z-first.max.z:first.min.z-next.max.z)*1000, 30);
   }
+  assert.throws(() => setAssemblySpacing(entry('b','a'), 'z', 30), /Choose the separation side/);
+  assert.throws(() => assemblyPlacements([a, entry('b','a',10,'+X','+X')],bounds), /opposing/);
 });
 
 test('raised ancestors carry descendants, preserving relative connections and branches', () => {
@@ -108,7 +112,7 @@ test('spacing reset and connection-axis changes retain well-defined values', () 
   const changed = setAssemblyTargetFace(b, '+Z');
   assert.equal(changed.gap, 25);
   assert.deepEqual(changed.offsets, { x: 0, y: -45, z: 0 });
-  assert.deepEqual(resetAssemblySpacing(b), { ...b, gap: 10, offsets: { x: 0, y: 0, z: 0 } });
+  assert.deepEqual(resetAssemblySpacing(b), withDirectionalGaps({ ...b, gap: 10, offsets: { x: 0, y: 0, z: 0 } }));
   assert.equal(b.offsets.z, 50);
 });
 
@@ -132,4 +136,29 @@ test('invalid distances, missing targets and cycles fail explicitly without gues
   assert.throws(() => assemblyPlacements([entry('a', 'b'), entry('b', 'a')], bounds));
   assert.throws(() => assemblyPlacements([entry('a'), { ...entry('b', 'a'), offsets: { x: 1, y: 0, z: 0 } }], bounds));
   assert.throws(() => decodeAssemblies(encodeAssemblies({ p: [entry('b', 'missing')] })));
+});
+
+
+test('old saved offsets preserve positions until explicit gap conversion; changing one axis keeps others', () => {
+  const legacy = { ...entry('b','a',10), offsets: {x:0,y:-20,z:50} }; delete legacy.spacing;
+  const bounds = new Map([['a',box(1000,400,80)],['b',box(250,600,120)]]);
+  const old = assemblyPlacements([entry('a'),legacy],bounds);
+  assert.deepEqual(assemblyPlacements([entry('a'),withDirectionalGaps(legacy)],bounds),old);
+  const edited = setAssemblySpacing(setAssemblySide(withDirectionalGaps(legacy),'z',1),'z',50);
+  const after = assemblyPlacements([entry('a'),edited],bounds);
+  close(after.get('b').bounds.min.z*1000,130);
+  close(after.get('b').translation.x,old.get('b').translation.x);
+  close(after.get('b').translation.y,old.get('b').translation.y);
+  const restored = decodeAssemblies(encodeAssemblies({p:[entry('a'),legacy]})).p;
+  assert.equal(restored[1].spacing, undefined);
+});
+
+test('CAD and preview share rigid matrices; only translation changes units', () => {
+  const panel = {...entry('a'), rotation:new THREE.Quaternion().setFromEuler(new THREE.Euler(.2,.3,.4)).toArray()};
+  const translation = new THREE.Vector3(.25,-.5,.075);
+  const matrix = new THREE.Matrix4().fromArray(assemblyMatrix(panel,translation));
+  const point = new THREE.Vector3(10,20,30).applyMatrix4(matrix);
+  const metres = new THREE.Vector3(.01,.02,.03).applyQuaternion(assemblyRotation(panel)).add(translation).multiplyScalar(1000);
+  point.toArray().forEach((n,i)=>close(n,metres.toArray()[i]));
+  assert.throws(()=>assemblyRotation({...panel,rotation:[0,0,0,2]}));
 });

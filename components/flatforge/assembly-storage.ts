@@ -17,6 +17,12 @@ export function decodeAssemblies(text: string | null): AssemblyProjects {
         || (entry.targetId !== null && (!seen.has(entry.targetId) || !faces.includes(entry.targetFace!)))) throw new Error('Invalid saved assembly connection.');
       if (entry.offsets !== undefined && (!entry.offsets || !['x', 'y', 'z'].every(axis => Number.isFinite(entry.offsets![axis as 'x' | 'y' | 'z']))
         || (entry.targetFace && entry.offsets[entry.targetFace[1].toLowerCase() as 'x' | 'y' | 'z'] !== 0))) throw new Error('Invalid saved assembly offsets.');
+      if (entry.spacing !== undefined && (!entry.spacing || !(['x','y','z'] as const).every(axis => {
+        const value = entry.spacing![axis];
+        return value && [-1,0,1].includes(value.side) && Number.isFinite(value.gap) && value.gap >= 0;
+      }))) throw new Error('Invalid saved directional gaps.');
+      if (entry.rotation !== undefined && (!Array.isArray(entry.rotation) || entry.rotation.length !== 4
+        || !entry.rotation.every(Number.isFinite) || Math.abs(entry.rotation.reduce((sum, value) => sum + value * value, 0) - 1) > 1e-8)) throw new Error('Invalid saved panel rotation.');
       seen.add(entry.id);
     }
   }

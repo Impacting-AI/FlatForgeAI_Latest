@@ -1,16 +1,16 @@
 'use client';
 import { useState } from 'react';
 import type { AssemblyEntry } from './types';
-import { faceAxis, opposingFaces, resetAssemblySpacing, setAssemblySpacing } from './assembly-geometry';
+import { faceAxis, resetAssemblySpacing, setAssemblySpacing, setAssemblySide, withDirectionalGaps } from './assembly-geometry';
 
-export function AssemblyNumber({ label, value, min, onChange }: {
-  label: string; value: number; min?: number; onChange: (value: number) => void;
+export function AssemblyNumber({ label, value, min, disabled, onChange }: {
+  label: string; value: number; min?: number; disabled?: boolean; onChange: (value: number) => void;
 }) {
   const [input, setInput] = useState({ value, draft: String(value), error: '' });
   if (input.value !== value) setInput({ value, draft: String(value), error: '' });
   const { draft, error } = input;
   return <label className="asm-spacing-field">
-    <span>{label}</span><span className="asm-spacing-input"><input type="number" step="any" min={min}
+    <span>{label}</span><span className="asm-spacing-input"><input type="number" step="any" min={min} disabled={disabled}
       aria-label={label} aria-invalid={!!error} value={draft} onChange={event => {
         const text = event.target.value;
         const number = Number(text);
@@ -27,15 +27,22 @@ export default function AssemblySpacing({ entry, onChange }: { entry: AssemblyEn
   const [reset, setReset] = useState(0);
   if (!entry.targetFace) return null;
   const normalAxis = faceAxis(entry.targetFace);
-  const isGap = opposingFaces(entry);
+  if (!entry.spacing) return <div className="asm-spacing"><p className="asm-spacing-note">Saved layout uses the previous offsets. Its positions are retained. Convert to directional gaps to edit spacing; existing alignment on other axes is kept.</p><button type="button" className="table-link" onClick={() => onChange(withDirectionalGaps(entry))}>Use directional gaps</button></div>;
   return <div className="asm-spacing">
     <div className="asm-spacing-heading"><strong>Panel spacing</strong><button type="button" onClick={() => { onChange(resetAssemblySpacing(entry)); setReset(reset + 1); }}>Reset</button></div>
-    {([['x', 'Horizontal (X)'], ['z', 'Vertical (Z)'], ['y', 'Front / back (Y)']] as const).map(([axis, label]) => {
+    {([['x', 'Horizontal (X)', 'Right (+X)', 'Left (−X)'], ['z', 'Vertical (Z)', 'Above (+Z)', 'Below (−Z)'], ['y', 'Front / back (Y)', 'Back (+Y)', 'Front (−Y)']] as const).map(([axis, label, positive, negative]) => {
       const normal = normalAxis === axis;
-      return <AssemblyNumber key={`${axis}:${entry.targetFace}:${reset}`} label={`${label} ${normal && isGap ? 'gap' : 'offset'}`}
-        min={normal ? 0 : undefined} value={normal ? entry.gap : entry.offsets?.[axis] ?? 0}
-        onChange={value => onChange(setAssemblySpacing(entry, axis, value))}/>;
+      const constraint = entry.spacing![axis];
+      return <div className="asm-axis-gap" key={`${axis}:${entry.targetFace}:${reset}`}>
+        <AssemblyNumber label={`${label} gap`} min={0} disabled={!constraint.side}
+          value={constraint.side ? constraint.gap : 0} onChange={value => onChange(setAssemblySpacing(entry, axis, value))}/>
+        <select aria-label={`${label} direction`} disabled={normal} value={constraint.side}
+          onChange={event => onChange(setAssemblySide(entry, axis, Number(event.target.value) as -1|0|1))}>
+          {!normal && <option value={0}>Keep alignment{entry.offsets?.[axis] ? ` (${entry.offsets[axis]} mm saved shift)` : ''}</option>}
+          <option value={1}>{positive}</option><option value={-1}>{negative}</option>
+        </select>
+      </div>;
     })}
-    <p className="asm-spacing-note">{isGap ? `Gap along ${entry.targetFace} between bounding planes.` : `Connection offset along ${entry.targetFace}; faces are not opposing.`} Offsets: +X right, +Z up, −Y front / +Y back.</p>
+    <p className="asm-spacing-note">Choose a side to add separation on an axis. Zero on an active axis means touching bounding planes; Keep alignment adds no gap. Gaps measure directional clearance, not the shortest distance between irregular surfaces.</p>
   </div>;
 }

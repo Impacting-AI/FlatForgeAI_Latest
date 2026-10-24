@@ -22,7 +22,7 @@ import { drawingPath, drawingSteps, projectDrawingsPath, projectViewPath, resolv
 import { useWorkspaceNavigation, type Navigate, type NavigationGuard } from './useWorkspaceNavigation';
 import { useDrawingReview } from './useDrawingReview';
 import AssemblySpacing, { AssemblyNumber } from './AssemblySpacing';
-import { DEFAULT_ASSEMBLY_GAP_MM, removeAssemblyBranch, setAssemblyTargetFace } from './assembly-geometry';
+import { DEFAULT_ASSEMBLY_GAP_MM, removeAssemblyBranch, setAssemblyTargetFace, withDirectionalGaps } from './assembly-geometry';
 import { useAssemblyState } from './useAssemblyState';
 import AssemblyViewer, { AssemblyViewerHandle, ClashResult } from './AssemblyViewer';
 import { AssemblyEntry, Bootstrap, Face, Panel, Settings, api, panelApi, fileUrl } from './types';
@@ -85,7 +85,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  const asmViewRef=useRef<AssemblyViewerHandle|null>(null);
  const [clashResults,setClashResults]=useState<ClashResult[]|null>(null);
  const [clashRunning,setClashRunning]=useState(false);
- const live=data.mode==='live';const ready=panels.filter(p=>p.artifacts.includes('panel.glb'));const selectedModels=assembly?ready.filter(p=>compare.includes(p.id)).slice(0,5):panel&&panel.artifacts.includes('panel.glb')?[panel]:[];
+ const live=data.mode==='live';const ready=panels.filter(p=>p.artifacts.includes('panel.glb'));const assemblyPanels=ready.filter(p=>p.status==='PASS'&&p.artifacts.includes('panel.step'));const selectedModels=assembly?ready.filter(p=>compare.includes(p.id)).slice(0,5):panel&&panel.artifacts.includes('panel.glb')?[panel]:[];
  useEffect(()=>registerGuard(next=>{
   const pendingBend=!!document.querySelector('[data-unsaved-bend="true"]');
   const pendingMeasurement=!!document.querySelector('[data-unsaved-measurement="true"]');
@@ -110,7 +110,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  const chooseDrawing=(p:Panel,step:typeof drawingSteps[number]='panels')=>navigate(drawingPath(p.project_id,p.id,step));
  const goHome=()=>navigate('/');
  const openProjectUpload=(id:string)=>{setDialogProjectId(id);setDialog('upload')};
- function asmAddEntry(){if(!addPanelId)return;const isRoot=asmEntries.length===0;setAsmEntries(prev=>[...prev,{id:Math.random().toString(36).slice(2,8),panelId:addPanelId,myFace:addMyFace,targetId:isRoot?null:addTargetId||null,targetFace:isRoot?null:addTargetFace,gap:addGap}]);setDialog(null);setAddPanelId('');}
+ function asmAddEntry(){if(!addPanelId)return;const isRoot=asmEntries.length===0;setAsmEntries(prev=>[...prev,withDirectionalGaps({id:Math.random().toString(36).slice(2,8),panelId:addPanelId,myFace:addMyFace,targetId:isRoot?null:addTargetId||null,targetFace:isRoot?null:addTargetFace,gap:addGap})]);setDialog(null);setAddPanelId('');}
  function asmRemove(id:string){setAsmEntries(prev=>removeAssemblyBranch(prev,id));}
  function asmSetMyFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,myFace:f}:e));}
  function asmSetTargetFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?setAssemblyTargetFace(e,f):e));}
@@ -122,8 +122,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
   if(!asmViewRef.current||!asmReady||asmEntries.length<2) return;
   setClashRunning(true);setClashResults(null);asmViewRef.current.clearClash();
   await new Promise(r=>setTimeout(r,60)); // yield so UI shows "Checking…"
-  const results=asmViewRef.current.runClash();
-  setClashResults(results);setClashRunning(false);
+  try{const results=await asmViewRef.current.runClash();setClashResults(results)}catch(error){toast.error((error as Error).message)}finally{setClashRunning(false)}
  }
  async function task(fn:()=>Promise<unknown>,message?:string){setBusy(true);try{await fn();if(message)toast.success(message);await refresh();return true}catch(e){toast.error((e as Error).message);return false}finally{setBusy(false)}}
  const steps:readonly string[]=drawingSteps;
@@ -283,7 +282,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
    <div className="asm-pane-header"><span>ASSEMBLY</span>{asmEntries.length>0&&<button onClick={()=>setAsmEntries([])} title="Clear all"><X size={13}/> Clear</button>}</div>
    {asmEntries.length===0&&<div className="asm-empty"><Box size={28}/><p>Add panels and connect them face-to-face to build the assembly.</p></div>}
    {asmEntries.map((entry,i)=>{
-    const p=ready.find(p=>p.id===entry.panelId);
+    const p=panels.find(p=>p.id===entry.panelId);
     return(
      <div key={entry.id} className="asm-entry">
       <div className="asm-entry-head">
@@ -303,22 +302,22 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
         </select>
         <span>of</span>
         <select className="target-sel" value={entry.targetId} onChange={e=>asmSetTarget(entry.id,e.target.value)}>
-         {asmEntries.slice(0,i).map((e2,j)=>{const p2=ready.find(p=>p.id===e2.panelId);return <option key={e2.id} value={e2.id}>{String.fromCharCode(65+j)} · {p2?.filename.replace(/\.(dxf|dwg)$/i,'')}</option>;})}
+         {asmEntries.slice(0,i).map((e2,j)=>{const p2=panels.find(p=>p.id===e2.panelId);return <option key={e2.id} value={e2.id}>{String.fromCharCode(65+j)} · {p2?.filename.replace(/\.(dxf|dwg)$/i,'')}</option>;})}
         </select>
        </div>}
       {entry.targetId!==null&&<AssemblySpacing entry={entry} onChange={asmUpdateEntry}/>}
      </div>
     );
    })}
-   <button className="asm-add-btn" disabled={!ready.length} onClick={()=>{setAddPanelId('');setAddTargetId(asmEntries[asmEntries.length-1]?.id||'');setAddMyFace('-X');setAddTargetFace('+X');setAddGap(DEFAULT_ASSEMBLY_GAP_MM);setDialog('assembly_add');}}><Plus size={15}/>{asmEntries.length===0?'Add first panel':'Add next panel'}</button>
-   {!ready.length&&<p className="asm-hint">Process panels to completion (PASS) to enable assembly.</p>}
-   <p className="asm-hint">Layouts save in this browser per project. Export assembly GLB from the viewer; STEP/STL exports remain individual panels.</p>
+   <button className="asm-add-btn" disabled={!assemblyPanels.length} onClick={()=>{setAddPanelId('');setAddTargetId(asmEntries[asmEntries.length-1]?.id||'');setAddMyFace('-X');setAddTargetFace('+X');setAddGap(DEFAULT_ASSEMBLY_GAP_MM);setDialog('assembly_add');}}><Plus size={15}/>{asmEntries.length===0?'Add first panel':'Add next panel'}</button>
+   {!assemblyPanels.length&&<p className="asm-hint">Process panels to completion (PASS) to enable assembly.</p>}
+   <p className="asm-hint">Layouts save in this browser per project. CAD validation checks every panel pair. STEP exports the complete verified assembly as separate solid parts.</p>
    {asmStorageError&&<p role="alert" className="asm-spacing-error">{asmStorageError}</p>}
    {asmEntries.length>1&&<div className="asm-summary"><span>{asmEntries.length} panels</span><span>·</span><span>{asmEntries.length-1} connection{asmEntries.length>2?'s':''}</span></div>}
   </div>
   {/* 3D viewer */}
   <div className="asm-viewer-wrap">
-   <AssemblyViewer key={projectId} onReadyChange={setAsmReady} ref={asmViewRef} entries={asmEntries} panels={ready} paint={paint} wire={wire}/>
+   <AssemblyViewer key={projectId} projectId={projectId} live={live} onReadyChange={setAsmReady} ref={asmViewRef} entries={asmEntries} panels={assemblyPanels} paint={paint} wire={wire}/>
   </div>
   {/* Right: face reference */}
   <div className="asm-inspector">
@@ -355,7 +354,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
           <span className="clash-pair">Panel {la} ↔ Panel {lb}</span>
           <div className="clash-meta">
            <span className="clash-depth">{r.depth.toFixed(1)} mm</span>
-           <span className="clash-pts">{r.pointCount} pt{r.pointCount>1?'s':''}</span>
+           <span className="clash-pts">{r.volume!==undefined?`${r.volume.toFixed(4)} mm³ overlap`:`${r.pointCount} sampled points`}</span>
           </div>
          </div>
         );
@@ -369,9 +368,9 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
    <ol className="asm-how">
     <li>Add the <strong>root panel</strong> — it anchors the assembly at the origin.</li>
     <li>Add each <strong>next panel</strong>, pick which face of the new panel meets which face of an existing panel.</li>
-    <li>Set the connection <strong>gap</strong> and two axis <strong>offsets</strong> in mm. Choose Top / Bottom for vertical stacking, or Front / Back for depth spacing.</li>
-    <li>Gap measures bounding-plane separation, not the shortest surface clearance of folded or rotated panels. Panels keep their original orientation.</li>
-    <li>Edit any connection inline, or remove and re-add a panel to change it.</li>
+    <li>Set the connection gap in mm. For additional axis gaps, choose a separation side and enter the clearance. Keep alignment preserves the other directions.</li>
+    <li>Gaps use the folded CAD boundaries along global X, Y and Z. They measure directional clearance, not the shortest distance between irregular surfaces. Rotations stay unchanged.</li>
+    <li>Resolve highlighted solid intersections before exporting the assembly STEP. Zero gap permits contact, never penetrating solids.</li>
    </ol>
   </div>
  </div>
@@ -393,7 +392,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
   <div className="field"><Label>Panel</Label>
    <select value={addPanelId} onChange={e=>setAddPanelId(e.target.value)}>
     <option value="">Select a panel…</option>
-    {ready.map(p=><option key={p.id} value={p.id}>{p.filename.replace(/\.(dxf|dwg)$/i,'')}</option>)}
+    {assemblyPanels.map(p=><option key={p.id} value={p.id}>{p.filename.replace(/\.(dxf|dwg)$/i,'')}</option>)}
    </select>
   </div>
   {asmEntries.length>0&&<>

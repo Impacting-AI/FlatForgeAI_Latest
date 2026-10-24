@@ -52,6 +52,12 @@
 .asm-spacing-input input[aria-invalid=true]{border-color:#b52c36}
 .asm-spacing-error{color:#b52c36;flex-basis:100%;font-size:10px;line-height:1.5}
 .asm-spacing-note{font-size:9px;line-height:1.6;color:#607870;margin:8px 0 0}
+.asm-axis-gap select{width:100%;margin-top:4px;border:1px solid #d3e0d9;border-radius:4px;background:#fff;color:#456b59;font-size:10px;padding:5px}
+.asm-cad-controls{padding:12px;border-bottom:1px solid #d3e0d9;background:#f9fcfa}
+.asm-cad-controls button{font-size:11px;max-width:100%;white-space:normal;height:auto;min-height:34px}
+.asm-cad-controls p{font-size:11px;line-height:1.6;color:#526e61;margin:8px 0 0}
+.asm-cad-controls [role=alert]{color:#a42936}
+.asm-viewer-wrap>.viewer-stage{flex:1;min-height:460px}
 .drawing-source-card{border:1px solid #d8e2df;border-radius:9px;padding:24px;background:#fff}
 .project-drawings{margin:0 34px}
 @media(max-width:1200px){.project-drawings{margin:0 23px}}
