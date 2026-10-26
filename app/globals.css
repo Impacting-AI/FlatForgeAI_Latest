@@ -164,3 +164,6 @@
 @media(max-width:850px){.project-grid{grid-template-columns:1fr 1fr;margin-left:16px;margin-right:16px}.back-to-projects span,.ws-project-item{display:none}}
 @media(max-width:600px){.project-grid{grid-template-columns:1fr}}
 .webgl-host{position:absolute;inset:0}.viewport-actions{position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:7px}.viewport-actions button{width:31px;height:31px;background:#ffffffdd;border-color:#d2dfd8;color:#678575}.viewport-actions svg{width:14px;height:14px}.axis-key{position:absolute;right:15px;bottom:18px;display:flex;gap:8px;font:10px monospace}.axis-key .x{color:#b66e68}.axis-key .y{color:#559575}.axis-key .z{color:#7297b0}.axis-key small{color:#99ada0}.viewport-help{position:absolute;left:14px;bottom:18px;font-size:8px;color:#90a69a;pointer-events:none}.viewport-help span{padding:0 5px}
+
+/* STEP 5 inspection appearance; project comparison and assembly retain their styles. */
+.inspection-studio .viewer-bottom i{background:#aeb6c1;border:1px solid #7c8693}
