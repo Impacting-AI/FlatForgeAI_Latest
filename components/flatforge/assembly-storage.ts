@@ -23,6 +23,12 @@ export function decodeAssemblies(text: string | null): AssemblyProjects {
       }))) throw new Error('Invalid saved directional gaps.');
       if (entry.rotation !== undefined && (!Array.isArray(entry.rotation) || entry.rotation.length !== 4
         || !entry.rotation.every(Number.isFinite) || Math.abs(entry.rotation.reduce((sum, value) => sum + value * value, 0) - 1) > 1e-8)) throw new Error('Invalid saved panel rotation.');
+      if (entry.connection !== undefined) {
+        const c=entry.connection;
+        const validReference=(r:typeof c.reference)=>r&&/^face-[1-9][0-9]*$/.test(r.faceId)&&/^[a-f0-9]{64}$/.test(r.sourceSha)&&Array.isArray(r.point)&&r.point.length===3&&r.point.every(Number.isFinite);
+        if(!entry.targetId||!c||c.type!=='planar'||!validReference(c.reference)||!validReference(c.moving)
+          ||![c.offsetU,c.offsetV,c.normalOffset,c.twist].every(Number.isFinite)||entry.gap+c.normalOffset<0)throw new Error('Invalid saved CAD face connection.');
+      }
       seen.add(entry.id);
     }
   }

@@ -52,24 +52,24 @@ Reset restores the 10 mm primary gap, aligned other axes and zero legacy shifts.
 
 ## One set of transformations
 
-`assembly-geometry.ts` is the only placement calculation used by the application.
-In live mode:
+Live placement now uses `backend/flatforge/assembly_connections.py`; see
+[face connections](assembly-face-connections.md) for the selected-face model.
+Existing envelope layouts retain their positions through the same backend solver.
 
-1. `POST /projects/{id}/assembly/geometry` checks project membership and panel
-   revisions, imports the existing approved `panel.step` BREP, applies the saved
-   rotation, and returns exact CAD support bounds in mm. OpenCascade's optimal
-   bounds use underlying geometry, without triangulation or inflated mesh boxes.
-2. The shared frontend engine computes the placements from those bounds and the
-   explicit connection tree. It creates column-major rigid matrices with
-   dimensionless rotation and mm translation. The viewer uses the same rotation
-   and divides only translation by 1000 for the existing metre GLBs. Source GLB
-   node transforms are preserved.
-3. `POST /projects/{id}/assembly/validate` receives those exact matrices. It checks
-   the measured CAD clearances, all panel-pair intersections, source ownership,
-   revisions and rigid unit scale. It does not recalculate or change placement.
-4. A valid result signs the exact matrices, source identities, artifact keys and
-   hashes. STEP export consumes that snapshot. GLB export contains those same
-   positioned groups and includes `cadTransformsMm` in scene metadata.
+1. `POST /projects/{id}/assembly/place` validates project membership and panel
+   revisions, imports approved STEP BREPs and returns authoritative rigid matrices
+   and exact placed bounds in mm. Envelope placement uses rotated solid extents;
+   face connections use original CAD planes and picked anchors.
+2. The viewer applies those matrices, dividing only translations by 1000 for its
+   existing metre GLBs. Source GLB node transforms are preserved.
+3. `POST /projects/{id}/assembly/validate` checks those exact matrices against
+   requested clearances, face relationships and all-pair solid intersections.
+4. A valid result signs the matrices and source identities. STEP and GLB exports
+   consume that snapshot. No independent frontend face-placement calculation runs.
+
+The previous `/assembly/geometry` endpoint remains available for compatibility.
+`assembly-geometry.ts` retains the offline sample engine and the compatibility
+reference exercised by regression tests against the backend solver.
 
 Validation runs after spacing edits; outdated requests are cancelled and their
 responses ignored. CAD export is disabled while checking, on errors, or when
@@ -77,7 +77,7 @@ conflicts exist. A late approval for an older gap cannot enable a different
 layout's export. Spacing edits update the existing canvas and preserve its camera,
 zoom, orbit and pan.
 
-Offline sample mode uses the same placement engine with GLB geometry bounds.
+Offline sample mode uses the retained frontend envelope engine with GLB bounds.
 It is explicitly labelled as a sample preview; exact CAD validation and assembly
 STEP export require the Python service. It does not fabricate STEP from meshes.
 

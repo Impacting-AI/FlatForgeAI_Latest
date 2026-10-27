@@ -2,6 +2,9 @@ import type { AssemblyEntry, Panel } from './types';
 
 export type CadEntry = AssemblyEntry & { revision: number; matrix?: number[] };
 export type CadBounds = { units: 'mm'; entries: { id: string; revision: number; bounds: { min: number[]; max: number[] } }[] };
+export type CadFace = {id:string;type:string;area:number;supported:boolean;center:[number,number,number];normal?:[number,number,number];u?:[number,number,number];v?:[number,number,number];positions:number[];indices:number[]};
+export type CadFaceCatalog={entryId:string;revision:number;sourceSha:string;units:'mm';faces:CadFace[]};
+export type CadPlacement={units:'mm';entries:(CadEntry & {matrix:number[]})[];bounds:Record<string,{min:number[];max:number[]}>};
 export type CadClash = { entryIdA: string; entryIdB: string; depth: number; pointCount: number; volume?: number };
 export type CadCheck = { valid: boolean; token: string | null; collisions: CadClash[];
   contacts: { entryIdA: string; entryIdB: string }[]; issues: string[];
@@ -39,4 +42,11 @@ export async function downloadAssemblyStep(projectId: string, token: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a'); link.href = url; link.download = 'FlatForge_Assembly.step'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function placeAssembly(projectId:string,entries:CadEntry[],signal:AbortSignal):Promise<CadPlacement>{
+  return (await request(projectId,'place',{entries},signal)).json();
+}
+export async function assemblyFaces(projectId:string,entry:CadEntry,signal:AbortSignal):Promise<CadFaceCatalog>{
+  return (await request(projectId,'faces',{id:entry.id,panelId:entry.panelId,revision:entry.revision},signal)).json();
 }

@@ -268,6 +268,14 @@ def export_project(id:str,background_tasks:BackgroundTasks):
   return FileResponse(archive,filename='FlatForge_project.zip',media_type='application/zip',background=background_tasks)
  except Exception:shutil.rmtree(td,ignore_errors=True);raise
 
+@app.post('/projects/{id}/assembly/faces',dependencies=[Depends(auth)])
+def assembly_faces(id:str,body:assembly_cad.SourceReference):
+ return assembly_cad.faces(id,body)
+
+@app.post('/projects/{id}/assembly/place',dependencies=[Depends(auth)])
+def assembly_place(id:str,body:assembly_cad.AssemblyInput):
+ return assembly_cad.place(id,body)
+
 @app.post('/projects/{id}/assembly/geometry',dependencies=[Depends(auth)])
 def assembly_geometry(id:str,body:assembly_cad.AssemblyInput):
  return assembly_cad.geometry(id,body)

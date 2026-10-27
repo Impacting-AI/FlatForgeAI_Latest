@@ -167,3 +167,30 @@
 
 /* STEP 5 inspection appearance; project comparison and assembly retain their styles. */
 .inspection-studio .viewer-bottom i{background:#aeb6c1;border:1px solid #7c8693}
+
+/* STEP 6 planar CAD-face connection editor */
+fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:0;padding:0}
+.asm-pane:disabled .asm-entry{opacity:.6}
+.asm-connect-faces,.asm-face-editor button{border:1px solid #b8cbd2;background:#fff;border-radius:5px;padding:6px 9px;font-size:11px;cursor:pointer}
+.asm-connect-faces{margin:8px 0;color:#126b79}
+.asm-face-editor{background:#fff;border-bottom:1px solid #cbd8de;padding:15px 18px;font-size:12px;color:#34454d}
+.asm-face-heading{display:flex;justify-content:space-between;gap:8px;margin-bottom:12px}
+.asm-face-heading span,.asm-face-editor p,.asm-face-pair small{font-size:11px;color:#5a6b74}
+.asm-face-editor p{line-height:1.5;margin:8px 0}
+.asm-face-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.asm-face-pair label{display:flex;flex-direction:column;gap:5px;min-width:0}
+.asm-face-pair label strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;line-height:26px}
+.asm-face-pair select{max-width:100%;border:1px solid #cbd8de;border-radius:4px;padding:5px}
+.asm-face-pair small{margin-left:8px}
+.asm-face-pair button{margin-top:8px}
+.asm-face-pair button[aria-pressed=true]{outline:2px solid #2182ac;outline-offset:2px}
+.asm-face-pair .asm-pick-reference{border-left:4px solid #2788ee}
+.asm-face-pair .asm-pick-moving{border-left:4px solid #ffa336}
+.asm-face-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}
+.asm-face-values label>span:first-child{display:block;font-size:11px;margin-bottom:4px}
+.asm-face-values input{min-width:0;width:100%}
+.asm-face-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.asm-face-actions button:last-child{background:#126b79;color:white;border-color:#126b79}
+.asm-face-editor button:disabled,.asm-connect-faces:disabled{opacity:.45;cursor:default}
+.asm-effective-gap{font-weight:500;font-size:12px}
+@media(max-width:600px){.asm-face-pair,.asm-face-values{grid-template-columns:1fr}.asm-face-heading{flex-wrap:wrap}}

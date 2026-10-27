@@ -67,8 +67,9 @@ export function assemblyModel(model: THREE.Object3D) {
   return { group, bounds };
 }
 
-/** One placement engine for preview and CAD export. Bounds include the preserved
- * rotation and, in live mode, come from the exact folded BREP, not a rotated box.
+/** Offline sample placement and compatibility reference for envelope layouts.
+ * Live CAD placement is authoritative in backend assembly_connections.py.
+ * Bounds supplied here already include the preserved rotation.
  * Active axes are directional support-plane gaps; other axes keep alignment. */
 export function assemblyPlacements(entries: AssemblyEntry[], bounds: Map<string, THREE.Box3>) {
   const placed = new Map<string, { translation: THREE.Vector3; bounds: THREE.Box3 }>();

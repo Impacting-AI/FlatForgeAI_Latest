@@ -1,7 +1,7 @@
 """Exact CAD bounds/validation and STEP export of the viewer's shared transforms.
 
-Placement is calculated once by assembly-geometry.ts from these rotated BREP
-bounds. This module measures the submitted result; it never repositions panels.
+Live placement is calculated once by assembly_connections from CAD faces and
+bounds. Preview and STEP export consume those same validated rigid matrices.
 """
 import base64
 import hashlib
@@ -24,6 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .db import Session, Panel, Project
 from .storage import store
+from . import assembly_connections as connections
+import numpy as np
 
 CAD_LOCK = threading.RLock()
 LINEAR_EPS_MM = 1e-5
@@ -53,10 +55,29 @@ class Spacing(StrictModel):
     z: AxisGap
 
 
-class Entry(StrictModel):
+class FaceReference(StrictModel):
+    faceId: str = Field(pattern=r'^face-[1-9][0-9]*$')
+    sourceSha: str = Field(pattern=r'^[0-9a-f]{64}$')
+    point: tuple[float, float, float]
+
+
+class FaceConnection(StrictModel):
+    type: Literal['planar'] = 'planar'
+    reference: FaceReference
+    moving: FaceReference
+    offsetU: float = 0
+    offsetV: float = 0
+    normalOffset: float = 0
+    twist: float = 0
+
+
+class SourceReference(StrictModel):
     id: str = Field(min_length=1, max_length=160)
     panelId: str = Field(min_length=1, max_length=160)
     revision: int = Field(ge=1)
+
+
+class Entry(SourceReference):
     myFace: Face
     targetId: str | None
     targetFace: Face | None
@@ -65,6 +86,13 @@ class Entry(StrictModel):
     spacing: Spacing | None = None
     rotation: tuple[float, float, float, float] = (0, 0, 0, 1)
     matrix: list[float] | None = Field(default=None, min_length=16, max_length=16)
+    connection: FaceConnection | None = None
+
+    @model_validator(mode="after")
+    def valid_connection(self):
+        if self.connection and (self.targetId is None or self.gap + self.connection.normalOffset < 0):
+            raise ValueError("A face connection needs a reference panel and a non-negative effective gap")
+        return self
 
     @field_validator('rotation')
     @classmethod
@@ -132,6 +160,34 @@ def read_solid(key):
         return shape, digest
 
 
+@lru_cache(maxsize=24)
+def source_faces(key):
+    return connections.face_catalog(read_solid(key)[0])
+
+
+@lru_cache(maxsize=12)
+def source_pick_meshes(key):
+    return connections.pick_meshes(source_faces(key))
+
+
+def faces(project_id, body):
+    with CAD_LOCK:
+        source = load_sources(project_id, [body])[body.id]
+        return {'entryId': body.id, 'revision': body.revision, 'sourceSha': source['sha256'],
+                'units': 'mm', 'faces': source_pick_meshes(source['key'])}
+
+
+def place(project_id, body):
+    with CAD_LOCK:
+        sources = load_sources(project_id, body.entries)
+        try:
+            return connections.solve(body.entries, sources, rotation_matrix, bounds)
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise HTTPException(422, 'CAD face placement failed. Check the selected surfaces and connection values.') from error
+
+
 def load_sources(project_id, entries):
     sources = {}
     with Session() as session:
@@ -151,7 +207,7 @@ def load_sources(project_id, entries):
                 shape, digest = read_solid(key)
             except Exception as error:
                 raise HTTPException(409, f'{panel.filename}: source STEP is unavailable or invalid') from error
-            sources[entry.id] = {'shape': shape, 'sha256': digest, 'key': key, 'name': panel.filename}
+            sources[entry.id] = {'shape': shape, 'sha256': digest, 'key': key, 'name': panel.filename, 'faces': source_faces(key)}
     return sources
 
 
@@ -168,6 +224,12 @@ def validate_matrices(entries):
     for entry in entries:
         if entry.matrix is None:
             raise HTTPException(422, 'The current preview transformation is required for every panel')
+        transform = connections.matrix(entry.matrix)
+        r = transform[:3, :3]
+        if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-8, rtol=0) or not np.allclose(r.T @ r, np.eye(3), atol=1e-8, rtol=0) or abs(np.linalg.det(r) - 1) > 1e-8:
+            raise HTTPException(422, 'Assembly transforms must be proper rigid rotations without scaling or reflection')
+        if entry.connection:
+            continue
         rotation = rotation_matrix(entry.rotation)
         if any(abs(entry.matrix[i]-rotation[i]) > 1e-8 for i in range(16) if i not in (12, 13, 14)):
             raise HTTPException(422, 'Assembly transforms must preserve the specified rotation and unit scale')
@@ -178,7 +240,13 @@ def check_placement(entries, sources):
     shapes = {e.id: sources[e.id]['shape'].moved(location(e.matrix)) for e in entries}
     boxes = {key: bounds(shape) for key, shape in shapes.items()}
     clearances, collisions, contacts, issues = [], [], [], []
+    matrices = {e.id: connections.matrix(e.matrix) for e in entries}
     for entry in entries[1:]:
+        if entry.connection:
+            row, conflicts = connections.measure_connection(entry, sources, matrices, LINEAR_EPS_MM)
+            clearances.append(row)
+            issues.extend(conflicts)
+            continue
         own, target = boxes[entry.id], boxes[entry.targetId]
         axis = AXES.index(entry.targetFace[1].lower())
         side = 1 if entry.targetFace[0] == '+' else -1

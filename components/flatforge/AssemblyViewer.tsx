@@ -8,7 +8,11 @@ import { Camera, LoaderCircle, Maximize2, Box, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AssemblyEntry, Panel, fileUrl } from './types';
 import { assemblyModel, assemblyPlacements, assemblyMatrix, assemblyRotation } from './assembly-geometry';
-import { assemblyCadBounds, cadEntries, checkAssembly, downloadAssemblyStep, type CadCheck, type CadEntry } from './assembly-cad';
+import { placeAssembly, cadEntries, checkAssembly, downloadAssemblyStep, type CadCheck, type CadEntry } from './assembly-cad';
+
+import { createAssemblyFacePicker } from './assembly-face-picker';
+import type { FaceRole, FaceSelection } from './face-connection-state';
+import type { CadFaceReference } from './types';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 export type ClashResult = {
@@ -37,11 +41,16 @@ type Props = {
  paint: boolean;
  wire: boolean;
  onReadyChange: (ready:boolean) => void;
+ selection?:FaceSelection|null;
+ previewOnly?:boolean;
+ onFacePicked?:(role:FaceRole,face:CadFaceReference)=>void;
+ onFaceMessage?:(message:string)=>void;
+ onValidation?:(result:{key:string;valid:boolean})=>void;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange},ref){
+ function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation},ref){
   const host = useRef<HTMLDivElement>(null);
   const viewApi = useRef<{fit:()=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
   const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
@@ -54,12 +63,18 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   const [err,setErr] = useState(false);
   const [ready,setReady] = useState(false);
   const [exporting,setExporting] = useState(false);
-  const [cad,setCad] = useState<{checking:boolean;result:CadCheck|null;error:string}>({checking:false,result:null,error:''});
+  const [cad,setCad] = useState<{key:string;checking:boolean;result:CadCheck|null;error:string}>({key:'',checking:false,result:null,error:''});
   const cadLatest = useRef<CadCheck|null>(null);
   const [stepError,setStepError] = useState('');
   const entriesLatest = useRef(entries);
   const layoutRef = useRef<(()=>void)|null>(null);
-  useEffect(()=>{entriesLatest.current=entries;layoutRef.current?.();},[entries]);
+  const entriesKey=JSON.stringify(entries);
+  const interaction=useRef({selection,previewOnly,onFacePicked,onFaceMessage,onValidation});
+  const pickerRef=useRef<ReturnType<typeof createAssemblyFacePicker>|null>(null);
+  useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation};void pickerRef.current?.update(selection);},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation]);
+  // Parent selection/highlight updates must not restart CAD placement.
+  useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey);layoutRef.current?.();},[entriesKey]);
+  useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid});},[cad,ready,onValidation]);
   useEffect(()=>{onReadyChange(ready);},[ready,onReadyChange]);
 
   // Keep latest-value refs up to date without triggering re-mount
@@ -76,7 +91,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
   useEffect(()=>{
    setReady(false);cadLatest.current=null;
-   setCad({checking:live&&entries.length>0,result:null,error:''});setStepError('');
+   setCad({key:JSON.stringify(entries),checking:live&&entries.length>0,result:null,error:''});setStepError('');
    if(!entries.length){
     setMsg('');
     applyRef.current=null;
@@ -86,7 +101,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     return;
    }
    let alive=true; let frame=0; let layoutVersion=0; let validationTimer:ReturnType<typeof setTimeout>|undefined;
-   const loading=new AbortController(); let validationController:AbortController|undefined;
+   let placementController:AbortController|undefined; let validationController:AbortController|undefined;
    let submitted:CadEntry[]=[]; let pending:Promise<CadCheck>|null=null;
    const root=host.current!;
    setMsg('Loading assembly…'); setErr(false);
@@ -118,8 +133,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    const originalColours=new Map<THREE.Material,THREE.Color>();
 
    // Include missing/stale source failures in the recoverable loading error path.
-   const geometryRequest=Promise.resolve().then(()=>live?assemblyCadBounds(projectId,cadEntries(entries,panels),loading.signal):null);
-   Promise.all([geometryRequest,Promise.all(entries.map(async entry=>{
+   Promise.resolve().then(()=>{cadEntries(entries,panels);return Promise.all(entries.map(async entry=>{
     const panel=panelMap.get(entry.panelId);
     if(!panel) throw new Error('Panel not found');
     const gltf=await loader.loadAsync(fileUrl(panel,'panel.glb'));
@@ -133,40 +147,59 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      if(mat instanceof THREE.MeshStandardMaterial) originalColours.set(mat,mat.color.clone());});
     scene.add(item.group);
     items.set(entry.id,item);
-   }))]).then(([geometry])=>{
+   }));}).then(async()=>{
     if(!alive) return;
-    if(geometry){
-     if(geometry.units!=='mm'||geometry.entries.length!==entries.length)throw new Error('Incomplete CAD assembly bounds.');
-     for(const entry of entries){const row=geometry.entries.find(row=>row.id===entry.id);if(!row)throw new Error('Missing CAD panel bounds.');items.get(entry.id)!.bounds=new THREE.Box3(new THREE.Vector3(...row.bounds.min as [number,number,number]).multiplyScalar(.001),new THREE.Vector3(...row.bounds.max as [number,number,number]).multiplyScalar(.001));}
+    if(live){
+     pickerRef.current=createAssemblyFacePicker({projectId,scene,camera,canvas:renderer.domElement,groups:items,
+      entries:()=>cadEntries(entriesLatest.current,panels),
+      onPick:(role,face)=>interaction.current.onFacePicked?.(role,face),onMessage:message=>interaction.current.onFaceMessage?.(message)});
+     void pickerRef.current.update(interaction.current.selection);
     }
+    let submittedKey='';
     async function validateLayout():Promise<CadCheck>{
      if(pending)return pending;
      clearTimeout(validationTimer);const version=layoutVersion;
      validationController=new AbortController();const controller=validationController;
      pending=checkAssembly(projectId,submitted,controller.signal).then(result=>{
       if(!alive||version!==layoutVersion)throw new Error('Assembly changed while validating.');
-      pending=null;cadLatest.current=result;setCad({checking:false,result,error:''});
+      pending=null;cadLatest.current=result;setCad({key:submittedKey,checking:false,result,error:''});
       clearClash();
       for(const clash of result.collisions)for(const id of[clash.entryIdA,clash.entryIdB])items.get(id)?.group.traverse(object=>{if(object instanceof THREE.Mesh)for(const material of Array.isArray(object.material)?object.material:[object.material])if(material instanceof THREE.MeshStandardMaterial)material.color.set(0xdd2020);});
       return result;
-     }).catch(error=>{if(alive&&version===layoutVersion&&!controller.signal.aborted){cadLatest.current=null;setCad({checking:false,result:null,error:(error as Error).message});pending=null;}throw error;});
+     }).catch(error=>{if(alive&&version===layoutVersion&&!controller.signal.aborted){cadLatest.current=null;setCad({key:submittedKey,checking:false,result:null,error:(error as Error).message});pending=null;}throw error;});
      return pending;
     }
 
     // ── Position panels from connection tree ──────────────────────────────
-    function layout(){
-     layoutVersion++;validationController?.abort();clearTimeout(validationTimer);pending=null;cadLatest.current=null;
-     setStepError('');setCad({checking:live,result:null,error:''});
+    async function layout(){
+     const version=++layoutVersion,snapshot=entriesLatest.current,requestKey=JSON.stringify(snapshot);
+     placementController?.abort();validationController?.abort();clearTimeout(validationTimer);pending=null;cadLatest.current=null;
+     placementController=new AbortController();const controller=placementController;
+     setStepError('');setCad({key:requestKey,checking:live,result:null,error:''});setReady(false);
      try {
       clearClash();
-      const placements=assemblyPlacements(entriesLatest.current,new Map([...items].map(([id,item])=>[id,item.bounds])));
-      for(const [id,placement] of placements){const group=items.get(id)!.group;group.position.copy(placement.translation);group.updateMatrixWorld(true);}
-      // Keep the reference grid outside panels placed below the root as well.
-      grid.position.z=Math.min(...[...placements.values()].map(placement=>placement.bounds.min.z))-.012;
-      submitted=cadEntries(entriesLatest.current,panels).map(entry=>({...entry,matrix:assemblyMatrix(entry,placements.get(entry.id)!.translation)}));
+      if(live){
+       const result=await placeAssembly(projectId,cadEntries(snapshot,panels),controller.signal);
+       if(!alive||version!==layoutVersion)return;
+       if(result.units!=='mm'||result.entries.length!==snapshot.length)throw new Error('Incomplete CAD assembly placement.');
+       for(const entry of snapshot){
+        const row=result.entries.find(row=>row.id===entry.id);if(!row?.matrix||!result.bounds[entry.id])throw new Error('Missing CAD panel placement.');
+        const matrix=new THREE.Matrix4().fromArray(row.matrix);matrix.elements[12]/=1000;matrix.elements[13]/=1000;matrix.elements[14]/=1000;
+        const group=items.get(entry.id)!.group;matrix.decompose(group.position,group.quaternion,group.scale);group.updateMatrixWorld(true);
+       }
+       submitted=result.entries;
+       grid.position.z=Math.min(...Object.values(result.bounds).map(box=>box.min[2]))/1000-.012;
+      }else{
+       if(snapshot.some(entry=>entry.connection))throw new Error('Connect the CAD service to preview saved CAD-face connections.');
+       const placements=assemblyPlacements(snapshot,new Map([...items].map(([id,item])=>[id,item.bounds])));
+       for(const [id,placement] of placements){const group=items.get(id)!.group;group.position.copy(placement.translation);group.updateMatrixWorld(true);}
+       grid.position.z=Math.min(...[...placements.values()].map(placement=>placement.bounds.min.z))-.012;
+       submitted=cadEntries(snapshot,panels).map(entry=>({...entry,matrix:assemblyMatrix(entry,placements.get(entry.id)!.translation)}));
+      }
+      submittedKey=requestKey;pickerRef.current?.refresh();
       if(live)validationTimer=setTimeout(()=>{void validateLayout().catch(()=>{});},250);
       setMsg('');setErr(false);setReady(true);
-     } catch(error) {setMsg((error as Error).message);setErr(true);setReady(false);setCad({checking:false,result:null,error:(error as Error).message});}
+     }catch(error){if(alive&&version===layoutVersion&&!controller.signal.aborted){setMsg((error as Error).message);setErr(true);setReady(false);setCad({key:requestKey,checking:false,result:null,error:(error as Error).message});}}
     }
     layoutRef.current=layout;
 
@@ -316,6 +349,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      fit,
      screenshot:()=>{renderer.render(scene,camera);const a=document.createElement('a');a.href=renderer.domElement.toDataURL('image/png');a.download='FlatForge_Assembly.png';a.click();},
      exportGLB:async()=>{
+      if(interaction.current.previewOnly)throw new Error('Apply or cancel the connection preview before exporting.');
       if(live&&!cadLatest.current?.valid)throw new Error('Validate a conflict-free CAD assembly before exporting.');
       const snapshot=new THREE.Scene();
       snapshot.userData={units:'metres',source_units:'mm',assemblyEntries:entriesLatest.current,cadTransformsMm:submitted};
@@ -328,8 +362,8 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       setTimeout(()=>URL.revokeObjectURL(url),1000);
      }
     };
-    layout(); fit();
-   }).catch(error=>{if(alive){setMsg(`Could not load assembly: ${(error as Error).message}`);setErr(true);setReady(false);setCad({checking:false,result:null,error:'Assembly source unavailable. Restore its approved panel result or remove the affected entry.'});}});
+    await layout(); if(alive)fit();
+   }).catch(error=>{if(alive){setMsg(`Could not load assembly: ${(error as Error).message}`);setErr(true);setReady(false);setCad({key:JSON.stringify(entries),checking:false,result:null,error:'Assembly source unavailable. Restore its approved panel result or remove the affected entry.'});}});
 
    const resize=new ResizeObserver(()=>{const w=root.clientWidth,h=root.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();});
    resize.observe(root);
@@ -337,7 +371,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    loop();
 
    return()=>{
-    alive=false;loading.abort();validationController?.abort();clearTimeout(validationTimer); cancelAnimationFrame(frame); resize.disconnect(); controls.dispose();
+    alive=false;placementController?.abort();validationController?.abort();pickerRef.current?.dispose();pickerRef.current=null;clearTimeout(validationTimer); cancelAnimationFrame(frame); resize.disconnect(); controls.dispose();
     applyRef.current=null;
     layoutRef.current=null;
     runClashRef.current=async()=>[];
@@ -353,9 +387,9 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
   return(
    <>
-   <div className="asm-cad-controls" data-cad-valid={live&&ready&&entries.length>0&&!!cad.result?.valid&&!cad.checking}>
-    <Button variant="outline" disabled={!live||!entries.length||!ready||cad.checking||!cad.result?.valid||exporting} onClick={async()=>{const token=cadLatest.current?.token;if(!token)return;setExporting(true);setStepError('');try{await downloadAssemblyStep(projectId,token);}catch(error){setStepError((error as Error).message);}finally{setExporting(false);}}}><Download size={15}/>{exporting?'Exporting…':'Export assembly as STEP (.step)'}</Button>
-    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for solid validation and assembly STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking CAD clearances and solid intersections…':cad.error||cad.result?.issues.join(' ')||(cad.result?.collisions.length?`Placement conflict: ${cad.result.collisions.map(c=>[c.entryIdA,c.entryIdB].map(id=>String.fromCharCode(65+entries.findIndex(e=>e.id===id))).join(' ↔ ')).join(', ')}. Intersecting solids are highlighted. Correct the layout before export.`:cad.result?.valid?`CAD verified · ${cad.result.clearances.length} directional gaps · no solid intersections${cad.result.contacts.length?` · ${cad.result.contacts.length} touching pairs`:''}.`:'Waiting for CAD validation.')}</p>}
+   <div className="asm-cad-controls" data-cad-valid={cad.key===entriesKey&&live&&ready&&entries.length>0&&!!cad.result?.valid&&!cad.checking}>
+    <Button variant="outline" disabled={previewOnly||cad.key!==entriesKey||!live||!entries.length||!ready||cad.checking||!cad.result?.valid||exporting} onClick={async()=>{const token=cadLatest.current?.token;if(!token)return;setExporting(true);setStepError('');try{await downloadAssemblyStep(projectId,token);}catch(error){setStepError((error as Error).message);}finally{setExporting(false);}}}><Download size={15}/>{exporting?'Exporting…':'Export assembly as STEP (.step)'}</Button>
+    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for solid validation and assembly STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking CAD clearances and solid intersections…':cad.error||cad.result?.issues.join(' ')||(cad.result?.collisions.length?`Placement conflict: ${cad.result.collisions.map(c=>[c.entryIdA,c.entryIdB].map(id=>String.fromCharCode(65+entries.findIndex(e=>e.id===id))).join(' ↔ ')).join(', ')}. Intersecting solids are highlighted. Correct the layout before export.`:cad.result?.valid?`CAD verified · ${cad.result.clearances.length} verified connections · no solid intersections${cad.result.contacts.length?` · ${cad.result.contacts.length} touching pairs`:''}.`:'Waiting for CAD validation.')}</p>}
     {stepError&&<p role="alert">{stepError}</p>}
    </div>
    <div className="viewer-stage" data-assembly-ready={ready}>
@@ -364,7 +398,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     {!entries.length&&!msg&&<div className="viewer-empty"><Box size={42}/><h3>Assembly is empty</h3><p>Add panels on the left and define how their faces connect.</p></div>}
     <div className="viewport-actions">
      <Button variant="outline" size="icon" aria-label="Fit to view" onClick={()=>viewApi.current?.fit()}><Maximize2/></Button>
-     <Button variant="outline" size="icon" aria-label="Export assembly GLB" title="Export assembly GLB (metres)" disabled={!ready||exporting||(live&&(cad.checking||!cad.result?.valid))} onClick={async()=>{setExporting(true);try{await viewApi.current?.exportGLB();}catch(error){setMsg((error as Error).message);setErr(true);}finally{setExporting(false);}}}>{exporting?<LoaderCircle className="spin"/>:<Download/>}</Button>
+     <Button variant="outline" size="icon" aria-label="Export assembly GLB" title="Export assembly GLB (metres)" disabled={previewOnly||cad.key!==entriesKey||!ready||exporting||(live&&(cad.checking||!cad.result?.valid))} onClick={async()=>{setExporting(true);try{await viewApi.current?.exportGLB();}catch(error){setMsg((error as Error).message);setErr(true);}finally{setExporting(false);}}}>{exporting?<LoaderCircle className="spin"/>:<Download/>}</Button>
      <Button variant="outline" size="icon" aria-label="Screenshot" onClick={()=>viewApi.current?.screenshot()}><Camera/></Button>
     </div>
     <div className="axis-key"><span className="x">X</span><span className="y">Y</span><span className="z">Z</span><small>mm</small></div>

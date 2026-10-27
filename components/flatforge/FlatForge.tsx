@@ -24,6 +24,9 @@ import { useDrawingReview } from './useDrawingReview';
 import AssemblySpacing, { AssemblyNumber } from './AssemblySpacing';
 import { DEFAULT_ASSEMBLY_GAP_MM, removeAssemblyBranch, setAssemblyTargetFace, withDirectionalGaps } from './assembly-geometry';
 import { useAssemblyState } from './useAssemblyState';
+import AssemblyConnectionEditor from './AssemblyConnectionEditor';
+import { beginFaceDraft, previewFaceDraft, updateFaceDraft, type FaceDraft, type FaceRole } from './face-connection-state';
+import type { CadFaceReference } from './types';
 import AssemblyViewer, { AssemblyViewerHandle, ClashResult } from './AssemblyViewer';
 import { AssemblyEntry, Bootstrap, Face, Panel, Settings, api, panelApi, fileUrl } from './types';
 const FACES:[Face,string][]=[
@@ -80,6 +83,14 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  const [logs,setLogs]=useState<{revision:number;log:string;status:string}[]>([]);
  const [fraction,setFraction]=useState(1),[playing,setPlaying]=useState(false),[paint,setPaint]=useState(true),[wire,setWire]=useState(false),[view3d,setView3d]=useState('iso');const [hover,setHover]=useState<string|null>(null);const assembly=route.kind==='compare';const [compare,setCompare]=useState<string[]>(()=>panels.filter(p=>p.artifacts.includes('panel.glb')).slice(0,3).map(p=>p.id)),[gap,setGap]=useState(100),[alignment,setAlignment]=useState('center');const [zoom,setZoom]=useState(1);
  const [asmEntries,setAsmEntries,asmStorageError]=useAssemblyState(projectId);
+ const [faceDraft,setFaceDraft]=useState<FaceDraft|null>(null);
+ const [faceValidation,setFaceValidation]=useState({key:'',valid:false});
+ const effectiveEntries=faceDraft?.preview?asmEntries.map(entry=>entry.id===faceDraft.movingEntryId?faceDraft.preview!:entry):asmEntries;
+ const effectiveKey=JSON.stringify(effectiveEntries);
+ const faceValid=faceValidation.key===effectiveKey&&faceValidation.valid;
+ const facePicked=useCallback((role:FaceRole,face:CadFaceReference)=>setFaceDraft(draft=>draft?updateFaceDraft(draft,{[role]:face,pick:null,message:''}):null),[]);
+ const faceMessage=useCallback((message:string)=>setFaceDraft(draft=>draft&&draft.message!==message?{...draft,message}:draft),[]);
+ function applyFace(){if(!faceDraft||!faceValid)return;const entry=previewFaceDraft(faceDraft);if(entry){setAsmEntries(rows=>rows.map(row=>row.id===entry.id?entry:row));setFaceDraft(null);}}
  const [asmReady,setAsmReady]=useState(false);
  const [addPanelId,setAddPanelId]=useState('');const [addTargetId,setAddTargetId]=useState('');const [addMyFace,setAddMyFace]=useState<Face>('-X');const [addTargetFace,setAddTargetFace]=useState<Face>('+X');const [addGap,setAddGap]=useState(DEFAULT_ASSEMBLY_GAP_MM);
  const asmViewRef=useRef<AssemblyViewerHandle|null>(null);
@@ -91,7 +102,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
   const pendingMeasurement=!!document.querySelector('[data-unsaved-measurement="true"]');
   const pendingDialog=dialog==='upload'?files.length>0:dialog==='edit_drawing'?!!replacement||drawingName!==dialogPanel?.filename:dialog==='edit_project'?name!==dialogProject?.name||client!==dialogProject?.client:dialog==='project'?!!name||!!client:dialog==='settings'?JSON.stringify(defaults)!==JSON.stringify(data.settings):false;
   const leavingDrawing=next===null||workspaceKey(next)!==workspaceKey(route);
-  const unsaved=(leavingDrawing&&review.dirty)||pendingBend||pendingMeasurement||pendingDialog;
+  const unsaved=(leavingDrawing&&review.dirty)||pendingBend||pendingMeasurement||pendingDialog||!!document.querySelector('[data-unsaved-assembly="true"]');
   if(next===null)return !unsaved&&!busy;
   if(busy){toast.info('Wait for the current save to finish.');return false;}
   return !unsaved||window.confirm('You have unsaved changes. Leave this view and discard them? Choose Cancel to keep editing or save first.');
@@ -117,7 +128,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  function asmSetTarget(id:string,targetId:string){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,targetId}:e));}
  function asmUpdateEntry(entry:AssemblyEntry){setAsmEntries(prev=>prev.map(e=>e.id===entry.id?entry:e));}
  // Clear clash results whenever the assembly configuration changes
- useEffect(()=>{setClashResults(null);asmViewRef.current?.clearClash();},[asmEntries]);
+ useEffect(()=>{setClashResults(null);asmViewRef.current?.clearClash();},[effectiveKey]);
  async function runClashCheck(){
   if(!asmViewRef.current||!asmReady||asmEntries.length<2) return;
   setClashRunning(true);setClashResults(null);asmViewRef.current.clearClash();
@@ -278,7 +289,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  <TabsContent value="viewer" className={assembly?"studio":"studio inspection-studio"}><div className="studio-panels"><div className="studio-panel-title"><span>{assembly?'PANELS':'DRAWING'}</span><small>{(assembly?ready:workflowPanels).length}</small></div>{(assembly?ready:workflowPanels).map(p=><button key={p.id} className={'studio-panel '+(panel?.id===p.id?'selected':'')} onClick={()=>chooseDrawing(p,'viewer')}><div className="mini-panel">{p.artifacts.includes('extraction.svg')?<img src={fileUrl(p,'extraction.svg')} alt=""/>:<FileText size={24}/>}</div><div><strong>{p.filename.replace(/\.dxf$/i,'')}</strong><small>{p.report.physical_bends??'—'} hinges · {p.settings.thickness} mm</small><Status value={p.status}/></div></button>)}<div className="studio-tip"><ScanLine size={17}/><p>Every fold keeps a link to its source section. Hover over a bend to inspect it.</p></div></div><div className="studio-main"><div className="viewer-toolbar"><div className="segmented"><button className={fraction===1?'selected':''} onClick={()=>{setPlaying(false);setFraction(1)}}><Box size={14}/>Folded</button><button className={fraction===0?'selected':''} onClick={()=>{setPlaying(false);setFraction(0)}}><PanelTop size={14}/>Flat</button></div><div className="toolbar-right"><select aria-label="Camera view" value={view3d} onChange={e=>setView3d(e.target.value)}><option value="iso">Isometric</option><option value="top">Top</option><option value="front">Front</option><option value="side">Side</option></select></div></div>{assembly&&<div className="assembly-bar"><span>Side by side</span>{ready.map(p=><label key={p.id}><Checkbox checked={compare.includes(p.id)} disabled={!compare.includes(p.id)&&compare.length>=5} onCheckedChange={c=>setCompare(ids=>c?[...ids,p.id]:ids.filter(id=>id!==p.id))}/>{p.filename.replace(/\.dxf$/i,'')}</label>)}<label>Gap <input type="number" min="0" max="5000" value={gap} onChange={e=>setGap(Math.max(0,Math.min(5000,Number(e.target.value))))}/>mm</label><select aria-label="Assembly alignment" value={alignment} onChange={e=>setAlignment(e.target.value)}><option value="center">Centre</option><option value="near">Near edge</option><option value="far">Far edge</option></select></div>}<div className="viewer-wrapper">{selectedModels.length&&(!assembly||selectedModels.length>=2)?<ModelViewer inspection={!assembly} panels={selectedModels} fraction={fraction} gap={gap} alignment={alignment} paint={paint} wire={wire} view={view3d} onHover={setHover}/>:<div className="viewer-empty"><Box size={42}/><h3>{assembly?'Select 2–5 panels':'Your solid will appear here'}</h3><p>{panel?.status==='NEEDS_REVIEW'?'Confirm the highlighted drawing evidence to finish reconstruction.':panel?.status==='FAILED'?'Review the conversion log to see what needs correcting.':'Upload a drawing to start the conversion.'}</p>{panel&&<Button variant="outline" onClick={()=>setTab('review')}>Review drawing <ChevronRight size={15}/></Button>}</div>}{hover&&<div className="bend-tooltip"><Layers3 size={15}/>{hover}</div>}</div><div className="fold-timeline"><Button variant="ghost" size="icon" aria-label={playing?'Pause fold animation':'Play fold animation'} disabled={!selectedModels.length} onClick={()=>setPlaying(!playing)}>{playing?<Pause size={17}/>:<Play size={17}/>}</Button><span>Fold sequence</span><Slider aria-label="Fold progress" min={0} max={100} step={1} value={[Math.round(fraction*100)]} onValueChange={v=>{setPlaying(false);setFraction(v[0]/100)}}/><strong>{Math.round(fraction*100)}%</strong></div><div className="viewer-bottom"><span><i/>{assembly?'Painted face':'Aluminium · surface edges'}</span><span>Motion preview · export uses final BREP solid</span></div></div><aside className="model-inspector"><div className="inspector-title"><h3>Panel details</h3><Box size={17}/></div>{panel?<><div className="inspector-name">{panel.filename.replace(/\.dxf$/i,'')}<Status value={panel.status}/></div><h4>FOLDED ENVELOPE</h4><div className="dimension-grid">{['X','Y','Z'].map((a,i)=><div key={a}><span>{a}</span><strong>{mm(panel.report.bbox?.[i])}</strong><small>mm</small></div>)}</div><h4>MATERIAL & BENDS</h4><dl className="properties"><div><dt>Material</dt><dd>Aluminium</dd></div><div><dt>Thickness</dt><dd>{panel.settings.thickness} mm</dd></div><div><dt>Inside radius</dt><dd>R{panel.settings.radius}</dd></div><div><dt>{panel.settings.bend_model==='fixed_deduction'?'Deduction / bend':'Deduction / 90°'}</dt><dd>{panel.settings.deduction} mm</dd></div><div><dt>Physical hinges</dt><dd>{panel.report.physical_bends??'—'}</dd></div><div><dt>Rigid faces</dt><dd>{panel.report.faces??'—'}</dd></div></dl><h4>DISPLAY</h4><div className="display-options"><label><Checkbox checked={paint} onCheckedChange={c=>setPaint(c===true)}/>{assembly?'Painted face colour':'Distinguish painted face'}</label><label><Checkbox checked={wire} onCheckedChange={c=>setWire(c===true)}/>{assembly?'Wireframe':'Wireframe (mesh triangles)'}</label></div><h4>VALIDATION</h4><div className="validation-compact">{panel.report.section_checks?.map(s=><div key={s.profile}><span>{s.chain_status==='PASS'?<Check size={14}/>:<CircleAlert size={14}/>}</span><div>{s.profile.replaceAll('_',' ')}<small>{mm(s.max_length_error_mm)} mm max error{s.validation_scope==='local_edge_profile'?' · local edge profile':s.full_plane_status==='FAIL'?' · documented chain':''}</small></div></div>)}{panel.report.unfold_check&&<div>{panel.report.unfold_check.status==='PASS'?<Check size={14}/>:<CircleAlert size={14}/>}<div>Unfold comparison<small>{panel.report.unfold_check.symmetric_difference_percent.toFixed(4)}% area difference</small>{panel.report.unfold_check.local_boundary_check&&<small>Local edge: {mm(panel.report.unfold_check.local_boundary_check.sampled_max_mm)} mm · limit {panel.report.unfold_check.local_boundary_check.tolerance_mm} mm · {panel.report.unfold_check.local_boundary_check.status}</small>}</div></div>}</div><button className="inspector-link" onClick={()=>setTab('review')}>Inspect drawing evidence <ChevronRight size={13}/></button></>:<p>Select a panel.</p>}</aside></TabsContent><TabsContent value="assembly" className="tab-page">
  <div className="asm-studio">
   {/* Left panel: entry list */}
-  <div className="asm-pane">
+  <fieldset className="asm-pane" disabled={!!faceDraft}>
    <div className="asm-pane-header"><span>ASSEMBLY</span>{asmEntries.length>0&&<button onClick={()=>setAsmEntries([])} title="Clear all"><X size={13}/> Clear</button>}</div>
    {asmEntries.length===0&&<div className="asm-empty"><Box size={28}/><p>Add panels and connect them face-to-face to build the assembly.</p></div>}
    {asmEntries.map((entry,i)=>{
@@ -292,7 +303,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
       </div>
       {entry.targetId===null
        ?<p className="asm-root">Root · placed at origin</p>
-       :<div className="asm-conn">
+       :entry.connection?<p className="asm-root">CAD faces · {entry.connection.reference.faceId} → {entry.connection.moving.faceId}<br/>Gap {entry.gap+entry.connection.normalOffset} mm · U {entry.connection.offsetU} · V {entry.connection.offsetV} mm</p>:<div className="asm-conn">
         <select className="face-sel" value={entry.myFace} onChange={e=>asmSetMyFace(entry.id,e.target.value as Face)}>
          {FACES.map(([f,l])=><option key={f} value={f}>{l}</option>)}
         </select>
@@ -305,7 +316,8 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
          {asmEntries.slice(0,i).map((e2,j)=>{const p2=panels.find(p=>p.id===e2.panelId);return <option key={e2.id} value={e2.id}>{String.fromCharCode(65+j)} · {p2?.filename.replace(/\.(dxf|dwg)$/i,'')}</option>;})}
         </select>
        </div>}
-      {entry.targetId!==null&&<AssemblySpacing entry={entry} onChange={asmUpdateEntry}/>}
+      {entry.targetId!==null&&!entry.connection&&<AssemblySpacing entry={entry} onChange={asmUpdateEntry}/>}
+      {entry.targetId!==null&&<button className="asm-connect-faces" type="button" disabled={!live} onClick={()=>setFaceDraft(beginFaceDraft(entry))}>{entry.connection?'Edit face connection':'Connect actual CAD faces'}</button>}
      </div>
     );
    })}
@@ -314,14 +326,16 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
    <p className="asm-hint">Layouts save in this browser per project. CAD validation checks every panel pair. STEP exports the complete verified assembly as separate solid parts.</p>
    {asmStorageError&&<p role="alert" className="asm-spacing-error">{asmStorageError}</p>}
    {asmEntries.length>1&&<div className="asm-summary"><span>{asmEntries.length} panels</span><span>·</span><span>{asmEntries.length-1} connection{asmEntries.length>2?'s':''}</span></div>}
-  </div>
+  </fieldset>
   {/* 3D viewer */}
   <div className="asm-viewer-wrap">
-   <AssemblyViewer key={projectId} projectId={projectId} live={live} onReadyChange={setAsmReady} ref={asmViewRef} entries={asmEntries} panels={assemblyPanels} paint={paint} wire={wire}/>
+   {faceDraft&&<AssemblyConnectionEditor draft={faceDraft} entries={asmEntries} panels={panels} valid={faceValid} onChange={setFaceDraft} onApply={applyFace} onCancel={()=>setFaceDraft(null)}/>}
+   <AssemblyViewer selection={faceDraft} previewOnly={!!faceDraft} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={setFaceValidation} key={projectId} projectId={projectId} live={live} onReadyChange={setAsmReady} ref={asmViewRef} entries={effectiveEntries} panels={assemblyPanels} paint={paint} wire={wire}/>
   </div>
   {/* Right: face reference */}
   <div className="asm-inspector">
-   <p className="inspector-section">FACE REFERENCE</p>
+   <p className="inspector-section">ENVELOPE SIDES</p>
+   <p className="asm-hint">Envelope gaps use global bounds. Use “Connect actual CAD faces” to align selected surfaces with a gap and independent offsets along the face.</p>
    <div className="face-ref">
     {FACES.map(([face,label])=>(
      <div key={face} className="face-ref-row">
@@ -367,9 +381,9 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
    <p className="inspector-section" style={{marginTop:22}}>HOW TO</p>
    <ol className="asm-how">
     <li>Add the <strong>root panel</strong> — it anchors the assembly at the origin.</li>
-    <li>Add each <strong>next panel</strong>, pick which face of the new panel meets which face of an existing panel.</li>
-    <li>Set the connection gap in mm. For additional axis gaps, choose a separation side and enter the clearance. Keep alignment preserves the other directions.</li>
-    <li>Gaps use the folded CAD boundaries along global X, Y and Z. They measure directional clearance, not the shortest distance between irregular surfaces. Rotations stay unchanged.</li>
+    <li>Add each <strong>next panel</strong> using envelope sides for initial placement. Choose <strong>Connect actual CAD faces</strong> to select a reference surface and a moving surface in the viewer.</li>
+    <li>For CAD faces, set the gap and slide along local U/V. Normal adjustment explicitly changes the effective gap. B rotates to oppose A’s face; in-plane rotation adjusts alignment.</li>
+    <li>Apply saves the connection; Cancel restores it. Dependent panels follow. Envelope controls remain available for global X/Y/Z clearances on existing layouts.</li>
     <li>Resolve highlighted solid intersections before exporting the assembly STEP. Zero gap permits contact, never penetrating solids.</li>
    </ol>
   </div>
