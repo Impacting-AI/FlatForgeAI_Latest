@@ -29,6 +29,8 @@ export function decodeAssemblies(text: string | null): AssemblyProjects {
         if(!entry.targetId||!c||c.type!=='planar'||!validReference(c.reference)||!validReference(c.moving)
           ||![c.offsetU,c.offsetV,c.normalOffset,c.twist].every(Number.isFinite)||entry.gap+c.normalOffset<0)throw new Error('Invalid saved CAD face connection.');
       }
+      if(entry.label!==undefined&&(!/^[A-Z]+$/.test(entry.label)||entries.some(other=>other!==entry&&other.label===entry.label)))throw new Error('Invalid saved panel label.');
+      if(entry.rootOffset!==undefined&&(entry.targetId!==null||!Array.isArray(entry.rootOffset)||entry.rootOffset.length!==3||!entry.rootOffset.every(Number.isFinite)))throw new Error('Invalid assembly origin.');
       seen.add(entry.id);
     }
   }

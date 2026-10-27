@@ -154,9 +154,9 @@ try {
   assert.equal(await page.locator('.assembly-bar label').count(), 4); // Three panels + gap.
   await backToDrawings(); await page.getByRole('button', { name: '06 Assembly drawings', exact: true }).click();
   assert.equal(page.url(), url + `/projects/${project.id}/assembly`);
-  await page.getByRole('button', { name: 'Add first panel', exact: true }).click();
-  assert.equal(await page.getByRole('dialog').locator('select option').count(), 4);
-  await page.getByRole('dialog').press('Escape');
+  await page.getByRole('button', { name: 'Select First Panel', exact: true }).click();
+  assert.equal(await page.locator('.asm-available-panels button').count(), 3);
+  await page.getByRole('button',{name:'Close panel picker',exact:true}).click();
   // Direct requests are served by the real dynamic route, not only client selection.
   await page.goto(drawingURL(c, 4), { waitUntil: 'networkidle' }); await heading(c.filename).waitFor();
   assert.equal(await page.locator('.calculation-table tbody tr').count(), 1);

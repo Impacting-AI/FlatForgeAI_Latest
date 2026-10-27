@@ -87,9 +87,12 @@ class Entry(SourceReference):
     rotation: tuple[float, float, float, float] = (0, 0, 0, 1)
     matrix: list[float] | None = Field(default=None, min_length=16, max_length=16)
     connection: FaceConnection | None = None
+    rootOffset: tuple[float, float, float] | None = None
 
     @model_validator(mode="after")
     def valid_connection(self):
+        if self.rootOffset is not None and self.targetId is not None:
+            raise ValueError('Only the root can have an assembly-origin offset')
         if self.connection and (self.targetId is None or self.gap + self.connection.normalOffset < 0):
             raise ValueError("A face connection needs a reference panel and a non-negative effective gap")
         return self

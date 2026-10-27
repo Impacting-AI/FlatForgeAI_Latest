@@ -1,5 +1,7 @@
 # STEP 6: directional clearances and assembly STEP export
 
+For the current STEP 6 controls and interaction, see [Interactive assembly workspace](assembly-workspace.md). The implementation history and geometric rules below remain useful context.
+
 ## Root cause and units
 
 The earlier millimetre fix remains: CAD/DXF/STEP coordinates are mm; the backend

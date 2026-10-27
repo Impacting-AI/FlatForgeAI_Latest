@@ -164,3 +164,31 @@ def test_legacy_placements_match_previous_engine_and_real_folded_faces(api,tmp_p
         # must still be measured and collisions must block approval, not be hidden.
         assert result['clearances'][0]['actual']==pytest.approx(10,abs=1e-5)
         if result['collisions']:assert not result['valid'] and result['token'] is None
+
+
+def test_controller_frames_and_root_translation_match_shared_cad_matrices(api, tmp_path):
+    client, project = api
+    rows = box_pair(client, project, tmp_path)
+    angle = math.radians(29)/2
+    rows[0]['rotation'] = [0, 0, math.sin(angle), math.cos(angle)]
+    response = client.post(f'/projects/{project}/assembly/place', json={'entries': rows})
+    assert response.status_code == 200, response.text
+    original = response.json()
+    frame = original['frames']['b']
+    basis = np.column_stack([frame[k] for k in ('u','v','n')])
+    assert basis.T @ basis == pytest.approx(np.eye(3), abs=1e-8)
+    assert np.linalg.det(basis) == pytest.approx(1)
+    matrix = np.array(original['entries'][1]['matrix']).reshape(4,4).T
+    assert frame['origin'] == pytest.approx(matrix[:3,:3] @ np.array(rows[1]['connection']['moving']['point']) + matrix[:3,3])
+    shift = np.array([17.25,-28.5,50.125])
+    rows[0]['rootOffset'] = shift.tolist()
+    moved = client.post(f'/projects/{project}/assembly/place', json={'entries': rows}).json()
+    for index, name in enumerate(('a','b')):
+        assert np.array(moved['entries'][index]['matrix'][12:15])-np.array(original['entries'][index]['matrix'][12:15]) == pytest.approx(shift)
+        assert np.array(moved['frames'][name]['origin'])-np.array(original['frames'][name]['origin']) == pytest.approx(shift)
+    checked = check(client,project,moved['entries'])
+    assert checked['valid'], checked
+    assert checked['clearances'][0]['surfaceDistance'] == pytest.approx(20, abs=1e-5)
+    # Source origin belongs only to the root; children retain face relationships.
+    rows[1]['rootOffset'] = [0,0,0]
+    assert client.post(f'/projects/{project}/assembly/place',json={'entries':rows}).status_code == 422

@@ -86,6 +86,7 @@ export function assemblyPlacements(entries: AssemblyEntry[], bounds: Map<string,
     if (!Number.isFinite(entry.gap) || entry.gap < 0) throw new Error('Gap must be a finite, non-negative number in mm.');
     const half = box.getSize(new THREE.Vector3()).multiplyScalar(.5);
     let center = new THREE.Vector3(0, 0, half.z);
+    if(entry.targetId===null&&entry.rootOffset)center.add(new THREE.Vector3(...entry.rootOffset).multiplyScalar(.001));
     if (entry.targetId !== null) {
       const target = byId.get(entry.targetId);
       if (!target || !entry.targetFace) throw new Error('Assembly connection target is unavailable.');

@@ -194,3 +194,72 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .asm-face-editor button:disabled,.asm-connect-faces:disabled{opacity:.45;cursor:default}
 .asm-effective-gap{font-weight:500;font-size:12px}
 @media(max-width:600px){.asm-face-pair,.asm-face-values{grid-template-columns:1fr}.asm-face-heading{flex-wrap:wrap}}
+
+/* STEP 6 visual assembly workspace: all controls are contextual viewer overlays. */
+.assembly-workspace{border:1px solid #ccd5dc;border-radius:10px;overflow:hidden;background:#edf1f4}
+.assembly-workspace .viewer-stage{height:78vh;min-height:720px;max-height:1100px;position:relative;background:#edf1f4;isolation:isolate}
+.assembly-workspace .webgl-host{position:absolute;inset:0}
+.assembly-workspace button,.assembly-workspace select{font-size:12px}
+.assembly-workspace button{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 10px;background:#fff;border:1px solid #cdd7df;border-radius:6px;color:#334856;line-height:1.3}
+.assembly-workspace button:disabled{opacity:.45;cursor:default}
+.assembly-workspace button.primary{background:#146a7a;border-color:#146a7a;color:#fff}
+.assembly-workspace button:focus-visible,.assembly-workspace input:focus-visible,.assembly-workspace select:focus-visible{outline:2px solid #2f8cbb;outline-offset:2px}
+.asm-workspace-toolbar{position:absolute;top:12px;left:12px;right:65px;z-index:6;display:flex;align-items:center;gap:5px;flex-wrap:wrap;pointer-events:none}
+.asm-workspace-toolbar>*{pointer-events:auto;box-shadow:0 2px 5px #1633440d}
+.asm-workspace-toolbar select{padding:7px;background:white;border:1px solid #cdd7df;border-radius:6px;max-width:110px}
+.assembly-workspace .viewport-actions{top:12px;right:12px;z-index:6}
+.assembly-workspace .viewport-actions button{width:32px;height:32px;padding:5px}
+.assembly-workspace .asm-cad-controls{position:absolute;left:12px;right:12px;bottom:12px;z-index:7;background:#ffffffed;border:1px solid #cdd7df;border-radius:8px;padding:9px 12px;display:flex;gap:12px;align-items:center;min-height:48px;backdrop-filter:blur(5px)}
+.assembly-workspace .asm-cad-controls p{margin:0;font-size:11px;line-height:1.5;flex:1}
+.assembly-workspace .asm-cad-controls button{white-space:nowrap;font-size:11px}
+.assembly-workspace .viewer-loading{z-index:3;pointer-events:none}
+.assembly-workspace .axis-key{bottom:83px;right:15px;z-index:4}
+.assembly-workspace .viewport-help{display:none}
+.asm-mode-indicator{position:absolute;left:12px;bottom:78px;z-index:4;font-size:11px;color:#455b6a;background:#ffffffce;padding:5px 9px;border-radius:4px;max-width:80%;pointer-events:none}
+.asm-mode-indicator span{margin-left:10px;color:#9b681f;font-weight:600}
+.asm-context{position:absolute;right:12px;top:68px;width:292px;max-width:calc(100% - 24px);max-height:calc(100% - 170px);overflow:auto;z-index:6;background:#fffffff5;border:1px solid #c4d4df;border-radius:10px;box-shadow:0 6px 22px #1e39431a;padding:15px;color:#2e4656;font-size:12px;backdrop-filter:blur(5px)}
+.asm-context header,.asm-panel-list header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.asm-context header>span{font-size:10px;color:#71838f}
+.asm-context header strong small{color:#7a8a95;font-weight:500}
+.asm-context p,.asm-panel-list p{font-size:11px;color:#637581;line-height:1.5;margin:9px 0}
+.asm-context select{max-width:100%;width:100%;padding:6px;border:1px solid #cdd7df;border-radius:4px;background:#fff}
+.asm-field{display:grid;gap:5px;margin:10px 0}
+.asm-side-step{border-left:3px solid #2e92cb;padding-left:9px;margin:12px 0}
+.asm-side-step.moving{border-color:#eaa447}
+.asm-side-step>button{width:100%;justify-content:flex-start;padding:8px}
+.asm-side-step>button[aria-pressed=true]{outline:2px solid #56a1c6;outline-offset:1px}
+.asm-side-step>small{display:block;color:#607887;font-size:11px;margin:6px 0}
+.asm-side-step summary{font-size:10px;cursor:pointer;color:#637581;margin:6px 0}
+.asm-inline-values{display:grid;gap:7px;margin:12px 0}
+.asm-inline-values label{display:grid;grid-template-columns:1fr 104px;align-items:center;gap:8px}
+.asm-inline-values label>span:first-child{font-size:11px;color:#415867}
+.asm-inline-values label>span:last-child{display:flex;align-items:center;gap:5px}
+.asm-inline-values input{width:80px;min-width:0;border:1px solid #c7d4df;border-radius:4px;background:#fff;padding:6px 5px;color:#213d50;font-size:12px}
+.asm-inline-values small{font-size:10px;color:#728391}
+.asm-gap-readout{padding:7px 0;display:flex;justify-content:space-between;border-top:1px solid #e2e8ed;font-size:11px}
+.asm-context footer{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-top:12px}
+.asm-context footer button{font-size:11px;padding:7px 8px}
+.asm-context .asm-text-action{border:0;background:none;padding:10px 0 0;font-size:10px;text-decoration:underline}
+.asm-add-picker .asm-available-panels{display:flex;flex-direction:column;gap:7px;max-height:40vh;overflow:auto;margin:12px 0}
+.asm-available-panels>button{display:block;text-align:left;line-height:1.5;padding:10px;overflow-wrap:anywhere}
+.asm-available-panels small{display:block;font-size:10px;color:#7b8b94;margin-top:4px}
+.asm-add-picker>label{display:flex;align-items:center;gap:7px;font-size:11px}
+.asm-selection-toolbar{position:absolute;top:58px;left:12px;z-index:5;display:flex;gap:5px;align-items:center;flex-wrap:wrap;max-width:calc(100% - 80px);background:#fffffff0;border:1px solid #cdd7df;border-radius:7px;padding:7px 9px;font-size:11px;box-shadow:0 3px 12px #1528330c}
+.asm-selection-toolbar>span{color:#6b7d88;margin-right:5px}
+.asm-selection-toolbar small{flex-basis:100%;color:#5c7381;font-size:10px}
+.asm-panel-list{position:absolute;left:12px;top:105px;width:246px;max-width:calc(100% - 24px);max-height:calc(100% - 210px);overflow:auto;z-index:7;background:#fff;border:1px solid #cdd7df;border-radius:8px;padding:12px;box-shadow:0 4px 20px #1e39431a}
+.asm-panel-list>div{display:flex;align-items:center;border-radius:4px;margin-bottom:4px;gap:3px}
+.asm-panel-list>div.selected{background:#e5f3f8}
+.asm-panel-list>div>button:first-child{justify-content:flex-start;flex:1;min-width:0;border:0;background:transparent;padding:7px 2px;text-align:left}
+.asm-panel-list b{background:#4f8195;color:white;padding:4px 5px;border-radius:4px;min-width:22px;text-align:center;font-size:11px}
+.asm-panel-list span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.asm-panel-list small{display:block;color:#71838d;font-size:10px}
+.asm-panel-list>label{display:flex;gap:6px;margin-top:12px;font-size:11px}
+.asm-model-labels{position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}
+.assembly-workspace .asm-model-label{position:absolute;left:0;top:0;pointer-events:auto;font-size:10px;font-weight:600;border-radius:4px;background:#ffffffea;padding:4px 7px;box-shadow:0 2px 4px #29425322;color:#344d5c;min-width:65px;max-width:95px}
+.assembly-workspace .asm-model-label[aria-pressed=true]{background:#146a7a;color:#fff;border-color:#146a7a}
+.assembly-workspace .asm-model-label[hidden]{display:none}
+.asm-face-tooltip{position:absolute;z-index:5;background:#243d4aee;color:white;border-radius:5px;padding:6px 9px;font-size:11px;max-width:220px;pointer-events:none}
+.asm-workspace-notice{position:absolute;z-index:8;top:52px;left:12px;right:12px;background:#fff5dd;border:1px solid #e7cb8a;color:#76551a;padding:8px 12px;font-size:11px;border-radius:5px;pointer-events:none}
+.asm-legacy-card label{font-size:11px}
+@media(max-width:640px){.assembly-workspace .viewer-stage{height:1050px;min-height:850px}.asm-workspace-toolbar{right:48px}.asm-workspace-toolbar select{max-width:85px}.asm-context{top:106px;max-height:480px;width:275px}.asm-selection-toolbar{top:100px}.asm-panel-list{top:150px}.assembly-workspace .asm-cad-controls{display:block}.assembly-workspace .asm-cad-controls p{margin-top:6px}.asm-mode-indicator{bottom:110px;font-size:10px;max-width:86%}.assembly-workspace .axis-key{bottom:150px}.asm-workspace-notice{top:95px}}

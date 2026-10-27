@@ -1,5 +1,7 @@
 # STEP 6: selected CAD faces, gaps and local alignment
 
+For the current STEP 6 controls and interaction, see [Interactive assembly workspace](assembly-workspace.md). The implementation history and geometric rules below remain useful context.
+
 ## What changed
 
 The former “faces” were six global bounding-envelope sides. Those controls

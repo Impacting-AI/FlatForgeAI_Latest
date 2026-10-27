@@ -1,14 +1,15 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AssemblyEntry } from './types';
 import { faceAxis, resetAssemblySpacing, setAssemblySpacing, setAssemblySide, withDirectionalGaps } from './assembly-geometry';
 
-export function AssemblyNumber({ label, value, min, disabled, onChange }: {
-  label: string; value: number; min?: number; disabled?: boolean; onChange: (value: number) => void;
+export function AssemblyNumber({ label, value, min, disabled, onChange, onValidityChange }: {
+  label: string; value: number; min?: number; disabled?: boolean; onChange: (value: number) => void; onValidityChange?:(valid:boolean)=>void;
 }) {
   const [input, setInput] = useState({ value, draft: String(value), error: '' });
   if (input.value !== value) setInput({ value, draft: String(value), error: '' });
   const { draft, error } = input;
+  useEffect(()=>{onValidityChange?.(!error||!!disabled);},[error,disabled,onValidityChange]);
   return <label className="asm-spacing-field">
     <span>{label}</span><span className="asm-spacing-input"><input type="number" step="any" min={min} disabled={disabled}
       aria-label={label} aria-invalid={!!error} value={draft} onChange={event => {
@@ -23,8 +24,10 @@ export function AssemblyNumber({ label, value, min, disabled, onChange }: {
   </label>;
 }
 
-export default function AssemblySpacing({ entry, onChange }: { entry: AssemblyEntry; onChange: (entry: AssemblyEntry) => void }) {
+export default function AssemblySpacing({ entry, onChange, onValidityChange }: { entry: AssemblyEntry; onChange: (entry: AssemblyEntry) => void; onValidityChange?:(valid:boolean)=>void }) {
   const [reset, setReset] = useState(0);
+  const [validity,setValidity]=useState({x:true,y:true,z:true});
+  useEffect(()=>{onValidityChange?.(Object.values(validity).every(Boolean));},[validity,onValidityChange]);
   if (!entry.targetFace) return null;
   const normalAxis = faceAxis(entry.targetFace);
   if (!entry.spacing) return <div className="asm-spacing"><p className="asm-spacing-note">Saved layout uses the previous offsets. Its positions are retained. Convert to directional gaps to edit spacing; existing alignment on other axes is kept.</p><button type="button" className="table-link" onClick={() => onChange(withDirectionalGaps(entry))}>Use directional gaps</button></div>;
@@ -35,7 +38,7 @@ export default function AssemblySpacing({ entry, onChange }: { entry: AssemblyEn
       const constraint = entry.spacing![axis];
       return <div className="asm-axis-gap" key={`${axis}:${entry.targetFace}:${reset}`}>
         <AssemblyNumber label={`${label} gap`} min={0} disabled={!constraint.side}
-          value={constraint.side ? constraint.gap : 0} onChange={value => onChange(setAssemblySpacing(entry, axis, value))}/>
+          value={constraint.side ? constraint.gap : 0} onValidityChange={valid=>setValidity(old=>old[axis]===valid?old:{...old,[axis]:valid})} onChange={value => onChange(setAssemblySpacing(entry, axis, value))}/>
         <select aria-label={`${label} direction`} disabled={normal} value={constraint.side}
           onChange={event => onChange(setAssemblySide(entry, axis, Number(event.target.value) as -1|0|1))}>
           {!normal && <option value={0}>Keep alignment{entry.offsets?.[axis] ? ` (${entry.offsets[axis]} mm saved shift)` : ''}</option>}

@@ -4,7 +4,8 @@ export type CadEntry = AssemblyEntry & { revision: number; matrix?: number[] };
 export type CadBounds = { units: 'mm'; entries: { id: string; revision: number; bounds: { min: number[]; max: number[] } }[] };
 export type CadFace = {id:string;type:string;area:number;supported:boolean;center:[number,number,number];normal?:[number,number,number];u?:[number,number,number];v?:[number,number,number];positions:number[];indices:number[]};
 export type CadFaceCatalog={entryId:string;revision:number;sourceSha:string;units:'mm';faces:CadFace[]};
-export type CadPlacement={units:'mm';entries:(CadEntry & {matrix:number[]})[];bounds:Record<string,{min:number[];max:number[]}>};
+export type CadFrame={kind:'root'|'face';origin:[number,number,number];u:[number,number,number];v:[number,number,number];n:[number,number,number]};
+export type CadPlacement={frames?:Record<string,CadFrame>;units:'mm';entries:(CadEntry & {matrix:number[]})[];bounds:Record<string,{min:number[];max:number[]}>};
 export type CadClash = { entryIdA: string; entryIdB: string; depth: number; pointCount: number; volume?: number };
 export type CadCheck = { valid: boolean; token: string | null; collisions: CadClash[];
   contacts: { entryIdA: string; entryIdB: string }[]; issues: string[];
@@ -14,7 +15,9 @@ export function cadEntries(entries: AssemblyEntry[], panels: Panel[]): CadEntry[
   return entries.map(entry => {
     const panel = panels.find(panel => panel.id === entry.panelId);
     if (!panel) throw new Error('An assembly drawing is unavailable.');
-    return { ...entry, revision: panel.revision };
+    const {label: _label,...engineering}=entry;
+    void _label;
+    return { ...engineering, revision: panel.revision };
   });
 }
 async function request(projectId: string, action: string, body: unknown, signal?: AbortSignal) {

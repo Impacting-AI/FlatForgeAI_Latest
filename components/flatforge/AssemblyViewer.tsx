@@ -1,18 +1,22 @@
 'use client';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { Camera, LoaderCircle, Maximize2, Box, Download } from 'lucide-react';
+import { Camera, LoaderCircle, Box, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AssemblyEntry, Panel, fileUrl } from './types';
 import { assemblyModel, assemblyPlacements, assemblyMatrix, assemblyRotation } from './assembly-geometry';
-import { placeAssembly, cadEntries, checkAssembly, downloadAssemblyStep, type CadCheck, type CadEntry } from './assembly-cad';
+import { placeAssembly, cadEntries, checkAssembly, downloadAssemblyStep, type CadCheck, type CadEntry, type CadFaceCatalog, type CadPlacement } from './assembly-cad';
 
 import { createAssemblyFacePicker } from './assembly-face-picker';
 import type { FaceRole, FaceSelection } from './face-connection-state';
 import type { CadFaceReference } from './types';
+import { createAssemblyGizmo } from './assembly-gizmo';
+import { createAssemblyLabels } from './assembly-labels';
+import { alphabeticLabel, positionValues, type PositionValues } from './assembly-workspace-state';
+import { inspectionMaterial, inspectionLighting } from './inspection-presentation';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 export type ClashResult = {
@@ -31,6 +35,7 @@ export type AssemblyViewerHandle = {
  runClash: () => Promise<ClashResult[]>;
  /** Remove clash highlighting and restore panel colours */
  clearClash: () => void;
+ fit:(view?:string)=>void;
 };
 
 type Props = {
@@ -41,6 +46,9 @@ type Props = {
  paint: boolean;
  wire: boolean;
  onReadyChange: (ready:boolean) => void;
+ children?:ReactNode;activeId?:string|null;hiddenIds?:string[];moving?:boolean;
+ onSelect?:(id:string|null)=>void;onMove?:(values:PositionValues)=>void;onDrag?:(active:boolean)=>void;
+ onCatalog?:(catalog:CadFaceCatalog)=>void;onPlaced?:(placement:CadPlacement)=>void;
  selection?:FaceSelection|null;
  previewOnly?:boolean;
  onFacePicked?:(role:FaceRole,face:CadFaceReference)=>void;
@@ -50,9 +58,9 @@ type Props = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation},ref){
+ function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,hiddenIds=[],moving=false,onSelect,onMove,onDrag,onCatalog,onPlaced},ref){
   const host = useRef<HTMLDivElement>(null);
-  const viewApi = useRef<{fit:()=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
+  const viewApi = useRef<{fit:(view?:string)=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
   const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
   const runClashRef = useRef<()=>Promise<ClashResult[]>>(async()=>[]);
   const clearClashRef = useRef<()=>void>(()=>{});
@@ -69,9 +77,11 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   const entriesLatest = useRef(entries);
   const layoutRef = useRef<(()=>void)|null>(null);
   const entriesKey=JSON.stringify(entries);
-  const interaction=useRef({selection,previewOnly,onFacePicked,onFaceMessage,onValidation});
+  const interaction=useRef({selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,onSelect,onMove,onDrag,onCatalog,onPlaced});
+  const displayRef=useRef<(()=>void)|null>(null);
+  const gizmoRef=useRef<ReturnType<typeof createAssemblyGizmo>|null>(null);
   const pickerRef=useRef<ReturnType<typeof createAssemblyFacePicker>|null>(null);
-  useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation};void pickerRef.current?.update(selection);},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation]);
+  useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,onSelect,onMove,onDrag,onCatalog,onPlaced};void pickerRef.current?.update(selection);displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,onSelect,onMove,onDrag,onCatalog,onPlaced]);
   // Parent selection/highlight updates must not restart CAD placement.
   useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey);layoutRef.current?.();},[entriesKey]);
   useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid});},[cad,ready,onValidation]);
@@ -84,6 +94,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   useImperativeHandle(ref,()=>({
    runClash: ()=>runClashRef.current(),
    clearClash: ()=>clearClashRef.current(),
+   fit:(view)=>viewApi.current?.fit(view),
   }),[]);
 
   // Reload models only when panel artifacts change. Spacing/connections preserve the camera.
@@ -119,18 +130,25 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    camera.up.set(0,0,1);
    const controls=new OrbitControls(camera,renderer.domElement);
    controls.enableDamping=true; controls.dampingFactor=.1;
-   scene.add(new THREE.HemisphereLight(0xffffff,0x82999d,2.1));
-   const sun=new THREE.DirectionalLight(0xffffff,3); sun.position.set(3,-3,5); scene.add(sun);
-   const fill=new THREE.DirectionalLight(0xc5e5e7,1.3); fill.position.set(-2,2,-4); scene.add(fill);
+   inspectionLighting(scene);
    const grid=new THREE.GridHelper(20,100,0xc1d1d1,0xd8e2e2);
    grid.rotation.x=Math.PI/2; grid.position.z=-.012; scene.add(grid);
 
    const panelMap=new Map(panels.map(p=>[p.id,p]));
    const loader=new GLTFLoader();
-   type Item={group:THREE.Group;bounds:THREE.Box3};
+   type Item={group:THREE.Group;bounds:THREE.Box3;localBounds:THREE.Box3};
    const items=new Map<string,Item>();
    const clashOverlays:THREE.Object3D[]=[];
    const originalColours=new Map<THREE.Material,THREE.Color>();
+   const collisions=new Set<string>();let hoveredId:string|null=null;
+   let labels:ReturnType<typeof createAssemblyLabels>|null=null,placed:CadPlacement|null=null;let placedKey='';
+   function syncDisplay(){
+    for(const [id,item] of items)item.group.visible=!interaction.current.hiddenIds.includes(id);
+    applyRef.current?.(paintLatest.current,wireLatest.current);
+    const id=interaction.current.activeId,entry=entriesLatest.current.find(e=>e.id===id),frame=id?placed?.frames?.[id]:null;
+    gizmoRef.current?.set(placedKey===JSON.stringify(entriesLatest.current)&&interaction.current.moving&&id&&entry&&frame&&!interaction.current.hiddenIds.includes(id)?{id,frame,values:positionValues(entry),gap:entry.gap}:null);
+   }
+   displayRef.current=syncDisplay;
 
    // Include missing/stale source failures in the recoverable loading error path.
    Promise.resolve().then(()=>{cadEntries(entries,panels);return Promise.all(entries.map(async entry=>{
@@ -138,7 +156,10 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     if(!panel) throw new Error('Panel not found');
     const gltf=await loader.loadAsync(fileUrl(panel,'panel.glb'));
     if(!alive) return;
-    const item=assemblyModel(gltf.scene);
+    const source=assemblyModel(gltf.scene),item={...source,localBounds:source.bounds.clone()};
+    const oldMaterials=new Set<THREE.Material>();
+    item.group.traverse(object=>{if(object instanceof THREE.Mesh){for(const material of Array.isArray(object.material)?object.material:[object.material])oldMaterials.add(material);object.material=inspectionMaterial(object.name.includes('_paint'));}});
+    oldMaterials.forEach(material=>material.dispose());
     item.group.quaternion.copy(assemblyRotation(entry));item.group.updateMatrixWorld(true);
     item.bounds=new THREE.Box3().setFromObject(item.group,true);
     item.group.name=`Assembly ${entry.id}`;
@@ -149,10 +170,18 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     items.set(entry.id,item);
    }));}).then(async()=>{
     if(!alive) return;
+    gizmoRef.current=createAssemblyGizmo({scene,camera,canvas:renderer.domElement,orbit:controls,groups:items,entries:()=>entriesLatest.current,
+     onStart:()=>{layoutVersion++;validationController?.abort();placementController?.abort();clearTimeout(validationTimer);pending=null;cadLatest.current=null;setReady(false);setCad({key:'',checking:true,result:null,error:''});interaction.current.onDrag?.(true);},
+     onChange:values=>{interaction.current.onMove?.(values);pickerRef.current?.refresh();},
+     onEnd:()=>{interaction.current.onDrag?.(false);requestAnimationFrame(()=>{if(alive)layoutRef.current?.();});}});
+    labels=createAssemblyLabels({host:root,camera,groups:items,entries:()=>entriesLatest.current,active:()=>interaction.current.activeId,onSelect:id=>interaction.current.onSelect?.(id)});
     if(live){
      pickerRef.current=createAssemblyFacePicker({projectId,scene,camera,canvas:renderer.domElement,groups:items,
       entries:()=>cadEntries(entriesLatest.current,panels),
-      onPick:(role,face)=>interaction.current.onFacePicked?.(role,face),onMessage:message=>interaction.current.onFaceMessage?.(message)});
+      onPick:(role,face)=>interaction.current.onFacePicked?.(role,face),onMessage:message=>interaction.current.onFaceMessage?.(message),
+      onSelect:id=>interaction.current.onSelect?.(id),onCatalog:catalog=>interaction.current.onCatalog?.(catalog),
+      blocked:()=>!!gizmoRef.current?.intercepting,
+      onPanelHover:id=>{if(hoveredId!==id){hoveredId=id;applyRef.current?.(paintLatest.current,wireLatest.current);}}});
      void pickerRef.current.update(interaction.current.selection);
     }
     let submittedKey='';
@@ -164,7 +193,8 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       if(!alive||version!==layoutVersion)throw new Error('Assembly changed while validating.');
       pending=null;cadLatest.current=result;setCad({key:submittedKey,checking:false,result,error:''});
       clearClash();
-      for(const clash of result.collisions)for(const id of[clash.entryIdA,clash.entryIdB])items.get(id)?.group.traverse(object=>{if(object instanceof THREE.Mesh)for(const material of Array.isArray(object.material)?object.material:[object.material])if(material instanceof THREE.MeshStandardMaterial)material.color.set(0xdd2020);});
+      for(const clash of result.collisions)for(const id of[clash.entryIdA,clash.entryIdB])collisions.add(id);
+      doApply(paintLatest.current,wireLatest.current);
       return result;
      }).catch(error=>{if(alive&&version===layoutVersion&&!controller.signal.aborted){cadLatest.current=null;setCad({key:submittedKey,checking:false,result:null,error:(error as Error).message});pending=null;}throw error;});
      return pending;
@@ -172,7 +202,9 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
     // ── Position panels from connection tree ──────────────────────────────
     async function layout(){
+     if(gizmoRef.current?.dragging)return;
      const version=++layoutVersion,snapshot=entriesLatest.current,requestKey=JSON.stringify(snapshot);
+     gizmoRef.current?.set(null);
      placementController?.abort();validationController?.abort();clearTimeout(validationTimer);pending=null;cadLatest.current=null;
      placementController=new AbortController();const controller=placementController;
      setStepError('');setCad({key:requestKey,checking:live,result:null,error:''});setReady(false);
@@ -187,7 +219,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
         const matrix=new THREE.Matrix4().fromArray(row.matrix);matrix.elements[12]/=1000;matrix.elements[13]/=1000;matrix.elements[14]/=1000;
         const group=items.get(entry.id)!.group;matrix.decompose(group.position,group.quaternion,group.scale);group.updateMatrixWorld(true);
        }
-       submitted=result.entries;
+       submitted=result.entries;placed=result;placedKey=requestKey;interaction.current.onPlaced?.(result);
        grid.position.z=Math.min(...Object.values(result.bounds).map(box=>box.min[2]))/1000-.012;
       }else{
        if(snapshot.some(entry=>entry.connection))throw new Error('Connect the CAD service to preview saved CAD-face connections.');
@@ -196,7 +228,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
        grid.position.z=Math.min(...[...placements.values()].map(placement=>placement.bounds.min.z))-.012;
        submitted=cadEntries(snapshot,panels).map(entry=>({...entry,matrix:assemblyMatrix(entry,placements.get(entry.id)!.translation)}));
       }
-      submittedKey=requestKey;pickerRef.current?.refresh();
+      submittedKey=requestKey;pickerRef.current?.refresh();syncDisplay();
       if(live)validationTimer=setTimeout(()=>{void validateLayout().catch(()=>{});},250);
       setMsg('');setErr(false);setReady(true);
      }catch(error){if(alive&&version===layoutVersion&&!controller.signal.aborted){setMsg((error as Error).message);setErr(true);setReady(false);setCad({key:requestKey,checking:false,result:null,error:(error as Error).message});}}
@@ -212,7 +244,8 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
          if('wireframe' in mat)(mat as THREE.MeshStandardMaterial).wireframe=w;
          if(mat instanceof THREE.MeshStandardMaterial&&originalColours.has(mat)) mat.color.copy(originalColours.get(mat)!);
          if(mat instanceof THREE.MeshStandardMaterial&&o.name.includes('_paint'))
-          mat.color.set(p?0x39a88e:0xb7c5c7);
+          mat.color.set(p?0xc6cbd1:0xb7bdc5);
+         if(mat instanceof THREE.MeshStandardMaterial){if(collisions.has(item.group.userData.entryId))mat.color.set(0xdd2020);mat.emissive.set(item.group.userData.entryId===interaction.current.activeId?0x124e65:item.group.userData.entryId===hoveredId?0x163745:0x000000);}
         }
        }
       });
@@ -314,6 +347,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
     // ── Clear clash visuals ───────────────────────────────────────────────
     function clearClash(){
+     collisions.clear();
      for(const obj of clashOverlays){
       scene.remove(obj);
       if(obj instanceof THREE.Mesh){
@@ -333,14 +367,17 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     clearClashRef.current=clearClash;
 
     // ── Fit camera ────────────────────────────────────────────────────────
-    function fit(){
+    function fit(view="iso"){
      if(!items.size) return;
      const box=new THREE.Box3();
-     for(const item of items.values()){item.group.updateMatrixWorld(true);box.union(new THREE.Box3().setFromObject(item.group));}
+     for(const item of items.values()){if(!item.group.visible)continue;item.group.updateMatrixWorld(true);box.union(new THREE.Box3().setFromObject(item.group));}
+     if(box.isEmpty())return;
      const size=box.getSize(new THREE.Vector3()),c=box.getCenter(new THREE.Vector3());
      const vFov=THREE.MathUtils.degToRad(camera.fov),hFov=2*Math.atan(Math.tan(vFov/2)*camera.aspect);
      const dist=size.length()/2/Math.sin(Math.min(vFov,hFov)/2)*1.15+.1;
-     camera.position.copy(c).addScaledVector(new THREE.Vector3(1,-1.25,1.15).normalize(),dist);
+     camera.up.set(0,0,1);if(view==='top')camera.up.set(0,1,0);
+     const direction=view==='top'?new THREE.Vector3(0,0,1):view==='front'?new THREE.Vector3(0,-1,0):view==='side'?new THREE.Vector3(1,0,0):new THREE.Vector3(1,-1.25,1.15);
+     camera.position.copy(c).addScaledVector(direction.normalize(),dist);
      controls.target.copy(c);
      camera.near=.001; camera.far=Math.max(100,dist*20);
      camera.updateProjectionMatrix(); controls.update();
@@ -353,7 +390,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       if(live&&!cadLatest.current?.valid)throw new Error('Validate a conflict-free CAD assembly before exporting.');
       const snapshot=new THREE.Scene();
       snapshot.userData={units:'metres',source_units:'mm',assemblyEntries:entriesLatest.current,cadTransformsMm:submitted};
-      for(const entry of entriesLatest.current) snapshot.add(items.get(entry.id)!.group.clone(true));
+      for(const entry of entriesLatest.current){const copy=items.get(entry.id)!.group.clone(true);copy.visible=true;snapshot.add(copy);}
       snapshot.updateMatrixWorld(true);
       const result=await new GLTFExporter().parseAsync(snapshot,{binary:true});
       if(!(result instanceof ArrayBuffer)) throw new Error('Assembly export failed.');
@@ -367,11 +404,18 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
    const resize=new ResizeObserver(()=>{const w=root.clientWidth,h=root.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();});
    resize.observe(root);
-   function loop(){frame=requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);}
+   function loop(){frame=requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);labels?.update();
+    const popup=root.parentElement?.querySelector<HTMLElement>('[data-position-popup]');
+    if(popup&&gizmoRef.current?.anchor){
+     const point=gizmoRef.current.anchor.position.clone().project(camera),w=root.clientWidth,h=root.clientHeight;
+     popup.style.left=(w<640?12:Math.max(12,Math.min(w-popup.offsetWidth-12,(point.x+1)*w/2+115)))+'px';
+     popup.style.top=(w<640?75:Math.max(75,Math.min(h-popup.offsetHeight-95,(1-point.y)*h/2-60)))+'px';
+    }
+   }
    loop();
 
    return()=>{
-    alive=false;placementController?.abort();validationController?.abort();pickerRef.current?.dispose();pickerRef.current=null;clearTimeout(validationTimer); cancelAnimationFrame(frame); resize.disconnect(); controls.dispose();
+    alive=false;placementController?.abort();validationController?.abort();pickerRef.current?.dispose();pickerRef.current=null;gizmoRef.current?.dispose();gizmoRef.current=null;labels?.dispose();displayRef.current=null;clearTimeout(validationTimer); cancelAnimationFrame(frame); resize.disconnect(); controls.dispose();
     applyRef.current=null;
     layoutRef.current=null;
     runClashRef.current=async()=>[];
@@ -386,24 +430,23 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   useEffect(()=>{applyRef.current?.(paint,wire);},[paint,wire]);
 
   return(
-   <>
+   <div className="viewer-stage" data-assembly-ready={ready}>
    <div className="asm-cad-controls" data-cad-valid={cad.key===entriesKey&&live&&ready&&entries.length>0&&!!cad.result?.valid&&!cad.checking}>
     <Button variant="outline" disabled={previewOnly||cad.key!==entriesKey||!live||!entries.length||!ready||cad.checking||!cad.result?.valid||exporting} onClick={async()=>{const token=cadLatest.current?.token;if(!token)return;setExporting(true);setStepError('');try{await downloadAssemblyStep(projectId,token);}catch(error){setStepError((error as Error).message);}finally{setExporting(false);}}}><Download size={15}/>{exporting?'Exporting…':'Export assembly as STEP (.step)'}</Button>
-    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for solid validation and assembly STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking CAD clearances and solid intersections…':cad.error||cad.result?.issues.join(' ')||(cad.result?.collisions.length?`Placement conflict: ${cad.result.collisions.map(c=>[c.entryIdA,c.entryIdB].map(id=>String.fromCharCode(65+entries.findIndex(e=>e.id===id))).join(' ↔ ')).join(', ')}. Intersecting solids are highlighted. Correct the layout before export.`:cad.result?.valid?`CAD verified · ${cad.result.clearances.length} verified connections · no solid intersections${cad.result.contacts.length?` · ${cad.result.contacts.length} touching pairs`:''}.`:'Waiting for CAD validation.')}</p>}
+    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for solid validation and assembly STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking CAD clearances and solid intersections…':cad.error||cad.result?.issues.join(' ')||(cad.result?.collisions.length?`Placement conflict: ${cad.result.collisions.map(c=>[c.entryIdA,c.entryIdB].map(id=>entries.find(e=>e.id===id)?.label??alphabeticLabel(entries.findIndex(e=>e.id===id))).join(' ↔ ')+(c.volume===undefined?'':` (${c.volume.toFixed(3)} mm³)`)).join(', ')}. Intersecting solids are highlighted. Correct the layout before export.`:cad.result?.valid?`CAD verified · ${cad.result.clearances.length} verified connections · no solid intersections${cad.result.contacts.length?` · ${cad.result.contacts.length} touching pairs`:''}.`:'Waiting for CAD validation.')}</p>}
     {stepError&&<p role="alert">{stepError}</p>}
    </div>
-   <div className="viewer-stage" data-assembly-ready={ready}>
     <div ref={host} className="webgl-host"/>
     {msg&&<div className="viewer-loading">{err?<Box/>:<LoaderCircle className="spin"/>}<span>{msg}</span></div>}
-    {!entries.length&&!msg&&<div className="viewer-empty"><Box size={42}/><h3>Assembly is empty</h3><p>Add panels on the left and define how their faces connect.</p></div>}
+    {!entries.length&&!msg&&<div className="viewer-empty"><Box size={42}/><h3>Assembly is empty</h3><p>Select the first panel to start assembling.</p></div>}
     <div className="viewport-actions">
-     <Button variant="outline" size="icon" aria-label="Fit to view" onClick={()=>viewApi.current?.fit()}><Maximize2/></Button>
      <Button variant="outline" size="icon" aria-label="Export assembly GLB" title="Export assembly GLB (metres)" disabled={previewOnly||cad.key!==entriesKey||!ready||exporting||(live&&(cad.checking||!cad.result?.valid))} onClick={async()=>{setExporting(true);try{await viewApi.current?.exportGLB();}catch(error){setMsg((error as Error).message);setErr(true);}finally{setExporting(false);}}}>{exporting?<LoaderCircle className="spin"/>:<Download/>}</Button>
      <Button variant="outline" size="icon" aria-label="Screenshot" onClick={()=>viewApi.current?.screenshot()}><Camera/></Button>
     </div>
+    {children}
     <div className="axis-key"><span className="x">X</span><span className="y">Y</span><span className="z">Z</span><small>mm</small></div>
     <div className="viewport-help">Drag to orbit · Right-drag to pan · Scroll to zoom</div>
-   </div></>
+   </div>
   );
  }
 );

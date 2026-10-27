@@ -98,10 +98,13 @@ def connection_frame(entry, sources, parent_matrix):
 
 def solve(entries, sources, rotation_matrix, bounds):
     """Authoritative live placements for both saved envelope and face connections."""
-    matrices, boxes, result = {}, {}, []
+    matrices, boxes, result, frames = {}, {}, [], {}
     for entry in entries:
         if entry.connection:
-            transform, _ = connection_frame(entry, sources, matrices[entry.targetId])
+            transform, details = connection_frame(entry, sources, matrices[entry.targetId])
+            _, _, point_b, basis, _, _ = details
+            frames[entry.id] = {'kind': 'face', 'origin': (transform[:3,:3] @ point_b + transform[:3,3]).tolist(),
+                                'u': basis[:,0].tolist(), 'v': basis[:,1].tolist(), 'n': basis[:,2].tolist()}
         else:
             transform = matrix(rotation_matrix(entry.rotation))
             box = bounds(sources[entry.id]['shape'].moved(location(transform)))
@@ -135,10 +138,15 @@ def solve(entries, sources, rotation_matrix, bounds):
                         if constraint.side == -1:
                             center[i] = target['min'][i] - constraint.gap - half[i]
             transform[:3, 3] = center - (np.array(box['max']) + np.array(box['min'])) / 2
+            if entry.targetId is None and entry.rootOffset is not None:
+                transform[:3, 3] += np.array(entry.rootOffset)
         matrices[entry.id] = transform
         boxes[entry.id] = bounds(sources[entry.id]['shape'].moved(location(transform)))
+        if entry.targetId is None:
+            frames[entry.id] = {'kind': 'root', 'origin': ((np.array(boxes[entry.id]['min']) + np.array(boxes[entry.id]['max']))/2).tolist(),
+                                'u': [1,0,0], 'v': [0,0,1], 'n': [0,-1,0]}
         result.append({**entry.model_dump(), 'matrix': values(transform)})
-    return {'units': 'mm', 'entries': result, 'bounds': boxes}
+    return {'units': 'mm', 'entries': result, 'bounds': boxes, 'frames': frames}
 
 
 def measure_connection(entry, sources, matrices, linear_eps):

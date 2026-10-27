@@ -21,30 +21,9 @@ import ReviewControls from './ReviewControls';
 import { drawingPath, drawingSteps, projectDrawingsPath, projectViewPath, resolveWorkspace, workspaceKey, type WorkspaceRoute } from './workflow-route';
 import { useWorkspaceNavigation, type Navigate, type NavigationGuard } from './useWorkspaceNavigation';
 import { useDrawingReview } from './useDrawingReview';
-import AssemblySpacing, { AssemblyNumber } from './AssemblySpacing';
-import { DEFAULT_ASSEMBLY_GAP_MM, removeAssemblyBranch, setAssemblyTargetFace, withDirectionalGaps } from './assembly-geometry';
+import AssemblyWorkspace from './AssemblyWorkspace';
 import { useAssemblyState } from './useAssemblyState';
-import AssemblyConnectionEditor from './AssemblyConnectionEditor';
-import { beginFaceDraft, previewFaceDraft, updateFaceDraft, type FaceDraft, type FaceRole } from './face-connection-state';
-import type { CadFaceReference } from './types';
-import AssemblyViewer, { AssemblyViewerHandle, ClashResult } from './AssemblyViewer';
-import { AssemblyEntry, Bootstrap, Face, Panel, Settings, api, panelApi, fileUrl } from './types';
-const FACES:[Face,string][]=[
- ['-X','Left (−X)'],['+X','Right (+X)'],
- ['+Z','Top (+Z)'],['-Z','Bottom (−Z)'],
- ['-Y','Front (−Y)'],['+Y','Back (+Y)'],
-];
-function FacePicker({value,onChange}:{value:Face;onChange:(f:Face)=>void}){
- return(
-  <div className="face-picker">
-   {FACES.map(([face,label])=>(
-    <button key={face} type="button" className={'face-btn '+(value===face?'selected':'')} onClick={()=>onChange(face)}>
-     {label.split(' ')[0]}<code>{face}</code>
-    </button>
-   ))}
-  </div>
- );
-}
+import { Bootstrap, Panel, Settings, api, panelApi, fileUrl } from './types';
 const labels:Record<string,string>={PASS:'Ready',NEEDS_REVIEW:'Needs review',FAILED:'Failed',QUEUED:'Queued',CONVERTING:'Converting DWG',EXTRACTING:'Reading drawing',BUILDING:'Building solid'};
 function Status({value}:{value:string}){return <span className={'status status-'+value.toLowerCase()}>{value==='PASS'?<CircleCheck/>:value==='NEEDS_REVIEW'?<CircleAlert/>:value==='FAILED'?<X/>:<LoaderCircle className="spin"/>}{labels[value]||value}</span>}
 const mm=(value?:number)=>value===undefined?'—':value.toLocaleString('en',{maximumFractionDigits:2});
@@ -75,7 +54,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  const [dialogProjectId,setDialogProjectId]=useState(projectId),[dialogPanelId,setDialogPanelId]=useState('');
  const dialogProject=data.projects.find(p=>p.id===(dialogProjectId||projectId));
  const dialogPanel=data.panels.find(p=>p.id===dialogPanelId&&p.project_id===(dialogProjectId||projectId));
- const [dialog,setDialog]=useState<null|'project'|'upload'|'settings'|'logs'|'connect'|'sections'|'edit_project'|'edit_drawing'|'assembly_add'>(null);const [busy,setBusy]=useState(false);const [name,setName]=useState(''),[client,setClient]=useState('');const [files,setFiles]=useState<File[]>([]);const [drag,setDrag]=useState(false);const input=useRef<HTMLInputElement>(null);
+ const [dialog,setDialog]=useState<null|'project'|'upload'|'settings'|'logs'|'connect'|'sections'|'edit_project'|'edit_drawing'>(null);const [busy,setBusy]=useState(false);const [name,setName]=useState(''),[client,setClient]=useState('');const [files,setFiles]=useState<File[]>([]);const [drag,setDrag]=useState(false);const input=useRef<HTMLInputElement>(null);
  const [deleteTarget,setDeleteTarget]=useState<{kind:'projects'|'panels';id:string;name:string}|null>(null);const [drawingName,setDrawingName]=useState('');const [replacement,setReplacement]=useState<File|null>(null);
  const [defaults,setDefaults]=useState<Settings>(data.settings);
  const review=useDrawingReview(panel,data.settings);
@@ -83,20 +62,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  const [logs,setLogs]=useState<{revision:number;log:string;status:string}[]>([]);
  const [fraction,setFraction]=useState(1),[playing,setPlaying]=useState(false),[paint,setPaint]=useState(true),[wire,setWire]=useState(false),[view3d,setView3d]=useState('iso');const [hover,setHover]=useState<string|null>(null);const assembly=route.kind==='compare';const [compare,setCompare]=useState<string[]>(()=>panels.filter(p=>p.artifacts.includes('panel.glb')).slice(0,3).map(p=>p.id)),[gap,setGap]=useState(100),[alignment,setAlignment]=useState('center');const [zoom,setZoom]=useState(1);
  const [asmEntries,setAsmEntries,asmStorageError]=useAssemblyState(projectId);
- const [faceDraft,setFaceDraft]=useState<FaceDraft|null>(null);
- const [faceValidation,setFaceValidation]=useState({key:'',valid:false});
- const effectiveEntries=faceDraft?.preview?asmEntries.map(entry=>entry.id===faceDraft.movingEntryId?faceDraft.preview!:entry):asmEntries;
- const effectiveKey=JSON.stringify(effectiveEntries);
- const faceValid=faceValidation.key===effectiveKey&&faceValidation.valid;
- const facePicked=useCallback((role:FaceRole,face:CadFaceReference)=>setFaceDraft(draft=>draft?updateFaceDraft(draft,{[role]:face,pick:null,message:''}):null),[]);
- const faceMessage=useCallback((message:string)=>setFaceDraft(draft=>draft&&draft.message!==message?{...draft,message}:draft),[]);
- function applyFace(){if(!faceDraft||!faceValid)return;const entry=previewFaceDraft(faceDraft);if(entry){setAsmEntries(rows=>rows.map(row=>row.id===entry.id?entry:row));setFaceDraft(null);}}
- const [asmReady,setAsmReady]=useState(false);
- const [addPanelId,setAddPanelId]=useState('');const [addTargetId,setAddTargetId]=useState('');const [addMyFace,setAddMyFace]=useState<Face>('-X');const [addTargetFace,setAddTargetFace]=useState<Face>('+X');const [addGap,setAddGap]=useState(DEFAULT_ASSEMBLY_GAP_MM);
- const asmViewRef=useRef<AssemblyViewerHandle|null>(null);
- const [clashResults,setClashResults]=useState<ClashResult[]|null>(null);
- const [clashRunning,setClashRunning]=useState(false);
- const live=data.mode==='live';const ready=panels.filter(p=>p.artifacts.includes('panel.glb'));const assemblyPanels=ready.filter(p=>p.status==='PASS'&&p.artifacts.includes('panel.step'));const selectedModels=assembly?ready.filter(p=>compare.includes(p.id)).slice(0,5):panel&&panel.artifacts.includes('panel.glb')?[panel]:[];
+ const live=data.mode==='live';const ready=panels.filter(p=>p.artifacts.includes('panel.glb'));const selectedModels=assembly?ready.filter(p=>compare.includes(p.id)).slice(0,5):panel&&panel.artifacts.includes('panel.glb')?[panel]:[];
  useEffect(()=>registerGuard(next=>{
   const pendingBend=!!document.querySelector('[data-unsaved-bend="true"]');
   const pendingMeasurement=!!document.querySelector('[data-unsaved-measurement="true"]');
@@ -121,20 +87,6 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  const chooseDrawing=(p:Panel,step:typeof drawingSteps[number]='panels')=>navigate(drawingPath(p.project_id,p.id,step));
  const goHome=()=>navigate('/');
  const openProjectUpload=(id:string)=>{setDialogProjectId(id);setDialog('upload')};
- function asmAddEntry(){if(!addPanelId)return;const isRoot=asmEntries.length===0;setAsmEntries(prev=>[...prev,withDirectionalGaps({id:Math.random().toString(36).slice(2,8),panelId:addPanelId,myFace:addMyFace,targetId:isRoot?null:addTargetId||null,targetFace:isRoot?null:addTargetFace,gap:addGap})]);setDialog(null);setAddPanelId('');}
- function asmRemove(id:string){setAsmEntries(prev=>removeAssemblyBranch(prev,id));}
- function asmSetMyFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,myFace:f}:e));}
- function asmSetTargetFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?setAssemblyTargetFace(e,f):e));}
- function asmSetTarget(id:string,targetId:string){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,targetId}:e));}
- function asmUpdateEntry(entry:AssemblyEntry){setAsmEntries(prev=>prev.map(e=>e.id===entry.id?entry:e));}
- // Clear clash results whenever the assembly configuration changes
- useEffect(()=>{setClashResults(null);asmViewRef.current?.clearClash();},[effectiveKey]);
- async function runClashCheck(){
-  if(!asmViewRef.current||!asmReady||asmEntries.length<2) return;
-  setClashRunning(true);setClashResults(null);asmViewRef.current.clearClash();
-  await new Promise(r=>setTimeout(r,60)); // yield so UI shows "Checking…"
-  try{const results=await asmViewRef.current.runClash();setClashResults(results)}catch(error){toast.error((error as Error).message)}finally{setClashRunning(false)}
- }
  async function task(fn:()=>Promise<unknown>,message?:string){setBusy(true);try{await fn();if(message)toast.success(message);await refresh();return true}catch(e){toast.error((e as Error).message);return false}finally{setBusy(false)}}
  const steps:readonly string[]=drawingSteps;
  const canStep=(step:string)=>step==='panels'||step==='conversion'?!!panel:step==='review'?!!panel&&(panel.artifacts.includes('extraction.svg')||!activeStatuses.includes(panel.status)):step==='calculate'?!!panel&&panel.report.flat_width!==undefined&&!activeStatuses.includes(panel.status):!!panel&&panel.artifacts.includes('panel.glb');
@@ -287,107 +239,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  <div className="review-decisions">{review.stale&&<p role="alert" className="review-conflict">This drawing changed while you were editing. Your edits are retained; reload the drawing before saving a new revision. <button type="button" onClick={()=>window.location.reload()}>Reload saved drawing</button></p>}{review.dirty&&<p className="review-unsaved">Unsaved drawing changes · Save &amp; rebuild to store them.</p>}<div className="section-title"><div><h2>Panel parameters</h2><p>Values are read from the drawing automatically. Correct or confirm only the fields that need attention. Changes apply to this panel.</p></div><span className="subtle-tag">Revision {panel.revision}</span></div>{panel.report.issues?.map((issue,i)=><div className="issue-card" key={i}><CircleAlert size={18}/><div><strong>{issue.code.replaceAll('_',' ')}</strong><p>{issue.message}</p></div>{issue.field&&issue.suggested!=null&&<Button variant="outline" size="sm" onClick={()=>{if(issue.field==='thickness'||issue.field==='radius'||issue.field==='deduction')setParameterOverride(issue.field,issue.suggested!);else setPanelSettings(s=>({...s,[issue.field!]:issue.suggested!}))}}>Use {issue.suggested} mm</Button>}</div>)}{panel.error&&<div className="issue-card error">{panel.error}</div>}<ParameterFields showHelp={false} showMaterialDefaultsControl={false} value={panelSettings} onChange={setPanelSettings} resolution={panel.report.parameter_resolution} overrides={reviewValues.parameter_overrides} onOverride={setParameterOverride}/><ReviewControls panel={panel} settings={panelSettings} value={reviewValues} onChange={setReviewValues} onBendChange={changeBend}/><div className="review-checks">{panel.report.issues?.some(i=>i.code==='RELIEF_EXTENSION')&&<label><Checkbox checked={relief} onCheckedChange={c=>setRelief(c===true)}/>I approve the endpoint extensions listed above after inspecting the drawing and draft model.</label>}{panel.report.issues?.some(i=>i.code==='EVIDENCE')&&<label><Checkbox checked={confirm} onCheckedChange={c=>setConfirm(c===true)}/>I confirm these thickness, radius and deduction values.</label>}{panel.report.issues?.some(i=>i.code==='PARTIAL_SECTION')&&<label><Checkbox checked={partial} onCheckedChange={c=>setPartial(c===true)}/>The named section is a partial detail; accept the documented chain check.</label>}</div><div className="review-footer"><span>{panel.sample?'Reference samples are read-only.':`Source: ${panel.filename}`}</span><Button disabled={!live||busy||review.stale||activeStatuses.includes(panel.status)} onClick={saveReview}>{busy?<LoaderCircle className="spin" size={15}/>:<Check size={15}/>}Save & rebuild panel</Button></div></div></>:<div className="empty-state"><ScanLine/><h3>Select a drawing to review</h3></div>}</TabsContent>
  <TabsContent value="calculate" className="tab-page"><div className="section-title"><div><h2>Panel calculations</h2><p>Compare the drawing-derived dimensions with your manual measurements.</p></div><span className="subtle-tag">All dimensions in mm</span></div><div className="table-wrap"><table className="calculation-table"><thead><tr><th>Panel</th><th>Flat width</th><th>Flat height</th><th>Hinges</th><th>Validation</th><th>Manual measurement</th><th>Difference</th><th/></tr></thead><tbody>{workflowPanels.map(p=>{const axis=p.manual_axis||'flat_width';const measured=axis==='flat_width'?p.report.flat_width:axis==='flat_height'?p.report.flat_height:p.report.bbox?.[['folded_x','folded_y','folded_z'].indexOf(axis)];const delta=p.manual_value!=null&&measured!=null?p.manual_value-measured:null;return <tr key={p.id}><td><strong>{p.filename.replace(/\.dxf$/i,'')}</strong><small>{p.settings.thickness} mm · R{p.settings.radius}</small></td><td>{mm(p.report.flat_width)}</td><td>{mm(p.report.flat_height)}</td><td>{p.report.physical_bends??'—'}</td><td><Status value={p.status}/>{p.report.issues?.[0]&&<small className="table-reason">{p.report.issues[0].message}</small>}</td><td><DrawingMeasurement key={p.id} panel={p} disabled={!live||busy} onSave={(value,axis)=>saveMeasurement(p,value,axis)}/></td><td className={delta!==null&&Math.abs(delta)>.5?'difference-warning':''}>{delta===null?'—':`${delta>0?'+':''}${mm(delta)}`}</td><td><button className="table-link" onClick={()=>setTab('review')}>Adjust <ChevronRight size={13}/></button></td></tr>})}</tbody></table></div><div className="calculation-note"><CircleAlert size={16}/><span>{data.capabilities.drawing_tolerances_enforced===false?'Experimental exports can exceed the displayed tolerances. Review the measured differences; Ready means export is available.':'PASS requires a valid solid and accepted drawing checks. Unresolved directions stay in review; they are never guessed.'}</span></div></TabsContent>
  <TabsContent value="viewer" className={assembly?"studio":"studio inspection-studio"}><div className="studio-panels"><div className="studio-panel-title"><span>{assembly?'PANELS':'DRAWING'}</span><small>{(assembly?ready:workflowPanels).length}</small></div>{(assembly?ready:workflowPanels).map(p=><button key={p.id} className={'studio-panel '+(panel?.id===p.id?'selected':'')} onClick={()=>chooseDrawing(p,'viewer')}><div className="mini-panel">{p.artifacts.includes('extraction.svg')?<img src={fileUrl(p,'extraction.svg')} alt=""/>:<FileText size={24}/>}</div><div><strong>{p.filename.replace(/\.dxf$/i,'')}</strong><small>{p.report.physical_bends??'—'} hinges · {p.settings.thickness} mm</small><Status value={p.status}/></div></button>)}<div className="studio-tip"><ScanLine size={17}/><p>Every fold keeps a link to its source section. Hover over a bend to inspect it.</p></div></div><div className="studio-main"><div className="viewer-toolbar"><div className="segmented"><button className={fraction===1?'selected':''} onClick={()=>{setPlaying(false);setFraction(1)}}><Box size={14}/>Folded</button><button className={fraction===0?'selected':''} onClick={()=>{setPlaying(false);setFraction(0)}}><PanelTop size={14}/>Flat</button></div><div className="toolbar-right"><select aria-label="Camera view" value={view3d} onChange={e=>setView3d(e.target.value)}><option value="iso">Isometric</option><option value="top">Top</option><option value="front">Front</option><option value="side">Side</option></select></div></div>{assembly&&<div className="assembly-bar"><span>Side by side</span>{ready.map(p=><label key={p.id}><Checkbox checked={compare.includes(p.id)} disabled={!compare.includes(p.id)&&compare.length>=5} onCheckedChange={c=>setCompare(ids=>c?[...ids,p.id]:ids.filter(id=>id!==p.id))}/>{p.filename.replace(/\.dxf$/i,'')}</label>)}<label>Gap <input type="number" min="0" max="5000" value={gap} onChange={e=>setGap(Math.max(0,Math.min(5000,Number(e.target.value))))}/>mm</label><select aria-label="Assembly alignment" value={alignment} onChange={e=>setAlignment(e.target.value)}><option value="center">Centre</option><option value="near">Near edge</option><option value="far">Far edge</option></select></div>}<div className="viewer-wrapper">{selectedModels.length&&(!assembly||selectedModels.length>=2)?<ModelViewer inspection={!assembly} panels={selectedModels} fraction={fraction} gap={gap} alignment={alignment} paint={paint} wire={wire} view={view3d} onHover={setHover}/>:<div className="viewer-empty"><Box size={42}/><h3>{assembly?'Select 2–5 panels':'Your solid will appear here'}</h3><p>{panel?.status==='NEEDS_REVIEW'?'Confirm the highlighted drawing evidence to finish reconstruction.':panel?.status==='FAILED'?'Review the conversion log to see what needs correcting.':'Upload a drawing to start the conversion.'}</p>{panel&&<Button variant="outline" onClick={()=>setTab('review')}>Review drawing <ChevronRight size={15}/></Button>}</div>}{hover&&<div className="bend-tooltip"><Layers3 size={15}/>{hover}</div>}</div><div className="fold-timeline"><Button variant="ghost" size="icon" aria-label={playing?'Pause fold animation':'Play fold animation'} disabled={!selectedModels.length} onClick={()=>setPlaying(!playing)}>{playing?<Pause size={17}/>:<Play size={17}/>}</Button><span>Fold sequence</span><Slider aria-label="Fold progress" min={0} max={100} step={1} value={[Math.round(fraction*100)]} onValueChange={v=>{setPlaying(false);setFraction(v[0]/100)}}/><strong>{Math.round(fraction*100)}%</strong></div><div className="viewer-bottom"><span><i/>{assembly?'Painted face':'Aluminium · surface edges'}</span><span>Motion preview · export uses final BREP solid</span></div></div><aside className="model-inspector"><div className="inspector-title"><h3>Panel details</h3><Box size={17}/></div>{panel?<><div className="inspector-name">{panel.filename.replace(/\.dxf$/i,'')}<Status value={panel.status}/></div><h4>FOLDED ENVELOPE</h4><div className="dimension-grid">{['X','Y','Z'].map((a,i)=><div key={a}><span>{a}</span><strong>{mm(panel.report.bbox?.[i])}</strong><small>mm</small></div>)}</div><h4>MATERIAL & BENDS</h4><dl className="properties"><div><dt>Material</dt><dd>Aluminium</dd></div><div><dt>Thickness</dt><dd>{panel.settings.thickness} mm</dd></div><div><dt>Inside radius</dt><dd>R{panel.settings.radius}</dd></div><div><dt>{panel.settings.bend_model==='fixed_deduction'?'Deduction / bend':'Deduction / 90°'}</dt><dd>{panel.settings.deduction} mm</dd></div><div><dt>Physical hinges</dt><dd>{panel.report.physical_bends??'—'}</dd></div><div><dt>Rigid faces</dt><dd>{panel.report.faces??'—'}</dd></div></dl><h4>DISPLAY</h4><div className="display-options"><label><Checkbox checked={paint} onCheckedChange={c=>setPaint(c===true)}/>{assembly?'Painted face colour':'Distinguish painted face'}</label><label><Checkbox checked={wire} onCheckedChange={c=>setWire(c===true)}/>{assembly?'Wireframe':'Wireframe (mesh triangles)'}</label></div><h4>VALIDATION</h4><div className="validation-compact">{panel.report.section_checks?.map(s=><div key={s.profile}><span>{s.chain_status==='PASS'?<Check size={14}/>:<CircleAlert size={14}/>}</span><div>{s.profile.replaceAll('_',' ')}<small>{mm(s.max_length_error_mm)} mm max error{s.validation_scope==='local_edge_profile'?' · local edge profile':s.full_plane_status==='FAIL'?' · documented chain':''}</small></div></div>)}{panel.report.unfold_check&&<div>{panel.report.unfold_check.status==='PASS'?<Check size={14}/>:<CircleAlert size={14}/>}<div>Unfold comparison<small>{panel.report.unfold_check.symmetric_difference_percent.toFixed(4)}% area difference</small>{panel.report.unfold_check.local_boundary_check&&<small>Local edge: {mm(panel.report.unfold_check.local_boundary_check.sampled_max_mm)} mm · limit {panel.report.unfold_check.local_boundary_check.tolerance_mm} mm · {panel.report.unfold_check.local_boundary_check.status}</small>}</div></div>}</div><button className="inspector-link" onClick={()=>setTab('review')}>Inspect drawing evidence <ChevronRight size={13}/></button></>:<p>Select a panel.</p>}</aside></TabsContent><TabsContent value="assembly" className="tab-page">
- <div className="asm-studio">
-  {/* Left panel: entry list */}
-  <fieldset className="asm-pane" disabled={!!faceDraft}>
-   <div className="asm-pane-header"><span>ASSEMBLY</span>{asmEntries.length>0&&<button onClick={()=>setAsmEntries([])} title="Clear all"><X size={13}/> Clear</button>}</div>
-   {asmEntries.length===0&&<div className="asm-empty"><Box size={28}/><p>Add panels and connect them face-to-face to build the assembly.</p></div>}
-   {asmEntries.map((entry,i)=>{
-    const p=panels.find(p=>p.id===entry.panelId);
-    return(
-     <div key={entry.id} className="asm-entry">
-      <div className="asm-entry-head">
-       <strong className="asm-letter">{String.fromCharCode(65+i)}</strong>
-       <span className="asm-name" title={p?.filename}>{p?.filename.replace(/\.(dxf|dwg)$/i,'')}</span>
-       <button className="asm-remove" onClick={()=>asmRemove(entry.id)} title="Remove"><X size={13}/></button>
-      </div>
-      {entry.targetId===null
-       ?<p className="asm-root">Root · placed at origin</p>
-       :entry.connection?<p className="asm-root">CAD faces · {entry.connection.reference.faceId} → {entry.connection.moving.faceId}<br/>Gap {entry.gap+entry.connection.normalOffset} mm · U {entry.connection.offsetU} · V {entry.connection.offsetV} mm</p>:<div className="asm-conn">
-        <select className="face-sel" value={entry.myFace} onChange={e=>asmSetMyFace(entry.id,e.target.value as Face)}>
-         {FACES.map(([f,l])=><option key={f} value={f}>{l}</option>)}
-        </select>
-        <span className="conn-arrow">→</span>
-        <select className="face-sel" value={entry.targetFace!} onChange={e=>asmSetTargetFace(entry.id,e.target.value as Face)}>
-         {FACES.map(([f,l])=><option key={f} value={f}>{l}</option>)}
-        </select>
-        <span>of</span>
-        <select className="target-sel" value={entry.targetId} onChange={e=>asmSetTarget(entry.id,e.target.value)}>
-         {asmEntries.slice(0,i).map((e2,j)=>{const p2=panels.find(p=>p.id===e2.panelId);return <option key={e2.id} value={e2.id}>{String.fromCharCode(65+j)} · {p2?.filename.replace(/\.(dxf|dwg)$/i,'')}</option>;})}
-        </select>
-       </div>}
-      {entry.targetId!==null&&!entry.connection&&<AssemblySpacing entry={entry} onChange={asmUpdateEntry}/>}
-      {entry.targetId!==null&&<button className="asm-connect-faces" type="button" disabled={!live} onClick={()=>setFaceDraft(beginFaceDraft(entry))}>{entry.connection?'Edit face connection':'Connect actual CAD faces'}</button>}
-     </div>
-    );
-   })}
-   <button className="asm-add-btn" disabled={!assemblyPanels.length} onClick={()=>{setAddPanelId('');setAddTargetId(asmEntries[asmEntries.length-1]?.id||'');setAddMyFace('-X');setAddTargetFace('+X');setAddGap(DEFAULT_ASSEMBLY_GAP_MM);setDialog('assembly_add');}}><Plus size={15}/>{asmEntries.length===0?'Add first panel':'Add next panel'}</button>
-   {!assemblyPanels.length&&<p className="asm-hint">Process panels to completion (PASS) to enable assembly.</p>}
-   <p className="asm-hint">Layouts save in this browser per project. CAD validation checks every panel pair. STEP exports the complete verified assembly as separate solid parts.</p>
-   {asmStorageError&&<p role="alert" className="asm-spacing-error">{asmStorageError}</p>}
-   {asmEntries.length>1&&<div className="asm-summary"><span>{asmEntries.length} panels</span><span>·</span><span>{asmEntries.length-1} connection{asmEntries.length>2?'s':''}</span></div>}
-  </fieldset>
-  {/* 3D viewer */}
-  <div className="asm-viewer-wrap">
-   {faceDraft&&<AssemblyConnectionEditor draft={faceDraft} entries={asmEntries} panels={panels} valid={faceValid} onChange={setFaceDraft} onApply={applyFace} onCancel={()=>setFaceDraft(null)}/>}
-   <AssemblyViewer selection={faceDraft} previewOnly={!!faceDraft} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={setFaceValidation} key={projectId} projectId={projectId} live={live} onReadyChange={setAsmReady} ref={asmViewRef} entries={effectiveEntries} panels={assemblyPanels} paint={paint} wire={wire}/>
-  </div>
-  {/* Right: face reference */}
-  <div className="asm-inspector">
-   <p className="inspector-section">ENVELOPE SIDES</p>
-   <p className="asm-hint">Envelope gaps use global bounds. Use “Connect actual CAD faces” to align selected surfaces with a gap and independent offsets along the face.</p>
-   <div className="face-ref">
-    {FACES.map(([face,label])=>(
-     <div key={face} className="face-ref-row">
-      <code>{face}</code><span>{label.split(' ')[0]}</span>
-     </div>
-    ))}
-   </div>
-   <p className="inspector-section" style={{marginTop:22}}>DISPLAY</p>
-   <div className="display-options">
-    <label><Checkbox checked={paint} onCheckedChange={c=>setPaint(c===true)}/>Painted face colour</label>
-    <label><Checkbox checked={wire} onCheckedChange={c=>setWire(c===true)}/>Wireframe</label>
-   </div>
-   <p className="inspector-section" style={{marginTop:22}}>CLASH DETECTION</p>
-   <Button size="sm" variant="outline" className="clash-check-btn" disabled={!asmReady||asmEntries.length<2||clashRunning} onClick={runClashCheck}>
-    {clashRunning?<LoaderCircle size={13} className="spin"/>:<ScanLine size={13}/>}
-    {clashRunning?'Checking…':'Run clash check'}
-   </Button>
-   {clashResults!==null&&(
-    <div className="clash-report">
-     {clashResults.length===0?(
-      <div className="clash-ok"><CircleCheck size={14}/><span>No clashes — all clear</span></div>
-     ):(
-      <>
-       <div className="clash-warn"><CircleAlert size={14}/><strong>{clashResults.length} clash{clashResults.length>1?'es':''} detected</strong></div>
-       {clashResults.map((r,i)=>{
-        const la=String.fromCharCode(65+asmEntries.findIndex(e=>e.id===r.entryIdA));
-        const lb=String.fromCharCode(65+asmEntries.findIndex(e=>e.id===r.entryIdB));
-        return(
-         <div key={i} className="clash-item">
-          <span className="clash-pair">Panel {la} ↔ Panel {lb}</span>
-          <div className="clash-meta">
-           <span className="clash-depth">{r.depth.toFixed(1)} mm</span>
-           <span className="clash-pts">{r.volume!==undefined?`${r.volume.toFixed(4)} mm³ overlap`:`${r.pointCount} sampled points`}</span>
-          </div>
-         </div>
-        );
-       })}
-       <p className="clash-note">Clashing panels highlighted red in the viewer. Adjust gaps or face connections to resolve.</p>
-      </>
-     )}
-    </div>
-   )}
-   <p className="inspector-section" style={{marginTop:22}}>HOW TO</p>
-   <ol className="asm-how">
-    <li>Add the <strong>root panel</strong> — it anchors the assembly at the origin.</li>
-    <li>Add each <strong>next panel</strong> using envelope sides for initial placement. Choose <strong>Connect actual CAD faces</strong> to select a reference surface and a moving surface in the viewer.</li>
-    <li>For CAD faces, set the gap and slide along local U/V. Normal adjustment explicitly changes the effective gap. B rotates to oppose A’s face; in-plane rotation adjusts alignment.</li>
-    <li>Apply saves the connection; Cancel restores it. Dependent panels follow. Envelope controls remain available for global X/Y/Z clearances on existing layouts.</li>
-    <li>Resolve highlighted solid intersections before exporting the assembly STEP. Zero gap permits contact, never penetrating solids.</li>
-   </ol>
-  </div>
- </div>
+ <AssemblyWorkspace projectId={projectId} live={live} entries={asmEntries} onChange={setAsmEntries} panels={panels} storageError={asmStorageError}/>
 </TabsContent>
 {individual&&<div className="wizard-navigation"><Button variant="outline" disabled={stepIndex<=0||tab==='assembly'} onClick={()=>setTab(steps[stepIndex-1])}><ArrowLeft size={15}/>Back</Button><span>{tab==='assembly'?`Assembly · ${asmEntries.length} panel${asmEntries.length===1?'':'s'}`:`Step ${stepIndex+1} of 5${panel?` · ${panel.filename}`:''}`}</span>{stepIndex<4&&tab!=='assembly'?<Button disabled={!canStep(steps[stepIndex+1])} onClick={()=>setTab(steps[stepIndex+1])}>Continue to {['Drawings','Conversion','Review','Calculate','3D studio'][stepIndex+1]}<ChevronRight size={15}/></Button>:tab!=='assembly'?exports():<span/>}</div>}</Tabs>
  </>}
@@ -395,36 +247,13 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
  </>
  )}
  </section></div>
- <Dialog open={dialog!==null} onOpenChange={open=>{if(!open)setDialog(null)}}><DialogContent className={dialog==='sections'?'wide-dialog':dialog==='logs'?'log-dialog':''}><DialogHeader><DialogTitle>{dialog==='edit_project'?'Edit project':dialog==='edit_drawing'?'Edit drawing':dialog==='project'?'Create a project':dialog==='upload'?'Upload panel drawings':dialog==='settings'?'Material defaults':dialog==='logs'?'Conversion log':dialog==='sections'?'Section comparison':dialog==='assembly_add'?'Add panel to assembly':'Connect the conversion service'}</DialogTitle><DialogDescription>{dialog==='edit_project'?'Update this project\u2019s name and client.':dialog==='edit_drawing'?'Rename the drawing or replace its source file. A replacement clears old bend decisions and results.':dialog==='project'?'Keep all drawings and results for one client together.':dialog==='upload'?'Files are checked against this project\u2019s material settings.':dialog==='settings'?'Defaults apply to new panels. Existing panels keep their own parameters.':dialog==='logs'?'Conversion history and exact processing messages.':dialog==='sections'?'Actual solid cuts compared with the drawing section profiles.':dialog==='assembly_add'?'Select a panel and define which of its faces connects to an existing panel in the assembly.':'The interface is ready. Live conversion requires the supplied Python CAD service.'}</DialogDescription></DialogHeader>
+ <Dialog open={dialog!==null} onOpenChange={open=>{if(!open)setDialog(null)}}><DialogContent className={dialog==='sections'?'wide-dialog':dialog==='logs'?'log-dialog':''}><DialogHeader><DialogTitle>{dialog==='edit_project'?'Edit project':dialog==='edit_drawing'?'Edit drawing':dialog==='project'?'Create a project':dialog==='upload'?'Upload panel drawings':dialog==='settings'?'Material defaults':dialog==='logs'?'Conversion log':dialog==='sections'?'Section comparison':'Connect the conversion service'}</DialogTitle><DialogDescription>{dialog==='edit_project'?'Update this project\u2019s name and client.':dialog==='edit_drawing'?'Rename the drawing or replace its source file. A replacement clears old bend decisions and results.':dialog==='project'?'Keep all drawings and results for one client together.':dialog==='upload'?'Files are checked against this project\u2019s material settings.':dialog==='settings'?'Defaults apply to new panels. Existing panels keep their own parameters.':dialog==='logs'?'Conversion history and exact processing messages.':dialog==='sections'?'Actual solid cuts compared with the drawing section profiles.':'The interface is ready. Live conversion requires the supplied Python CAD service.'}</DialogDescription></DialogHeader>
  {(dialog==='project'||dialog==='edit_project')&&<><div className="field"><Label htmlFor="project-name">Project name</Label><Input id="project-name" placeholder="e.g. North elevation panels" value={name} onChange={e=>setName(e.target.value)}/></div><div className="field"><Label htmlFor="client-name">Client name</Label><Input id="client-name" placeholder="Client or contractor" value={client} onChange={e=>setClient(e.target.value)}/></div>{!live&&<div className="dialog-notice">Project creation becomes available when the Python service is connected. Sample projects are read-only.</div>}<Button disabled={!live||!name.trim()||busy} onClick={dialog==='edit_project'?saveProject:create}>{busy?<LoaderCircle className="spin"/>:<Plus/>}{dialog==='edit_project'?'Save project':'Create project'}</Button></>}
  {dialog==='edit_drawing'&&dialogPanel&&<><div className="field"><Label htmlFor="drawing-name">Drawing filename</Label><Input id="drawing-name" disabled={!!replacement} value={drawingName} onChange={e=>setDrawingName(e.target.value)}/></div><div className="field"><Label htmlFor="replace-source">Replace source (optional)</Label><Input id="replace-source" type="file" accept=".dxf,.dwg" disabled={['CONVERTING','EXTRACTING','BUILDING'].includes(dialogPanel.status)} onChange={e=>{const file=e.target.files?.[0];if(file&&(!/\.(dxf|dwg)$/i.test(file.name)||file.size>data.capabilities.max_upload_mb*1024*1024)){toast.error('Select a DXF/DWG within the upload size limit');e.target.value='';return}setReplacement(file||null)}}/></div>{replacement&&<div className="dialog-notice">{replacement.name} will replace this source. The panel keeps its project and material settings, and all geometry will be recalculated.</div>}<Button disabled={!live||busy||!drawingName.trim()} onClick={saveDrawing}>Save drawing</Button></>}
  {dialog==='upload'&&<><input ref={input} type="file" accept=".dxf,.dwg" multiple className="sr-only" onChange={e=>{addFiles(Array.from(e.target.files||[]));e.target.value=''}}/><button className={'modal-drop '+(drag?'drag-active':'')} onClick={()=>input.current?.click()} onDragOver={e=>{e.preventDefault();setDrag(true)}} onDragLeave={()=>setDrag(false)} onDrop={e=>{e.preventDefault();setDrag(false);addFiles(Array.from(e.dataTransfer.files))}}><Upload size={30}/><strong>Drop your drawings here</strong><span>or click to browse · DWG / DXF · {data.capabilities.max_upload_mb} MB max</span></button><div className="upload-file-list">{files.map((f,i)=><div key={i}><FileText size={16}/><span>{f.name}<small>{(f.size/1024).toFixed(0)} KB</small></span><button aria-label={'Remove '+f.name} onClick={()=>setFiles(v=>v.filter((_,j)=>j!==i))}><X size={15}/></button></div>)}</div>{!data.capabilities.dwg&&files.some(f=>/\.dwg$/i.test(f.name))&&<div className="dialog-notice">DWG files will need review until ODA File Converter is installed on the worker. DXF conversion is available with the Python service.</div>}{!live&&<div className="dialog-notice">Uploads are unavailable in the sample workspace. Connect the Python service to process your own drawings.</div>}<Button disabled={!live||!files.length||busy||!dialogProject} onClick={upload}>{busy?<LoaderCircle className="spin"/>:<Upload/>}Upload {files.length||''} drawing{files.length===1?'':'s'}</Button></>}
  {dialog==='settings'&&<><ParameterFields value={defaults} onChange={setDefaults}/><div className="dialog-notice">Inside radius cannot be recovered from sharp schematic sections. Use your fabrication standard. Folded-dimension inputs are flagged for a developed-pattern review.</div><Button disabled={!live||busy} onClick={async()=>{if(await task(()=>api('/settings',defaults,'PUT'),'Workspace defaults saved'))setDialog(null)}}><Check size={16}/>Save defaults</Button>{!live&&<small className="muted">Sample defaults are read-only.</small>}</>}
  {dialog==='logs'&&<div className="logs">{logs.length?logs.map((l,i)=><div key={i}><h4>Revision {l.revision} <span>{l.status}</span></h4><pre>{l.log}</pre></div>):<LoaderCircle className="spin"/>}</div>}
  {dialog==='sections'&&panel&&<img className="section-image" src={fileUrl(panel,'section_comparison.png')} alt="Overlay of drawing sections and actual solid sections"/>}
- {dialog==='assembly_add'&&<>
-  <div className="field"><Label>Panel</Label>
-   <select value={addPanelId} onChange={e=>setAddPanelId(e.target.value)}>
-    <option value="">Select a panel…</option>
-    {assemblyPanels.map(p=><option key={p.id} value={p.id}>{p.filename.replace(/\.(dxf|dwg)$/i,'')}</option>)}
-   </select>
-  </div>
-  {asmEntries.length>0&&<>
-   <div className="field"><Label>Connect to existing panel</Label>
-    <select value={addTargetId} onChange={e=>setAddTargetId(e.target.value)}>
-     <option value="">Select…</option>
-     {asmEntries.map((e,i)=>{const p=ready.find(p=>p.id===e.panelId);return <option key={e.id} value={e.id}>{String.fromCharCode(65+i)} · {p?.filename.replace(/\.(dxf|dwg)$/i,'')}</option>;})}
-    </select>
-   </div>
-   <div className="asm-face-row">
-    <div className="field"><Label>New panel&apos;s mating face</Label><FacePicker value={addMyFace} onChange={setAddMyFace}/></div>
-    <span className="face-row-arrow">→</span>
-    <div className="field"><Label>Target panel&apos;s mating face</Label><FacePicker value={addTargetFace} onChange={setAddTargetFace}/></div>
-   </div>
-   <AssemblyNumber label="Connection gap (bounding planes)" min={0} value={addGap} onChange={setAddGap}/>
-  </>}
-  <Button disabled={!addPanelId||(asmEntries.length>0&&!addTargetId)} onClick={asmAddEntry}><Plus/>Add to assembly</Button>
- </>}
  {dialog==='connect'&&<div className="connection-guide"><div className="connection-status"><Box/><div><strong>{live?'Python API connected':'Python API not connected'}</strong><p>{live?(data.capabilities.worker_online?'CAD worker is accepting jobs.':'Start the CAD worker to process queued jobs.'):'Your reference models remain available for inspection and download.'}</p></div></div><ol><li>Deploy the included Python API and CAD worker containers with PostgreSQL and shared file storage.</li><li>Set <code>FLATFORGE_API_URL</code> and the matching <code>FLATFORGE_API_KEY</code> on this site.</li><li>Rebuild the supplied Docker stack to install ODA automatically for DWG input and export.</li></ol><p>Use the architecture guide for setup, operating limits and scaling.</p><div className="heading-actions"><a className="table-link" href="/downloads/ARCHITECTURE.md" download>Architecture guide ↗</a><a className="table-link" href="/downloads/FlatForge-source.zip" download>Download source package ↗</a></div><Button variant="outline" onClick={refresh}><RotateCw size={15}/>Check connection</Button></div>}
  </DialogContent></Dialog><AlertDialog open={!!deleteTarget} onOpenChange={open=>{if(!open)setDeleteTarget(null)}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete {deleteTarget?.kind==='projects'?'project':'drawing'}?</AlertDialogTitle><AlertDialogDescription>{deleteTarget?.name} will be removed from this workspace{deleteTarget?.kind==='projects'?', including its drawings':''}. Queued and running conversions will be cancelled. You can undo this deletion from the confirmation notification.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={busy}>Keep it</AlertDialogCancel><AlertDialogAction disabled={busy} onClick={e=>{e.preventDefault();void removeItem()}}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog><Toaster richColors position="bottom-right"/></SidebarProvider>
 }
