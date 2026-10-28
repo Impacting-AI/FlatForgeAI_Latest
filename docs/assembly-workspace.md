@@ -1,3 +1,5 @@
+> Current STEP 6 behavior: see [Free positioning and project saving](assembly-free-positioning.md). This document records the earlier constrained workspace.
+
 # STEP 6 interactive assembly workspace
 
 This update replaces the disconnected envelope-add dialog and separate CAD-face

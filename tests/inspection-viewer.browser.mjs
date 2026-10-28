@@ -116,7 +116,9 @@ try {
   await fallback.route('**/api/bootstrap',route=>route.fulfill({json:sample}));
   await fallback.goto(`${url}/projects/${panel.project_id}/drawings/${panel.id}/step/5`,{waitUntil:'networkidle'});
   await fallback.locator('.viewer-loading').waitFor({state:'hidden',timeout:45000});await fallback.getByText(/Software preview/).waitFor();
-  await fallback.locator('.viewer-stage').screenshot({path:path.join(output,'software-fallback.png')});await fallback.close();
+  // Software rendering can occupy several animation frames; capture the page
+  // directly instead of requiring the constantly rendered canvas to stabilize.
+  await fallback.screenshot({path:path.join(output,'software-fallback.png'),timeout:120000});await fallback.close();
   assert.deepEqual(sources.map(file=>hash(fs.readFileSync(file))),originalHashes);
   assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);
   console.log('PASS: three real panel GLBs, neutral pixels, edge rendering, four camera presets, flat/partial/folded states, paint distinction, explicit wireframe, hover, zoom/pan/orbit, cached buffers, PNG, identical STEP/STL downloads, mobile, unchanged comparison and software fallback.');

@@ -62,7 +62,7 @@ try {
   const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('flatforge.assemblies.v1')));
   async function openProject(name=project.name){await page.getByRole('button',{name:'Open '+name,exact:true}).click();await page.getByRole('button',{name:'06 Assembly drawings',exact:true}).click();}
   async function loaded(){await page.locator('[data-assembly-ready="true"]').waitFor({timeout:45000});await page.locator('[data-cad-valid="true"]').waitFor({timeout:45000});}
-  const editor=page.getByRole('region',{name:'Saved envelope layout'});
+  const editor=page.getByRole('region',{name:'Panel position controls'});
   const field= name => editor.getByRole('spinbutton',{name,exact:true});
   const horizontal='Horizontal (X) gap',vertical='Vertical (Z) gap',depth='Front / back (Y) gap';
   const direction=(name,side)=>editor.getByRole('combobox',{name:name+' direction',exact:true}).selectOption(String(side));
@@ -98,52 +98,30 @@ try {
     assert.equal(verified.status,0,verified.stdout+'\n'+verified.stderr);console.log(verified.stdout.trim());
   }
 
-  const initial=sample.panels.slice(0,2).map((p,index)=>({id:'legacy-'+index,panelId:p.id,targetId:index?'legacy-0':null,targetFace:index?'+X':null,myFace:'-X',gap:10,spacing:{x:{side:index?1:0,gap:index?10:0},y:{side:0,gap:0},z:{side:0,gap:0}}}));
+
+  const angle=23*Math.PI/360;
+  const initial=sample.panels.slice(0,2).map((p,index)=>({id:'legacy-'+index,panelId:p.id,targetId:index?'legacy-0':null,targetFace:index?'+X':null,myFace:'-X',gap:10,rotation:[0,0,Math.sin(angle),Math.cos(angle)],...(index?{offsets:{x:0,y:-20,z:50}}:{})}));
   await page.addInitScript(({id,rows})=>{if(!localStorage.getItem('flatforge.assemblies.v1'))localStorage.setItem('flatforge.assemblies.v1',JSON.stringify({version:1,units:'mm',projects:{[id]:rows}}));},{id:project.id,rows:initial});
   await page.goto(url,{waitUntil:'networkidle'});await openProject();await loaded();
-  const canvas=await page.locator('.assembly-workspace canvas').elementHandle();
-  for(const gap of [1,5,10,25,50,100]){
-    await edit();await field(horizontal).fill(String(gap));await apply();
-    const exported=await exportAssembly(`gap-${gap}.glb`);near((exported.bounds[1].min.x-exported.bounds[0].max.x)*1000,gap);
-    if(gap===10)await exportSTEP('legacy-two.step',exported.metadata.cadTransformsMm);
-  }
-  await edit();await field(horizontal).fill('10');await direction('Vertical (Z)',1);await field(vertical).fill('50');await direction('Front / back (Y)',-1);await field(depth).fill('25');await loaded();
-  await field(horizontal).fill('-1');await editor.getByRole('alert').waitFor();assert.equal(await editor.getByRole('button',{name:'Apply position',exact:true}).isDisabled(),true);
-  await field(horizontal).fill('');assert.equal(await editor.getByRole('button',{name:'Apply position',exact:true}).isDisabled(),true);await field(horizontal).fill('10');await apply();
-  assert.equal(await canvas.evaluate(e=>e.isConnected),true);
-  let rows=(await stored()).projects[project.id];assert.deepEqual(rows[1].spacing,{x:{side:1,gap:10},y:{side:-1,gap:25},z:{side:1,gap:50}});
-  const child={...initial[1],id:'legacy-2',label:'C',panelId:sample.panels[2].id,targetId:rows[1].id,gap:5,spacing:{...initial[1].spacing,x:{side:1,gap:5}}};
-  await replace([...rows,child]);await loaded();
-  let result=await exportAssembly('legacy-three.glb');assert.equal(result.bounds.length,3);
-  result.bounds.forEach((box,index)=>box.getSize(new THREE.Vector3()).toArray().forEach((size,axis)=>near(size*1000,sample.panels[index].report.bbox[axis])));
-  near((result.bounds[1].min.z-result.bounds[0].max.z)*1000,50);near((result.bounds[2].min.x-result.bounds[1].max.x)*1000,5);
-  await exportSTEP('legacy-three.step',result.metadata.cadTransformsMm);
-  const saved=(await stored()).projects[project.id];await page.reload({waitUntil:'networkidle'});await loaded();assert.deepEqual((await stored()).projects[project.id],saved);
+  await page.getByText('Previous browser layout recovered.',{exact:false}).waitFor();
+  const before=await exportAssembly('legacy-recovered.glb');assert.equal(before.bounds.length,2);
+  const aBefore=before.metadata.cadTransformsMm[0].matrix,bBefore=before.metadata.cadTransformsMm[1].matrix;
+  await edit();await field('Y offset — up').fill('50');await apply();
+  const moved=await exportAssembly('legacy-moved.glb');
+  moved.metadata.cadTransformsMm[0].matrix.forEach((v,i)=>near(v,aBefore[i],1e-8));
+  moved.metadata.cadTransformsMm[1].matrix.forEach((v,i)=>near(v,bBefore[i]+(i===14?50:0),1e-8));
+  await page.getByRole('button',{name:'Save Assembly',exact:true}).click();await page.getByText('Assembly saved to this project.',{exact:true}).waitFor();
+  assert.deepEqual((await stored()).projects[project.id],initial,'legacy browser data is never deleted or overwritten');
+  await page.reload({waitUntil:'networkidle'});await loaded();assert.equal(await page.locator('[data-unsaved-assembly="true"]').count(),0);
+  const restored=await exportAssembly('legacy-restored.glb');assert.deepEqual(restored.metadata.cadTransformsMm,moved.metadata.cadTransformsMm);
+  failNextStep=true;await page.getByRole('button',{name:'Export assembly as STEP (.step)',exact:true}).click();await page.getByRole('alert').filter({hasText:'Test CAD connection interrupted'}).waitFor();
+  await exportSTEP('legacy-restored.step',restored.metadata.cadTransformsMm);
   await page.getByRole('button',{name:'All projects',exact:true}).click();await openProject('Assembly isolation test');assert.equal(await page.locator('.asm-model-label').count(),0);
   await page.getByRole('button',{name:'All projects',exact:true}).click();await openProject();await loaded();
-  await edit();await editor.getByRole('combobox',{name:'Envelope moving side',exact:true}).selectOption('-Z');await editor.getByRole('combobox',{name:'Envelope reference side',exact:true}).selectOption('+Z');await field(vertical).fill('25');await apply();
-  result=await exportAssembly('legacy-vertical.glb');near((result.bounds[1].min.z-result.bounds[0].max.z)*1000,25);
-  await edit();await editor.getByRole('combobox',{name:'Envelope moving side',exact:true}).selectOption('+Y');await editor.getByRole('combobox',{name:'Envelope reference side',exact:true}).selectOption('-Y');await field(depth).fill('50');await apply();
-  result=await exportAssembly('legacy-depth.glb');near((result.bounds[0].min.y-result.bounds[1].max.y)*1000,50);
-  // Two siblings at one position collide, despite satisfying their parent gap.
-  rows=(await stored()).projects[project.id];rows=rows.slice(0,2);rows[1]={...initial[1],label:'B'};rows.push({...rows[1],id:'duplicate',label:'C'});await replace(rows);
-  await page.getByText(/Placement conflict:/).waitFor();assert.equal(await page.getByRole('button',{name:'Export assembly as STEP (.step)',exact:true}).isDisabled(),true);
-  await edit('C');await field(horizontal).fill('5000');await apply();
-  result=await exportAssembly('legacy-branches.glb');await exportSTEP('legacy-branches.step',result.metadata.cadTransformsMm);
-  rows=(await stored()).projects[project.id];const angle=23*Math.PI/360;rows[0].rotation=[Math.sin(angle),0,0,Math.cos(angle)];rows[1].rotation=[0,0,Math.sin(angle),Math.cos(angle)];await replace(rows);await loaded();
-  result=await exportAssembly('legacy-rotated.glb');await exportSTEP('legacy-rotated.step',result.metadata.cadTransformsMm);
-  // Old offsets remain exactly placed until the explicit existing conversion.
-  rows=(await stored()).projects[project.id];rows=rows.slice(0,2);delete rows[1].spacing;rows[1].offsets={x:0,y:-20,z:50};await replace(rows);await loaded();
-  const before=await exportAssembly('legacy-offsets.glb');await edit();await editor.getByRole('button',{name:'Use directional gaps',exact:true}).click();await apply();
-  const after=await exportAssembly('legacy-converted.glb');before.metadata.cadTransformsMm.forEach((e,i)=>e.matrix.forEach((v,j)=>near(v,after.metadata.cadTransformsMm[i].matrix[j],1e-8)));
-  await edit();holdNextValidation=true;await field(horizontal).fill('17');for(let i=0;i<250&&!heldValidation;i++)await page.waitForTimeout(20);assert.ok(heldValidation);
-  assert.equal(await editor.getByRole('button',{name:'Apply position',exact:true}).isDisabled(),true);await field(horizontal).fill('27');await loaded();await heldValidation.route.fulfill(heldValidation.result).catch(()=>{});await apply();
-  const latest=await exportAssembly('latest.glb');assert.equal(latest.metadata.assemblyEntries[1].gap,27);
-  failNextStep=true;await page.getByRole('button',{name:'Export assembly as STEP (.step)',exact:true}).click();await page.getByRole('alert').filter({hasText:'Test CAD connection interrupted'}).waitFor();await exportSTEP('legacy-retry.step',latest.metadata.cadTransformsMm);
-  // Retain entries whose source returned to review, and block partial exports.
-  const retained=(await stored()).projects[project.id];
-  const status=spawnSync(process.env.FLATFORGE_PYTHON||'python',['-c','import sys\nfrom flatforge.db import Session, Panel\nwith Session.begin() as s: s.get(Panel,sys.argv[1]).status="NEEDS_REVIEW"',sample.panels[1].id],{cwd:root,env:apiEnv,encoding:'utf8'});assert.equal(status.status,0,status.stderr);
-  await page.reload({waitUntil:'networkidle'});await page.getByText(/Assembly source unavailable/).waitFor();assert.deepEqual((await stored()).projects[project.id],retained);assert.equal(await page.getByRole('button',{name:'Export assembly as STEP (.step)',exact:true}).isDisabled(),true);
-  assert.deepEqual(errors,[]);console.log('PASS: preserved envelope and legacy-offset layouts; six measured gaps; all axes; invalid input; 3 panels; dimensions; collision recovery; rotations; stale approval rejection; project isolation; exact STEP/GLB exports and retry; unavailable-source preservation.');
+  const status=spawnSync(process.env.FLATFORGE_PYTHON||'python',['-c','import sys\nfrom flatforge.db import Session, Panel\nwith Session.begin() as s: s.get(Panel,sys.argv[1]).status="NEEDS_REVIEW"'.replaceAll('\\n','\n'),sample.panels[1].id],{cwd:root,env:apiEnv,encoding:'utf8'});assert.equal(status.status,0,status.stderr);
+  await page.reload({waitUntil:'networkidle'});await page.getByText(/Assembly source unavailable/).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Export assembly as STEP (.step)',exact:true}).isDisabled(),true);
+  assert.deepEqual((await stored()).projects[project.id],initial);assert.deepEqual(errors,[]);
+  console.log('PASS: legacy rotation/offset recovery, individual movement, explicit project save, reload, project isolation, export retry, exact CAD/GLB transforms, unavailable-source preservation.');
 } catch(error){console.error(logs.slice(-2000));try{const pages=browser?.contexts()[0]?.pages();if(pages?.length)await pages[0].screenshot({path:path.join(output,'failure.png'),fullPage:true});}catch{}throw error;}
 finally{await browser?.close();server?.kill('SIGTERM');apiServer.kill('SIGTERM');}

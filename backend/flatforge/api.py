@@ -14,6 +14,7 @@ from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS
 from .review_files import select_review, MAX_REVIEW_BYTES
 from . import tolerance_policy
 from . import assembly as assembly_cad
+from . import assembly_projects
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
 @asynccontextmanager
 async def lifespan(app):
@@ -267,6 +268,14 @@ def export_project(id:str,background_tasks:BackgroundTasks):
   background_tasks.add_task(shutil.rmtree,td,True)
   return FileResponse(archive,filename='FlatForge_project.zip',media_type='application/zip',background=background_tasks)
  except Exception:shutil.rmtree(td,ignore_errors=True);raise
+
+@app.get('/projects/{id}/assembly',dependencies=[Depends(auth)])
+def get_assembly(id:str):
+ return assembly_projects.load(id)
+
+@app.put('/projects/{id}/assembly',dependencies=[Depends(auth)])
+def save_assembly(id:str,body:assembly_projects.SaveInput):
+ return assembly_projects.save(id,body)
 
 @app.post('/projects/{id}/assembly/faces',dependencies=[Depends(auth)])
 def assembly_faces(id:str,body:assembly_cad.SourceReference):

@@ -45,11 +45,13 @@ export function stagedPanel(entries:AssemblyEntry[],panelId:string,id:string,pla
 }
 export type PositionValues={u:number;v:number;normal:number};
 export function positionValues(entry:AssemblyEntry):PositionValues {
+  if(entry.pose){const p=entry.pose.offset;return {u:p[0],v:p[2],normal:-p[1]};}
   if(entry.targetId===null){const p=entry.rootOffset??[0,0,0];return {u:p[0],v:p[2],normal:-p[1]};}
   const c=entry.connection;return {u:c?.offsetU??0,v:c?.offsetV??0,normal:c?.normalOffset??0};
 }
 export function withPosition(entry:AssemblyEntry,p:PositionValues):AssemblyEntry {
   if(!Object.values(p).every(Number.isFinite))throw new Error('Enter finite offsets in mm.');
+  if(entry.pose)return {...entry,pose:{...entry.pose,offset:[p.u,-p.normal,p.v]}};
   if(entry.targetId===null)return {...entry,rootOffset:[p.u,-p.normal,p.v]};
   if(!entry.connection)throw new Error('Select connection faces before moving with the controller.');
   if(entry.gap+p.normal<0)throw new Error('The effective gap cannot be negative.');
@@ -58,4 +60,21 @@ export function withPosition(entry:AssemblyEntry,p:PositionValues):AssemblyEntry
 export type AssemblyHistory={past:AssemblyEntry[][];future:AssemblyEntry[][]};
 export function recordAction(history:AssemblyHistory,current:AssemblyEntry[]):AssemblyHistory {
   return {past:[...history.past,structuredClone(current)].slice(-40),future:[]};
+}
+
+
+/** Snapshot only unpositioned entries. Subsequent Move edits one independent
+ * pose, while retaining original connection provenance and exact source hash. */
+export function freezePlacements(entries:AssemblyEntry[],placement:CadPlacement):AssemblyEntry[]{
+ return entries.map(entry=>{
+  if(entry.pose)return entry;
+  const row=placement.entries.find(e=>e.id===entry.id),hash=placement.sourceHashes?.[entry.id],box=placement.bounds[entry.id],frame=placement.frames?.[entry.id];
+  if(!row||!hash||!box)throw new Error('Current CAD placements are not available. Reload the assembly.');
+  return {...entry,revision:row.revision,pose:{matrix:row.matrix,sourceSha:hash,pivot:frame?.origin??box.min.map((v,i)=>(v+box.max[i])/2) as [number,number,number],axis:frame?.n??[0,0,1],offset:[0,0,0],turn:0}};
+ });
+}
+export function moveIndependently(entries:AssemblyEntry[],id:string,values:PositionValues,group=false){
+ const selected=entries.find(e=>e.id===id);if(!selected?.pose)throw new Error('Load the current placement before moving.');
+ const before=positionValues(selected),ids=group?descendants(entries,id):new Set([id]);
+ return entries.map(e=>{if(!ids.has(e.id))return e;const p=positionValues(e);return withPosition(e,{u:p.u+values.u-before.u,v:p.v+values.v-before.v,normal:p.normal+values.normal-before.normal});});
 }

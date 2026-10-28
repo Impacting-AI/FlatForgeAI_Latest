@@ -15,28 +15,11 @@ import type { FaceRole, FaceSelection } from './face-connection-state';
 import type { CadFaceReference } from './types';
 import { createAssemblyGizmo } from './assembly-gizmo';
 import { createAssemblyLabels } from './assembly-labels';
-import { alphabeticLabel, positionValues, type PositionValues } from './assembly-workspace-state';
-import { inspectionMaterial, inspectionLighting } from './inspection-presentation';
+import { positionValues, type PositionValues } from './assembly-workspace-state';
+import { prepareInspectionModel, applyInspectionAppearance, configureInspectionRenderer, prepareInspectionGrid, inspectionLighting } from './inspection-presentation';
 
 // ── Public types ──────────────────────────────────────────────────────────────
-export type ClashResult = {
- entryIdA: string;
- entryIdB: string;
- /** Minimum AABB overlap dimension in mm — severity indicator */
- depth: number;
- /** Number of sampled vertices found penetrating the other solid */
- pointCount: number;
- /** Exact common volume for live CAD validation; absent in sample mesh checks. */
- volume?: number;
-};
-
-export type AssemblyViewerHandle = {
- /** Exact CAD checks in live mode; approximate mesh checks for offline samples. */
- runClash: () => Promise<ClashResult[]>;
- /** Remove clash highlighting and restore panel colours */
- clearClash: () => void;
- fit:(view?:string)=>void;
-};
+export type AssemblyViewerHandle = {fit:(view?:string)=>void};
 
 type Props = {
  projectId: string;
@@ -46,24 +29,22 @@ type Props = {
  paint: boolean;
  wire: boolean;
  onReadyChange: (ready:boolean) => void;
- children?:ReactNode;activeId?:string|null;hiddenIds?:string[];moving?:boolean;
+ children?:ReactNode;activeId?:string|null;hiddenIds?:string[];moving?:boolean;moveGroup?:boolean;
  onSelect?:(id:string|null)=>void;onMove?:(values:PositionValues)=>void;onDrag?:(active:boolean)=>void;
  onCatalog?:(catalog:CadFaceCatalog)=>void;onPlaced?:(placement:CadPlacement)=>void;
  selection?:FaceSelection|null;
  previewOnly?:boolean;
  onFacePicked?:(role:FaceRole,face:CadFaceReference)=>void;
  onFaceMessage?:(message:string)=>void;
- onValidation?:(result:{key:string;valid:boolean})=>void;
+ onValidation?:(result:{key:string;valid:boolean;token:string|null})=>void;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,hiddenIds=[],moving=false,onSelect,onMove,onDrag,onCatalog,onPlaced},ref){
+ function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,hiddenIds=[],moving=false,moveGroup=false,onSelect,onMove,onDrag,onCatalog,onPlaced},ref){
   const host = useRef<HTMLDivElement>(null);
   const viewApi = useRef<{fit:(view?:string)=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
   const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
-  const runClashRef = useRef<()=>Promise<ClashResult[]>>(async()=>[]);
-  const clearClashRef = useRef<()=>void>(()=>{});
   // Track latest paint/wire for use inside async closures
   const paintLatest = useRef(paint);
   const wireLatest = useRef(wire);
@@ -77,14 +58,14 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   const entriesLatest = useRef(entries);
   const layoutRef = useRef<(()=>void)|null>(null);
   const entriesKey=JSON.stringify(entries);
-  const interaction=useRef({selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,onSelect,onMove,onDrag,onCatalog,onPlaced});
+  const interaction=useRef({selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced});
   const displayRef=useRef<(()=>void)|null>(null);
   const gizmoRef=useRef<ReturnType<typeof createAssemblyGizmo>|null>(null);
   const pickerRef=useRef<ReturnType<typeof createAssemblyFacePicker>|null>(null);
-  useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,onSelect,onMove,onDrag,onCatalog,onPlaced};void pickerRef.current?.update(selection);displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,onSelect,onMove,onDrag,onCatalog,onPlaced]);
+  useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced};void pickerRef.current?.update(selection);displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced]);
   // Parent selection/highlight updates must not restart CAD placement.
   useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey);layoutRef.current?.();},[entriesKey]);
-  useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid});},[cad,ready,onValidation]);
+  useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid,token:cad.result?.token??null});},[cad,ready,onValidation]);
   useEffect(()=>{onReadyChange(ready);},[ready,onReadyChange]);
 
   // Keep latest-value refs up to date without triggering re-mount
@@ -92,8 +73,6 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
   // Expose imperative handle
   useImperativeHandle(ref,()=>({
-   runClash: ()=>runClashRef.current(),
-   clearClash: ()=>clearClashRef.current(),
    fit:(view)=>viewApi.current?.fit(view),
   }),[]);
 
@@ -107,8 +86,6 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     setMsg('');
     applyRef.current=null;
     layoutRef.current=null;
-    runClashRef.current=async()=>[];
-    clearClashRef.current=()=>{};
     return;
    }
    let alive=true; let frame=0; let layoutVersion=0; let validationTimer:ReturnType<typeof setTimeout>|undefined;
@@ -121,8 +98,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    try{renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});}
    catch{setMsg('WebGL not available');setErr(true);return;}
    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-   renderer.setClearColor(0xeef3f3);
-   renderer.outputColorSpace=THREE.SRGBColorSpace;
+   configureInspectionRenderer(renderer);
    root.appendChild(renderer.domElement);
 
    const scene=new THREE.Scene();
@@ -132,21 +108,19 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    controls.enableDamping=true; controls.dampingFactor=.1;
    inspectionLighting(scene);
    const grid=new THREE.GridHelper(20,100,0xc1d1d1,0xd8e2e2);
-   grid.rotation.x=Math.PI/2; grid.position.z=-.012; scene.add(grid);
+   prepareInspectionGrid(grid);grid.rotation.x=Math.PI/2; grid.position.z=-.012; scene.add(grid);
 
    const panelMap=new Map(panels.map(p=>[p.id,p]));
    const loader=new GLTFLoader();
    type Item={group:THREE.Group;bounds:THREE.Box3;localBounds:THREE.Box3};
    const items=new Map<string,Item>();
-   const clashOverlays:THREE.Object3D[]=[];
-   const originalColours=new Map<THREE.Material,THREE.Color>();
-   const collisions=new Set<string>();let hoveredId:string|null=null;
+   let hoveredId:string|null=null;
    let labels:ReturnType<typeof createAssemblyLabels>|null=null,placed:CadPlacement|null=null;let placedKey='';
    function syncDisplay(){
     for(const [id,item] of items)item.group.visible=!interaction.current.hiddenIds.includes(id);
     applyRef.current?.(paintLatest.current,wireLatest.current);
     const id=interaction.current.activeId,entry=entriesLatest.current.find(e=>e.id===id),frame=id?placed?.frames?.[id]:null;
-    gizmoRef.current?.set(placedKey===JSON.stringify(entriesLatest.current)&&interaction.current.moving&&id&&entry&&frame&&!interaction.current.hiddenIds.includes(id)?{id,frame,values:positionValues(entry),gap:entry.gap}:null);
+    gizmoRef.current?.set(placedKey===JSON.stringify(entriesLatest.current)&&interaction.current.moving&&id&&entry&&frame&&!interaction.current.hiddenIds.includes(id)?{id,frame,values:positionValues(entry),gap:entry.gap,group:interaction.current.moveGroup}:null);
    }
    displayRef.current=syncDisplay;
 
@@ -157,15 +131,11 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     const gltf=await loader.loadAsync(fileUrl(panel,'panel.glb'));
     if(!alive) return;
     const source=assemblyModel(gltf.scene),item={...source,localBounds:source.bounds.clone()};
-    const oldMaterials=new Set<THREE.Material>();
-    item.group.traverse(object=>{if(object instanceof THREE.Mesh){for(const material of Array.isArray(object.material)?object.material:[object.material])oldMaterials.add(material);object.material=inspectionMaterial(object.name.includes('_paint'));}});
-    oldMaterials.forEach(material=>material.dispose());
+    prepareInspectionModel(item.group);
     item.group.quaternion.copy(assemblyRotation(entry));item.group.updateMatrixWorld(true);
     item.bounds=new THREE.Box3().setFromObject(item.group,true);
     item.group.name=`Assembly ${entry.id}`;
     item.group.userData={entryId:entry.id,panelId:entry.panelId};
-    item.group.traverse(o=>{if(o instanceof THREE.Mesh) for(const mat of Array.isArray(o.material)?o.material:[o.material])
-     if(mat instanceof THREE.MeshStandardMaterial) originalColours.set(mat,mat.color.clone());});
     scene.add(item.group);
     items.set(entry.id,item);
    }));}).then(async()=>{
@@ -192,9 +162,6 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      pending=checkAssembly(projectId,submitted,controller.signal).then(result=>{
       if(!alive||version!==layoutVersion)throw new Error('Assembly changed while validating.');
       pending=null;cadLatest.current=result;setCad({key:submittedKey,checking:false,result,error:''});
-      clearClash();
-      for(const clash of result.collisions)for(const id of[clash.entryIdA,clash.entryIdB])collisions.add(id);
-      doApply(paintLatest.current,wireLatest.current);
       return result;
      }).catch(error=>{if(alive&&version===layoutVersion&&!controller.signal.aborted){cadLatest.current=null;setCad({key:submittedKey,checking:false,result:null,error:(error as Error).message});pending=null;}throw error;});
      return pending;
@@ -209,7 +176,6 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      placementController=new AbortController();const controller=placementController;
      setStepError('');setCad({key:requestKey,checking:live,result:null,error:''});setReady(false);
      try {
-      clearClash();
       if(live){
        const result=await placeAssembly(projectId,cadEntries(snapshot,panels),controller.signal);
        if(!alive||version!==layoutVersion)return;
@@ -237,134 +203,14 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
     // ── Paint / wireframe ─────────────────────────────────────────────────
     function doApply(p:boolean,w:boolean){
-     for(const item of items.values()){
-      item.group.traverse(o=>{
-       if(o instanceof THREE.Mesh){
-        for(const mat of Array.isArray(o.material)?o.material:[o.material]){
-         if('wireframe' in mat)(mat as THREE.MeshStandardMaterial).wireframe=w;
-         if(mat instanceof THREE.MeshStandardMaterial&&originalColours.has(mat)) mat.color.copy(originalColours.get(mat)!);
-         if(mat instanceof THREE.MeshStandardMaterial&&o.name.includes('_paint'))
-          mat.color.set(p?0xc6cbd1:0xb7bdc5);
-         if(mat instanceof THREE.MeshStandardMaterial){if(collisions.has(item.group.userData.entryId))mat.color.set(0xdd2020);mat.emissive.set(item.group.userData.entryId===interaction.current.activeId?0x124e65:item.group.userData.entryId===hoveredId?0x163745:0x000000);}
-        }
-       }
-      });
+     for(const [id,item] of items){
+      applyInspectionAppearance(item.group,p,w);
+      item.group.traverse(o=>{if(o instanceof THREE.Mesh)for(const material of Array.isArray(o.material)?o.material:[o.material]){
+       if(material instanceof THREE.MeshStandardMaterial)material.emissive.set(id===interaction.current.activeId?0x124e65:id===hoveredId?0x163745:0x000000);
+      }});
      }
     }
-    applyRef.current=doApply;
-    doApply(paintLatest.current,wireLatest.current);
-
-    // ── Clash detection ───────────────────────────────────────────────────
-    function runClash():ClashResult[]{
-     const results:ClashResult[]=[];
-     const ray=new THREE.Raycaster();
-     const entryList=entriesLatest.current.filter(e=>items.has(e.id));
-     // Two orthogonal test directions for inside-solid parity test
-     const DIRS=[new THREE.Vector3(1,0,0),new THREE.Vector3(0,1,0)];
-
-     for(let i=0;i<entryList.length;i++){
-      for(let j=i+1;j<entryList.length;j++){
-       const eA=entryList[i], eB=entryList[j];
-       const iA=items.get(eA.id)!, iB=items.get(eB.id)!;
-       iA.group.updateMatrixWorld(true); iB.group.updateMatrixWorld(true);
-
-       // ── Broad phase: AABB ─────────────────────────────────────────────
-       const boxA=new THREE.Box3().setFromObject(iA.group);
-       const boxB=new THREE.Box3().setFromObject(iB.group);
-       if(!boxA.intersectsBox(boxB)) continue;
-
-       // Overlap region
-       const oMin=boxA.min.clone().max(boxB.min);
-       const oMax=boxA.max.clone().min(boxB.max);
-       const oSize=oMax.clone().sub(oMin);
-       const depth=Math.min(oSize.x,oSize.y,oSize.z)*1000; // mm
-       const center=oMin.clone().add(oMax).multiplyScalar(.5);
-
-       // ── Narrow phase: vertex-in-solid (ray parity) ────────────────────
-       const mA:THREE.Mesh[]=[],mB:THREE.Mesh[]=[];
-       iA.group.traverse(o=>{if(o instanceof THREE.Mesh)mA.push(o);});
-       iB.group.traverse(o=>{if(o instanceof THREE.Mesh)mB.push(o);});
-
-       let pointCount=0;
-
-       const checkVerts=(meshes:THREE.Mesh[],targets:THREE.Mesh[],searchBox:THREE.Box3)=>{
-        for(const mesh of meshes){
-         const pos=mesh.geometry.attributes.position;
-         // Sample at most 120 vertices per mesh for performance
-         const stride=Math.max(1,Math.floor(pos.count/120));
-         for(let vi=0;vi<pos.count;vi+=stride){
-          const v=new THREE.Vector3().fromBufferAttribute(pos,vi).applyMatrix4(mesh.matrixWorld);
-          if(!searchBox.containsPoint(v)) continue; // fast reject
-          // Point-in-solid: ray parity test along 2 orthogonal axes
-          let inside=0;
-          for(const d of DIRS){
-           ray.set(v,d);
-           if(ray.intersectObjects(targets,false).length%2===1) inside++;
-          }
-          if(inside>=2) pointCount++;
-         }
-        }
-       };
-
-       // Check A vertices penetrating B, then B into A if nothing found
-       checkVerts(mA,mB,boxB);
-       if(pointCount===0) checkVerts(mB,mA,boxA);
-
-       if(pointCount>0){
-        results.push({entryIdA:eA.id,entryIdB:eB.id,depth,pointCount});
-
-        // ── Highlight clashing panels red ─────────────────────────────────
-        for(const id of[eA.id,eB.id]){
-         items.get(id)?.group.traverse(o=>{
-          if(o instanceof THREE.Mesh){
-           for(const mat of Array.isArray(o.material)?o.material:[o.material]){
-            if(mat instanceof THREE.MeshStandardMaterial) mat.color.set(0xdd2020);
-           }
-          }
-         });
-        }
-
-        // ── Clash zone: semi-transparent red volume + wireframe ───────────
-        const sz=oSize;
-        const solid=new THREE.Mesh(
-         new THREE.BoxGeometry(sz.x,sz.y,sz.z),
-         new THREE.MeshBasicMaterial({color:0xff1111,transparent:true,opacity:.18,depthWrite:false})
-        );
-        solid.position.copy(center);
-        scene.add(solid); clashOverlays.push(solid);
-
-        const outline=new THREE.LineSegments(
-         new THREE.EdgesGeometry(new THREE.BoxGeometry(sz.x,sz.y,sz.z)),
-         new THREE.LineBasicMaterial({color:0xff0000})
-        );
-        outline.position.copy(center);
-        scene.add(outline); clashOverlays.push(outline);
-       }
-      }
-     }
-     return results;
-    }
-
-    // ── Clear clash visuals ───────────────────────────────────────────────
-    function clearClash(){
-     collisions.clear();
-     for(const obj of clashOverlays){
-      scene.remove(obj);
-      if(obj instanceof THREE.Mesh){
-       obj.geometry.dispose();
-       for(const m of Array.isArray(obj.material)?obj.material:[obj.material]) m.dispose();
-      } else if(obj instanceof THREE.LineSegments){
-       obj.geometry.dispose();
-       (obj.material as THREE.Material).dispose();
-      }
-     }
-     clashOverlays.length=0;
-     // Restore original colours using the latest paint/wire values
-     doApply(paintLatest.current,wireLatest.current);
-    }
-
-    runClashRef.current=async()=>live?(await validateLayout()).collisions:runClash();
-    clearClashRef.current=clearClash;
+    applyRef.current=doApply;doApply(paintLatest.current,wireLatest.current);
 
     // ── Fit camera ────────────────────────────────────────────────────────
     function fit(view="iso"){
@@ -387,10 +233,10 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      screenshot:()=>{renderer.render(scene,camera);const a=document.createElement('a');a.href=renderer.domElement.toDataURL('image/png');a.download='FlatForge_Assembly.png';a.click();},
      exportGLB:async()=>{
       if(interaction.current.previewOnly)throw new Error('Apply or cancel the connection preview before exporting.');
-      if(live&&!cadLatest.current?.valid)throw new Error('Validate a conflict-free CAD assembly before exporting.');
+      if(live&&!cadLatest.current?.valid)throw new Error('Wait for the current panel positions before exporting.');
       const snapshot=new THREE.Scene();
       snapshot.userData={units:'metres',source_units:'mm',assemblyEntries:entriesLatest.current,cadTransformsMm:submitted};
-      for(const entry of entriesLatest.current){const copy=items.get(entry.id)!.group.clone(true);copy.visible=true;snapshot.add(copy);}
+      for(const entry of entriesLatest.current){const copy=items.get(entry.id)!.group.clone(true);copy.visible=true;const overlays:THREE.Object3D[]=[];copy.traverse(o=>{if(o.userData.inspectionEdges)overlays.push(o);});for(const o of overlays)o.removeFromParent();snapshot.add(copy);}
       snapshot.updateMatrixWorld(true);
       const result=await new GLTFExporter().parseAsync(snapshot,{binary:true});
       if(!(result instanceof ArrayBuffer)) throw new Error('Assembly export failed.');
@@ -418,9 +264,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     alive=false;placementController?.abort();validationController?.abort();pickerRef.current?.dispose();pickerRef.current=null;gizmoRef.current?.dispose();gizmoRef.current=null;labels?.dispose();displayRef.current=null;clearTimeout(validationTimer); cancelAnimationFrame(frame); resize.disconnect(); controls.dispose();
     applyRef.current=null;
     layoutRef.current=null;
-    runClashRef.current=async()=>[];
-    clearClashRef.current=()=>{};
-    scene.traverse(o=>{if(o instanceof THREE.Mesh){o.geometry.dispose();for(const m of Array.isArray(o.material)?o.material:[o.material])m.dispose();}});
+    scene.traverse(o=>{if(o instanceof THREE.Mesh||o instanceof THREE.LineSegments){o.geometry.dispose();for(const m of Array.isArray(o.material)?o.material:[o.material])m.dispose();}});
     renderer.dispose(); renderer.domElement.remove(); viewApi.current=null;
    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -433,7 +277,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    <div className="viewer-stage" data-assembly-ready={ready}>
    <div className="asm-cad-controls" data-cad-valid={cad.key===entriesKey&&live&&ready&&entries.length>0&&!!cad.result?.valid&&!cad.checking}>
     <Button variant="outline" disabled={previewOnly||cad.key!==entriesKey||!live||!entries.length||!ready||cad.checking||!cad.result?.valid||exporting} onClick={async()=>{const token=cadLatest.current?.token;if(!token)return;setExporting(true);setStepError('');try{await downloadAssemblyStep(projectId,token);}catch(error){setStepError((error as Error).message);}finally{setExporting(false);}}}><Download size={15}/>{exporting?'Exporting…':'Export assembly as STEP (.step)'}</Button>
-    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for solid validation and assembly STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking CAD clearances and solid intersections…':cad.error||cad.result?.issues.join(' ')||(cad.result?.collisions.length?`Placement conflict: ${cad.result.collisions.map(c=>[c.entryIdA,c.entryIdB].map(id=>entries.find(e=>e.id===id)?.label??alphabeticLabel(entries.findIndex(e=>e.id===id))).join(' ↔ ')+(c.volume===undefined?'':` (${c.volume.toFixed(3)} mm³)`)).join(', ')}. Intersecting solids are highlighted. Correct the layout before export.`:cad.result?.valid?`CAD verified · ${cad.result.clearances.length} verified connections · no solid intersections${cad.result.contacts.length?` · ${cad.result.contacts.length} touching pairs`:''}.`:'Waiting for CAD validation.')}</p>}
+    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for assembly saving and STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking panel positions…':cad.error||cad.result?.issues.join(' ')||(cad.result?.valid?'Positions ready · millimeters':'Waiting for panel positions.')}</p>}
     {stepError&&<p role="alert">{stepError}</p>}
    </div>
     <div ref={host} className="webgl-host"/>

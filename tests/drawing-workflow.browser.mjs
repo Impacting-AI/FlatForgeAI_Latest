@@ -74,6 +74,7 @@ try {
       if (method === 'PUT') { panel.filename = request.postDataJSON().filename; return route.fulfill({ json: panel }); }
       if (method === 'DELETE') { sample.panels = sample.panels.filter(p => p.id !== panel.id); return route.fulfill({ json: { ok: true } }); }
     }
+    if (parts[0] === 'projects' && parts[2] === 'assembly' && method === 'GET') return route.fulfill({json:{id:parts[1],projectId:parts[1],revision:0,units:'mm',entries:[],updated:null}});
     if (parts[0] === 'projects' && parts[2] === 'upload') {
       const created = { ...structuredClone(a), id: 'uploaded-drawing', project_id: parts[1], filename: 'uploaded.dxf', status: 'QUEUED', artifacts: [], report: {}, overrides: {}, revision: 1 };
       sample.panels.push(created); return route.fulfill({ status: 202, json: { panels: [created] } });

@@ -263,3 +263,10 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .asm-workspace-notice{position:absolute;z-index:8;top:52px;left:12px;right:12px;background:#fff5dd;border:1px solid #e7cb8a;color:#76551a;padding:8px 12px;font-size:11px;border-radius:5px;pointer-events:none}
 .asm-legacy-card label{font-size:11px}
 @media(max-width:640px){.assembly-workspace .viewer-stage{height:1050px;min-height:850px}.asm-workspace-toolbar{right:48px}.asm-workspace-toolbar select{max-width:85px}.asm-context{top:106px;max-height:480px;width:275px}.asm-selection-toolbar{top:100px}.asm-panel-list{top:150px}.assembly-workspace .asm-cad-controls{display:block}.assembly-workspace .asm-cad-controls p{margin-top:6px}.asm-mode-indicator{bottom:110px;font-size:10px;max-width:86%}.assembly-workspace .axis-key{bottom:150px}.asm-workspace-notice{top:95px}}
+
+/* Side-based assembly controls and explicit project save. */
+.asm-side-buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:8px}
+.asm-side-buttons button{padding:7px 3px;font-size:11px}
+.asm-side-buttons button[aria-pressed=true]{background:#146a7a;color:#fff;border-color:#146a7a}
+.assembly-workspace>.asm-workspace-notice{position:relative;inset:auto;margin:10px 12px;pointer-events:auto;overflow-wrap:anywhere}
+.asm-workspace-notice button{margin-left:10px}

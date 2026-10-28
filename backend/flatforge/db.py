@@ -21,6 +21,12 @@ class Project(Base):
  name:Mapped[str]=mapped_column(String(160));client:Mapped[str]=mapped_column(String(160),default='')
  created:Mapped[float]=mapped_column(Float,default=time.time)
  deleted_at:Mapped[float|None]=mapped_column(Float,nullable=True,default=None)
+class ProjectAssembly(Base):
+ __tablename__='project_assemblies'
+ project_id:Mapped[str]=mapped_column(ForeignKey('projects.id'),primary_key=True)
+ revision:Mapped[int]=mapped_column(Integer,default=1)
+ config:Mapped[str]=mapped_column(Text)
+ updated:Mapped[float]=mapped_column(Float,default=time.time)
 class Panel(Base):
  __tablename__='panels'
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid.uuid4()))

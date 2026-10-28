@@ -77,6 +77,32 @@ class SourceReference(StrictModel):
     revision: int = Field(ge=1)
 
 
+class PanelPose(StrictModel):
+    # Frozen source-to-world placement. Offsets are world millimetres; later
+    # connection-tree edits cannot overwrite another panel's applied position.
+    matrix: list[float] = Field(min_length=16, max_length=16)
+    sourceSha: str = Field(pattern=r'^[0-9a-f]{64}$')
+    pivot: tuple[float, float, float]
+    axis: tuple[float, float, float]
+    offset: tuple[float, float, float] = (0, 0, 0)
+    turn: float = 0
+
+    @model_validator(mode='after')
+    def rigid_pose(self):
+        m = connections.matrix(self.matrix)
+        r = m[:3, :3]
+        if not np.allclose(m[3], [0,0,0,1], atol=1e-8, rtol=0) or not np.allclose(r.T @ r, np.eye(3), atol=1e-8, rtol=0) or abs(np.linalg.det(r)-1)>1e-8:
+            raise ValueError('Panel placements must be rigid transforms without scale or reflection')
+        if abs(np.linalg.norm(self.axis)-1)>1e-8:
+            raise ValueError('The rotation axis must be a unit direction')
+        return self
+
+
+class ConnectionSides(StrictModel):
+    reference: Literal['left', 'right', 'top', 'bottom']
+    moving: Literal['left', 'right', 'top', 'bottom']
+
+
 class Entry(SourceReference):
     myFace: Face
     targetId: str | None
@@ -88,13 +114,15 @@ class Entry(SourceReference):
     matrix: list[float] | None = Field(default=None, min_length=16, max_length=16)
     connection: FaceConnection | None = None
     rootOffset: tuple[float, float, float] | None = None
+    pose: PanelPose | None = None
+    sides: ConnectionSides | None = None
 
     @model_validator(mode="after")
     def valid_connection(self):
         if self.rootOffset is not None and self.targetId is not None:
             raise ValueError('Only the root can have an assembly-origin offset')
-        if self.connection and (self.targetId is None or self.gap + self.connection.normalOffset < 0):
-            raise ValueError("A face connection needs a reference panel and a non-negative effective gap")
+        if self.connection and self.targetId is None:
+            raise ValueError("A face connection needs a reference panel")
         return self
 
     @field_validator('rotation')
@@ -106,12 +134,15 @@ class Entry(SourceReference):
 
 
 class AssemblyInput(StrictModel):
+    policy: Literal['constrained', 'free'] = 'constrained'
     entries: list[Entry] = Field(min_length=1, max_length=100)
 
     @model_validator(mode='after')
     def connection_tree(self):
         seen = set()
         for i, entry in enumerate(self.entries):
+            if self.policy == 'constrained' and (entry.pose or entry.connection and entry.gap + entry.connection.normalOffset < 0):
+                raise ValueError('Constrained assemblies require non-negative gaps and connection-derived positions')
             if entry.id in seen:
                 raise ValueError('Assembly entry IDs must be unique')
             if i == 0:
@@ -177,7 +208,8 @@ def faces(project_id, body):
     with CAD_LOCK:
         source = load_sources(project_id, [body])[body.id]
         return {'entryId': body.id, 'revision': body.revision, 'sourceSha': source['sha256'],
-                'units': 'mm', 'faces': source_pick_meshes(source['key'])}
+                'units': 'mm', 'faces': source_pick_meshes(source['key']),
+                'sides': connections.connection_sides(source, bounds)}
 
 
 def place(project_id, body):
@@ -231,15 +263,24 @@ def validate_matrices(entries):
         r = transform[:3, :3]
         if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-8, rtol=0) or not np.allclose(r.T @ r, np.eye(3), atol=1e-8, rtol=0) or abs(np.linalg.det(r) - 1) > 1e-8:
             raise HTTPException(422, 'Assembly transforms must be proper rigid rotations without scaling or reflection')
-        if entry.connection:
+        if entry.connection or entry.pose:
             continue
         rotation = rotation_matrix(entry.rotation)
         if any(abs(entry.matrix[i]-rotation[i]) > 1e-8 for i in range(16) if i not in (12, 13, 14)):
             raise HTTPException(422, 'Assembly transforms must preserve the specified rotation and unit scale')
 
 
-def check_placement(entries, sources):
+def check_placement(entries, sources, policy='constrained'):
     validate_matrices(entries)
+    if policy == 'free':
+        # STEP 6 deliberately allows intersections and arbitrary signed offsets.
+        # Still verify source identities, finite rigid transforms and metadata.
+        expected = connections.solve(entries, sources, rotation_matrix, bounds)
+        for entry, solved in zip(entries, expected['entries']):
+            if not np.allclose(entry.matrix, solved['matrix'], atol=LINEAR_EPS_MM, rtol=0):
+                raise HTTPException(422, 'Panel placement does not match its current saved positioning data')
+        shapes = {e.id: sources[e.id]['shape'].moved(location(e.matrix)) for e in entries}
+        return {'valid': True, 'clearances': [], 'collisions': [], 'contacts': [], 'issues': [], 'bounds': expected['bounds']}, shapes
     shapes = {e.id: sources[e.id]['shape'].moved(location(e.matrix)) for e in entries}
     boxes = {key: bounds(shape) for key, shape in shapes.items()}
     clearances, collisions, contacts, issues = [], [], [], []
@@ -313,12 +354,12 @@ def validate(project_id, body):
     with CAD_LOCK:
         sources = load_sources(project_id, body.entries)
         try:
-            result, _ = check_placement(body.entries, sources)
+            result, _ = check_placement(body.entries, sources, body.policy)
         except HTTPException:
             raise
         except Exception as error:
             raise HTTPException(422, 'CAD clearance validation failed; no export was approved') from error
-        result['token'] = sign({'version': 1, 'project': project_id, 'entries': body.model_dump()['entries'],
+        result['token'] = sign({'version': 1, 'policy': body.policy, 'project': project_id, 'entries': body.model_dump()['entries'],
                                 'sources': {key: {'key': source['key'], 'sha256': source['sha256']} for key, source in sources.items()}}) if result['valid'] else None
         return result
 
@@ -327,14 +368,14 @@ def export_step(project_id, token, path):
     payload = unsign(token)
     if payload.get('version') != 1 or payload.get('project') != project_id:
         raise HTTPException(422, 'Validate this project assembly before exporting')
-    body = AssemblyInput(entries=payload['entries'])
+    body = AssemblyInput(entries=payload['entries'], policy=payload.get('policy', 'constrained'))
     with CAD_LOCK:
         sources = load_sources(project_id, body.entries)
         for key, source in sources.items():
             if payload['sources'].get(key) != {'key': source['key'], 'sha256': source['sha256']}:
                 raise HTTPException(409, 'A source STEP changed after validation. Reload the assembly.')
         # Use precisely the signed preview matrices. Never recalculate placement.
-        result, shapes = check_placement(body.entries, sources)
+        result, shapes = check_placement(body.entries, sources, body.policy)
         if not result['valid']:
             raise HTTPException(409, 'Assembly has clearance conflicts or intersecting solids; correct the layout before export')
         assembly = cq.Assembly(name='FlatForge Assembly')

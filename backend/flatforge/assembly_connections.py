@@ -100,7 +100,19 @@ def solve(entries, sources, rotation_matrix, bounds):
     """Authoritative live placements for both saved envelope and face connections."""
     matrices, boxes, result, frames = {}, {}, [], {}
     for entry in entries:
-        if entry.connection:
+        if entry.pose:
+            pose = entry.pose
+            if pose.sourceSha != sources[entry.id]['sha256']:
+                raise HTTPException(409, 'A positioned panel was rebuilt. Reconnect it using the current drawing before saving or exporting.')
+            transform = matrix(pose.matrix).copy()
+            axis = np.array(pose.axis)
+            angle = math.radians(pose.turn % 360)
+            cross = np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+            turn = np.eye(3)*math.cos(angle)+(1-math.cos(angle))*np.outer(axis,axis)+math.sin(angle)*cross
+            pivot = np.array(pose.pivot)
+            transform[:3,3] = pivot + turn @ (transform[:3,3]-pivot) + np.array(pose.offset)
+            transform[:3,:3] = turn @ transform[:3,:3]
+        elif entry.connection:
             transform, details = connection_frame(entry, sources, matrices[entry.targetId])
             _, _, point_b, basis, _, _ = details
             frames[entry.id] = {'kind': 'face', 'origin': (transform[:3,:3] @ point_b + transform[:3,3]).tolist(),
@@ -142,11 +154,12 @@ def solve(entries, sources, rotation_matrix, bounds):
                 transform[:3, 3] += np.array(entry.rootOffset)
         matrices[entry.id] = transform
         boxes[entry.id] = bounds(sources[entry.id]['shape'].moved(location(transform)))
-        if entry.targetId is None:
+        if entry.pose or not entry.connection:
             frames[entry.id] = {'kind': 'root', 'origin': ((np.array(boxes[entry.id]['min']) + np.array(boxes[entry.id]['max']))/2).tolist(),
                                 'u': [1,0,0], 'v': [0,0,1], 'n': [0,-1,0]}
         result.append({**entry.model_dump(), 'matrix': values(transform)})
-    return {'units': 'mm', 'entries': result, 'bounds': boxes, 'frames': frames}
+    return {'units': 'mm', 'entries': result, 'bounds': boxes, 'frames': frames,
+            'sourceHashes': {entry.id: sources[entry.id]['sha256'] for entry in entries}}
 
 
 def measure_connection(entry, sources, matrices, linear_eps):
@@ -169,3 +182,57 @@ def measure_connection(entry, sources, matrices, linear_eps):
     return {'entryId': entry.id, 'targetId': entry.targetId, 'axis': 'face-normal', 'side': 1,
             'requested': requested, 'actual': float(delta[2]), 'surfaceDistance': distance,
             'offsetU': float(delta[0]), 'offsetV': float(delta[1]), 'satisfied': not issues}, issues
+
+
+def connection_sides(source, bounds):
+    """Classify *source-local* outer planar regions, not screen/world AABBs.
+
+    The largest panel plane establishes a repeatable drawing frame. Side regions
+    must face outward and meet the extreme BREP support plane. Split coplanar
+    patches share a placement plane; nonparallel alternatives require a click.
+    """
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    planar = [(face, row) for face, row in source['faces'] if row['supported']]
+    if not planar:
+        return {s: {'candidates': [], 'automatic': None, 'message': 'No planar connection region is available.'} for s in ('left','right','top','bottom')}
+    main = max(planar, key=lambda item: item[1]['area'])[1]
+    if any(abs(row['area']-main['area']) <= max(1e-6,main['area']*1e-8) and abs(np.dot(row['normal'],main['normal'])) < .999999 for _,row in planar):
+        return {s: {'candidates': [], 'automatic': None, 'message': 'This solid has no unique main panel plane for side identification.'} for s in ('left','right','top','bottom')}
+    n = np.array(main['normal'])
+    if n[np.argmax(np.abs(n))] < 0:
+        n = -n
+    right = np.array([1.,0.,0.])
+    if abs(right @ n) > .999:
+        right = np.array([0.,1.,0.])
+    right -= n*(right @ n); right /= np.linalg.norm(right)
+    up = np.cross(n, right)
+    frame = np.eye(4); frame[:3,:3] = np.column_stack((right, up, n)).T
+    body = bounds(source['shape'].moved(location(frame)))
+    scale = max(np.array(body['max'])-np.array(body['min']))
+    tolerance = max(.001, scale*1e-7)
+    result = {}
+    for side, axis, sign in [('left',0,-1),('right',0,1),('top',1,1),('bottom',1,-1)]:
+        direction = (right if axis == 0 else up)*sign
+        support = body['max' if sign>0 else 'min'][axis]*sign
+        candidates = []
+        for face, row in planar:
+            if np.dot(row['normal'], direction) < .5:
+                continue
+            box = bounds(face.moved(location(frame)))
+            if abs(box['max' if sign>0 else 'min'][axis]*sign-support)>tolerance:
+                continue
+            # Closest point on trimmed CAD face also handles centroids in holes.
+            anchor = BRepExtrema_DistShapeShape(cq.Vertex.makeVertex(*row['center']).wrapped, face.wrapped)
+            if not anchor.IsDone() or not anchor.NbSolution():
+                continue
+            point = anchor.PointOnShape2(1)
+            candidates.append({'faceId': row['id'], 'point': [point.X(),point.Y(),point.Z()], 'normal': row['normal'], 'area': row['area']})
+        candidates.sort(key=lambda c: (-c['area'], c['faceId']))
+        automatic = None
+        if candidates:
+            first = candidates[0]; normal = np.array(first['normal']); origin = np.array(first['point'])
+            if all(np.dot(c['normal'],normal)>.999999 and abs((np.array(c['point'])-origin) @ normal)<=tolerance for c in candidates):
+                automatic = first['faceId']
+        result[side] = {'candidates': candidates, 'automatic': automatic,
+                        'message': '' if automatic else 'Choose a highlighted region on this side.' if candidates else 'No reliable planar connection region on this side.'}
+    return result

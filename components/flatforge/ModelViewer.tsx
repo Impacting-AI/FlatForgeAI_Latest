@@ -7,7 +7,7 @@ import { Maximize2, Camera, LoaderCircle, Box } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Panel, fileUrl } from './types';
 import { SoftwareRenderer } from './SoftwareRenderer';
-import { INSPECTION, inspectionMaterial, inspectionEdges, inspectionLighting, prepareInspectionModel, applyInspectionAppearance } from './inspection-presentation';
+import { configureInspectionRenderer, prepareInspectionGrid, INSPECTION, inspectionMaterial, inspectionEdges, inspectionLighting, prepareInspectionModel, applyInspectionAppearance } from './inspection-presentation';
 type Face={id:number;polygons:{outer:number[][];holes:number[][][]}[]};
 type Hinge={id:number;name:string;parent:number;child:number;axis:number[];d:number[];hinge?:number[];allowance?:number;radius?:number;k_factor?:number;coordinate:number;dim:number;low:number;high:number;angle:number;source:{profile:string;vertex:number}[]};
 type Drawing={thickness:number;radius:number;allowance:number;k_factor:number;faces:Face[];bends:Hinge[]};
@@ -42,10 +42,10 @@ export default function ModelViewer(props:Props){
  useEffect(()=>{let alive=true;let frame=0;const root=host.current!;setState('Loading solid geometry…');setError(false);let renderer:THREE.WebGLRenderer|SoftwareRenderer;
   try{renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,preserveDrawingBuffer:true})}catch{renderer=new SoftwareRenderer();setSoftware(true)}
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(props.inspection?INSPECTION.background:0xeef3f3);renderer.outputColorSpace=THREE.SRGBColorSpace;root.appendChild(renderer.domElement);
-  if(props.inspection&&renderer instanceof THREE.WebGLRenderer){renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;}
+  if(props.inspection&&renderer instanceof THREE.WebGLRenderer){configureInspectionRenderer(renderer);}
   const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(32,1,.001,1000);camera.up.set(0,0,1);const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=.1;
   if(props.inspection)inspectionLighting(scene);else{scene.add(new THREE.HemisphereLight(0xffffff,0x82999d,2.1));const sun=new THREE.DirectionalLight(0xffffff,3);sun.position.set(3,-3,5);scene.add(sun);const fill=new THREE.DirectionalLight(0xc5e5e7,1.3);fill.position.set(-2,2,-4);scene.add(fill);}
-  const grid=new THREE.GridHelper(20,100,0xc1d1d1,0xd8e2e2);grid.rotation.x=Math.PI/2;if(props.inspection){for(const material of Array.isArray(grid.material)?grid.material:[grid.material]){material.color.set(0xb9bec6);material.transparent=true;material.opacity=.23;material.depthWrite=false;material.toneMapped=false;}}scene.add(grid);
+  const grid=new THREE.GridHelper(20,100,0xc1d1d1,0xd8e2e2);grid.rotation.x=Math.PI/2;if(props.inspection){prepareInspectionGrid(grid);}scene.add(grid);
   const items:{root:THREE.Group;final:THREE.Group;animated:ReturnType<typeof animatedModel>;data:Drawing;panel:Panel;bounds:THREE.Box3}[]=[];
   function layout(){let x=0;const p=latest.current;for(const item of items){const box=item.bounds;const size=box.getSize(new THREE.Vector3());item.root.position.set(x-box.min.x,p.alignment==='near'?-box.min.y:p.alignment==='far'?-box.max.y:-(box.min.y+box.max.y)/2,-box.min.z);x+=size.x+p.gap/1000}grid.position.z=-.012;}
   function fit(){if(!items.length)return;const box=new THREE.Box3();for(const item of items){item.root.updateMatrixWorld(true);box.union(new THREE.Box3().setFromObject(item.final.visible?item.final:item.animated.group))}const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());const vertical=THREE.MathUtils.degToRad(camera.fov),horizontal=2*Math.atan(Math.tan(vertical/2)*camera.aspect);const dist=(size.length()/2)/Math.sin(Math.min(vertical,horizontal)/2)*1.12+.1;const type=latest.current.view;const direction=type==='top'?new THREE.Vector3(0,0,1):type==='front'?new THREE.Vector3(0,-1,.001):type==='side'?new THREE.Vector3(1,0,.001):new THREE.Vector3(1,-1.25,1.15).normalize();camera.position.copy(center).addScaledVector(direction,dist);controls.target.copy(center);camera.near=.001;camera.far=Math.max(100,dist*20);camera.updateProjectionMatrix();controls.update()}

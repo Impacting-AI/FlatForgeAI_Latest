@@ -1,9 +1,10 @@
-import type { AssemblyEntry, CadFaceReference, Face } from './types';
+import type { AssemblyEntry, CadFaceReference, Face, AssemblySide } from './types';
 
 export type FaceRole = 'reference' | 'moving';
-export type FaceSelection = { referenceEntryId:string; movingEntryId:string; reference?:CadFaceReference; moving?:CadFaceReference; pick:FaceRole|null };
+export type FaceSelection = { referenceEntryId:string; movingEntryId:string; reference?:CadFaceReference; moving?:CadFaceReference; pick:FaceRole|null;allowed?:Partial<Record<FaceRole,string[]>>;sideNames?:Partial<Record<FaceRole,AssemblySide>> };
 export type FaceDraft = FaceSelection & {
   original:AssemblyEntry;
+  sides?:Partial<Record<FaceRole,AssemblySide>>;
   fields:{gap:string;u:string;v:string;normal:string;twist:string};
   message:string;
   preview?:AssemblyEntry;
@@ -25,7 +26,9 @@ export function faceDraftError(draft:FaceDraft) {
 
 export function previewFaceDraft(draft:FaceDraft):AssemblyEntry|undefined {
   if(faceDraftError(draft)||!draft.reference||!draft.moving)return;
-  return {...draft.original,targetId:draft.referenceEntryId,gap:Number(draft.fields.gap),connection:{type:'planar',
+  const original={...draft.original};delete original.pose;delete original.matrix;
+  if(draft.sides?.reference&&draft.sides?.moving)original.sides={reference:draft.sides.reference,moving:draft.sides.moving};
+  return {...original,targetId:draft.referenceEntryId,gap:Number(draft.fields.gap),connection:{type:'planar',
     reference:draft.reference,moving:draft.moving,offsetU:Number(draft.fields.u),offsetV:Number(draft.fields.v),
     normalOffset:Number(draft.fields.normal),twist:Number(draft.fields.twist)}};
 }

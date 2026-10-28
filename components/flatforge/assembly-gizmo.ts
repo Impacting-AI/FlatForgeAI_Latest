@@ -5,7 +5,7 @@ import type { CadFrame } from './assembly-cad';
 import { descendants, type PositionValues } from './assembly-workspace-state';
 import type { AssemblyEntry } from './types';
 
-export type GizmoConfig={id:string;frame:CadFrame;values:PositionValues;gap:number};
+export type GizmoConfig={id:string;frame:CadFrame;values:PositionValues;gap:number;group?:boolean};
 /** A drag is a temporary rigid translation, never a second CAD mate solver.
  * On release the authoritative placement/solid checks replace the preview.
  * No transforms can be saved or exported until that check finishes. */
@@ -29,14 +29,13 @@ export function createAssemblyGizmo(options:{scene:THREE.Scene;camera:THREE.Came
   const pointer=(e:PointerEvent)=>{fine=e.shiftKey;};options.canvas.addEventListener('pointermove',pointer);
   control.addEventListener('mouseDown',()=>{
     if(!config)return;start=structuredClone(config);basePosition=anchor.position.clone();originals.clear();
-    for(const id of descendants(options.entries(),config.id)){const group=options.groups.get(id)?.group;if(group){group.updateMatrix();originals.set(id,group.matrix.clone());}}
+    for(const id of (config.group?descendants(options.entries(),config.id):new Set([config.id]))){const group=options.groups.get(id)?.group;if(group){group.updateMatrix();originals.set(id,group.matrix.clone());}}
     options.orbit.enabled=false;options.onStart();
   });
   control.addEventListener('objectChange',()=>{
     if(!start||!control.dragging)return;
     const local=anchor.position.clone().sub(basePosition).applyMatrix4(basis.clone().invert()).multiplyScalar(1000);
     const step=fine?.1:1;local.set(Math.round(local.x/step)*step,Math.round(local.y/step)*step,Math.round(local.z/step)*step);
-    if(start.frame.kind==='face')local.z=Math.max(local.z,-start.gap-start.values.normal);
     const delta=local.clone().multiplyScalar(.001).applyMatrix4(basis);
     anchor.position.copy(basePosition).add(delta);
     for(const [id,matrix] of originals){const group=options.groups.get(id)!.group;matrix.decompose(group.position,group.quaternion,group.scale);group.position.add(delta);group.updateMatrixWorld(true);}

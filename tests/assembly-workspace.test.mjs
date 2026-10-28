@@ -7,7 +7,7 @@ import { decodeAssemblies, encodeAssemblies } from '../components/flatforge/asse
 // its one runtime dependency to the original source for Node's type stripper.
 const source=fs.readFileSync(new URL('../components/flatforge/assembly-workspace-state.ts',import.meta.url),'utf8');
 const compiled=ts.transpile(source,{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}).replace("'./face-connection-state'",JSON.stringify(new URL('../components/flatforge/face-connection-state.ts',import.meta.url).href));
-const {alphabeticLabel,namedEntries,nextLabel,faceSide,faceReference,descendants,stagedPanel,positionValues,withPosition,recordAction}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
+const {alphabeticLabel,namedEntries,nextLabel,faceSide,faceReference,descendants,stagedPanel,positionValues,withPosition,recordAction,freezePlacements,moveIndependently}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
 const root={id:'a',panelId:'one',targetId:null,targetFace:null,myFace:'-X',gap:10};
 const ref={faceId:'face-3',sourceSha:'a'.repeat(64),point:[0,0,0]};
 const child={...root,id:'b',panelId:'two',targetId:'a',targetFace:'+X',connection:{type:'planar',reference:ref,moving:ref,offsetU:0,offsetV:0,normalOffset:0,twist:17}};
@@ -37,4 +37,21 @@ test('undo snapshots and persistence retain identities, original gaps, root offs
  const rows=namedEntries([withPosition(root,{u:1,v:2,normal:3}),child]);const state={project:rows};assert.deepEqual(decodeAssemblies(encodeAssemblies(state)),state);
  const h=recordAction({past:[],future:[[]]},rows);rows[1].gap=25;assert.equal(h.past[0][1].gap,10);assert.deepEqual(h.future,[]);
  for(const bad of [{...root,rootOffset:[1,2]},{...child,rootOffset:[0,0,0]},{...root,label:'1'},{...root,label:'A',id:'z',targetId:'a'}])assert.throws(()=>decodeAssemblies(encodeAssemblies({p:[{...root,label:'A'},bad]})));
+});
+
+test('frozen placements keep individual, root and explicit branch movements distinct',()=>{
+ const rows=[root,child,{...child,id:'c',targetId:'b'}];
+ const I=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+ const placement={entries:rows.map((e,i)=>({...e,revision:4,matrix:I.map((v,j)=>j===12?i*100:v)})),bounds:Object.fromEntries(rows.map(e=>[e.id,{min:[0,0,0],max:[100,80,2]}])),sourceHashes:Object.fromEntries(rows.map(e=>[e.id,'a'.repeat(64)]))};
+ const fixed=freezePlacements(rows,placement),before=structuredClone(fixed);
+ for(const id of ['a','b','c']){
+  const moved=moveIndependently(fixed,id,{u:-13.125,v:50,normal:-500});
+  assert.deepEqual(positionValues(moved.find(e=>e.id===id)),{u:-13.125,v:50,normal:-500});
+  moved.filter(e=>e.id!==id).forEach(e=>assert.deepEqual(e,before.find(old=>old.id===e.id)));
+ }
+ const branch=moveIndependently(fixed,'b',{u:0,v:50,normal:0},true);
+ assert.deepEqual(branch[0],fixed[0]);assert.equal(positionValues(branch[1]).v,50);assert.equal(positionValues(branch[2]).v,50);
+ assert.deepEqual(fixed,before);assert.deepEqual(freezePlacements(branch,placement),branch,'repeated edits never restore old mate positions');
+ assert.throws(()=>moveIndependently(fixed,'b',{u:NaN,v:0,normal:0}),/finite/);
+ assert.throws(()=>freezePlacements(rows,{...placement,sourceHashes:{}}),/not available/);
 });

@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { assemblyFaces, type CadEntry, type CadFaceCatalog } from './assembly-cad';
 import type { CadFaceReference } from './types';
 import type { FaceRole, FaceSelection } from './face-connection-state';
-import { faceSide } from './assembly-workspace-state';
 
 /** CAD-face proxies and highlights live outside panel groups, so exports never
  * contain selection geometry. Ray hits identify exact hash-pinned BREP faces. */
@@ -39,11 +38,13 @@ export function createAssemblyFacePicker(options:{
     setRay(event);const id=panelHit();options.onPanelHover(id??null);
     const role=selection?.pick,target=role==='reference'?selection?.referenceEntryId:selection?.movingEntryId;
     if(!role||id!==target){clearHover();return;}
-    const hit=faceHits(id!)[0],source=catalogs.get(id!);if(!hit||!source){clearHover();return;}
+    const allowed=selection?.allowed?.[role];
+    const hit=faceHits(id!)[0],source=catalogs.get(id!);if(!hit||!source||allowed&&!allowed.includes(hit.object.userData.faceId)){clearHover();return;}
     const face=source.data.faces.find(f=>f.id===hit.object.userData.faceId)!;
     const key=id+':'+face.id;
     if(key!==hoverKey){clearHover();hoverKey=key;hover=new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0x70bde0:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
-    tooltip.hidden=false;tooltip.textContent=faceSide(face)+(face.supported?' · Click to select':' · Choose a planar face');
+    const side=selection?.sideNames?.[role];
+    tooltip.hidden=false;tooltip.textContent=(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
     const rect=options.canvas.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(rect.width-220,event.clientX-rect.left+14))+'px';tooltip.style.top=Math.max(55,event.clientY-rect.top-35)+'px';
   };
   function clearVisuals(){
@@ -58,6 +59,14 @@ export function createAssemblyFacePicker(options:{
   }
   function renderSelection(){
     clearVisuals();if(!selection)return;
+    if(selection.pick){
+     const role=selection.pick,id=role==='reference'?selection.referenceEntryId:selection.movingEntryId,source=catalogs.get(id),group=options.groups.get(id)?.group;
+     if(source&&group?.visible)for(const id of selection.allowed?.[role]??[]){
+      const index=source.data.faces.findIndex(f=>f.id===id);if(index<0)continue;
+      const mesh=new THREE.Mesh(source.meshes[index].geometry,new THREE.MeshBasicMaterial({color:0x71b5db,opacity:.32,transparent:true,side:THREE.DoubleSide,depthWrite:false}));
+      mesh.userData.sharedFaceGeometry=true;mesh.matrixAutoUpdate=false;mesh.matrix.copy(group.matrixWorld);mesh.raycast=()=>{};visuals.add(mesh);
+     }
+    }
     for(const role of ['reference','moving'] as const){
       const entryId=role==='reference'?selection.referenceEntryId:selection.movingEntryId;
       const source=catalogs.get(entryId),group=options.groups.get(entryId)?.group,reference=selection[role];
@@ -112,8 +121,9 @@ export function createAssemblyFacePicker(options:{
     const source=catalogs.get(id),group=options.groups.get(id)?.group;
     if(!source||!group){options.onMessage('Loading CAD faces. Try the face again in a moment.');return;}
     if(panelHit()!==id){options.onMessage('Click the requested panel, or orbit to expose its connection surface.');return;}
+    const allowed=selection.allowed?.[role];
     const hits=faceHits(id),hit=hits[0];
-    if(!hit){options.onMessage('No CAD face at this point. Click inside the selected panel surface.');return;}
+    if(!hit||allowed&&!allowed.includes(hit.object.userData.faceId)){options.onMessage('Choose a highlighted region on the selected side.');return;}
     if(hits.some(other=>other.object.userData.faceId!==hit.object.userData.faceId&&Math.abs(other.distance-hit.distance)<1e-6)){
       options.onMessage('This point touches more than one CAD face. Click inside a single surface, away from its boundary.');return;
     }

@@ -96,3 +96,15 @@ export function inspectionLighting(scene: THREE.Scene) {
     scene.add(light);
   }
 }
+
+
+/** Shared renderer/grid configuration for STEP 5 and STEP 6. */
+export function configureInspectionRenderer(renderer:THREE.WebGLRenderer){
+ renderer.setClearColor(INSPECTION.background);renderer.outputColorSpace=THREE.SRGBColorSpace;
+ renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
+}
+export function prepareInspectionGrid(grid:THREE.GridHelper){
+ for(const material of Array.isArray(grid.material)?grid.material:[grid.material]){
+  material.color.set(0xb9bec6);material.transparent=true;material.opacity=.23;material.depthWrite=false;material.toneMapped=false;
+ }
+}
