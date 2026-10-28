@@ -25,7 +25,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const [history,setHistory]=useState<AssemblyHistory>({past:[],future:[]});
  const editing=!!draft||!!move;
  const effective=draft?(isNew?[...base,draft.preview??draft.original]:base.map(e=>e.id===draft.movingEntryId?(draft.preview??draft.original):e)):move?.preview??entries;
- const key=JSON.stringify({entries:effective,insertId:isNew&&draft&&previewFaceDraft(draft)?draft.movingEntryId:undefined,insertBranchId:draft?.insertBranchId}),valid=validation.key===key&&validation.valid&&!dragging;
+ const key=JSON.stringify({entries:effective,insertId:draft&&previewFaceDraft(draft)?draft.movingEntryId:undefined,insertBranchId:draft?.insertBranchId}),valid=validation.key===key&&validation.valid&&!dragging;
  const selected=effective.find(e=>e.id===active),moveError=move&&Object.values(move.fields).some(v=>!v.trim()||!Number.isFinite(Number(v)));
  const moving=!!move&&!move.rotate&&!moveError&&!store.saving;
  const selection:FaceSelection|null=draft;
@@ -95,7 +95,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  return <section ref={workspace} className="assembly-workspace" aria-label="Interactive assembly workspace" data-unsaved-assembly={store.dirty||editing?'true':undefined} aria-busy={store.saving}>
    {(notice||store.error||store.message||!store.loaded)&&<div className="asm-workspace-notice" role={store.error?'alert':'status'}>{store.error||notice||store.message||'Loading saved assembly…'}{store.error&&<button onClick={()=>{if((store.dirty||editing)&&!window.confirm('Discard current edits and reload the saved project assembly?'))return;clearEdit();setHistory({past:[],future:[]});store.reload();}}>Reload saved assembly</button>}</div>}
   <AssemblyViewer ref={view} projectId={projectId} live={live} entries={effective} panels={available} paint={paint} wire={wire} onReadyChange={setReady}
-   insertId={isNew&&draft&&previewFaceDraft(draft)?draft.movingEntryId:undefined} insertBranchId={draft?.insertBranchId} onSideSelected={(id,side)=>{if(draft){const role=id===draft.referenceEntryId?'reference':id===draft.movingEntryId?'moving':null;if(role)chooseSide(role,side);}else select(id);}} selection={selection} previewOnly={editing||addOpen} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={setValidation}
+   insertId={draft&&previewFaceDraft(draft)?draft.movingEntryId:undefined} insertBranchId={draft?.insertBranchId} onSideSelected={(id,side)=>{if(draft){const role=id===draft.referenceEntryId?'reference':id===draft.movingEntryId?'moving':null;if(role)chooseSide(role,side);}else select(id);}} selection={selection} previewOnly={editing||addOpen} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={setValidation}
    activeId={active} hiddenIds={hidden} moving={moving} moveGroup={move?.group??false} onSelect={select} onMove={onMove} onDrag={setDragging} onCatalog={receiveCatalog} onPlaced={setPlacement}>
    <div className="asm-workspace-toolbar">
     <button className="primary" disabled={!store.loaded||store.saving||editing||dragging||entries.length>=100||!!entries.length&&!ready} onClick={()=>setAddOpen(!addOpen)}><Plus size={15}/>{entries.length?'Add Panel':'Select First Panel'}</button>

@@ -108,7 +108,7 @@ try {
 
   const editor=page.getByRole('region',{name:'Connection controls'}),position=page.getByRole('region',{name:'Panel position controls'});
   async function addInstance(panel,first=false){await page.getByRole('button',{name:first?'Select First Panel':'Add Panel',exact:true}).click();if(!first)await page.getByRole('checkbox',{name:'Include drawings already added',exact:true}).check();await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:panel.filename+' Ready · folded CAD solid',exact:true}).click();await loaded();}
-  async function connect(parent){if(parent)await editor.getByRole('combobox',{name:'Reference panel',exact:true}).selectOption(parent);for(const [group,side] of [['Reference connection side','Right'],['Moving connection side','Left']])await editor.getByRole('group',{name:group,exact:true}).getByRole('button',{name:side,exact:true}).click();await editor.getByRole('spinbutton',{name:'Connection gap',exact:true}).fill('20');await loaded();await editor.getByRole('button',{name:'Connect',exact:true}).click();await editor.waitFor({state:'detached'});await loaded();}
+  async function connect(parent){if(parent)await editor.getByRole('combobox',{name:'Reference panel',exact:true}).selectOption(parent);for(const [group,side] of [['Reference connection side','Left'],['Moving connection side','Right']])await editor.getByRole('group',{name:group,exact:true}).getByRole('button',{name:side,exact:true}).click();await editor.getByRole('spinbutton',{name:'Connection gap',exact:true}).fill('20');await loaded();await editor.getByRole('button',{name:'Connect',exact:true}).click();await editor.waitFor({state:'detached'});await loaded();}
   async function select(label){await page.getByRole('button',{name:'Fit Assembly',exact:true}).click();await page.waitForTimeout(200);const button=page.getByRole('button',{name:'Select Panel '+label,exact:true});if(await button.isVisible())await button.click();else{await page.getByRole('button',{name:'Panels',exact:true}).click();await page.getByRole('complementary',{name:'Assembly panels'}).locator('div').filter({has:page.locator('b',{hasText:new RegExp('^'+label+'$')})}).locator('button').first().click();await page.getByRole('button',{name:'Close panel list',exact:true}).click();}}
   async function move(label,value){await select(label);await page.getByRole('button',{name:'Move',exact:true}).click();await position.getByRole('spinbutton',{name:'Y offset — up',exact:true}).fill(String(value));await loaded();await position.getByRole('button',{name:'Apply position',exact:true}).click();await loaded();}
   await page.goto(url,{waitUntil:'networkidle'});await openProject();
@@ -160,6 +160,17 @@ try {
   assert.ok(await position.evaluate(e=>e.offsetLeft>=6&&e.offsetTop>=6&&e.offsetLeft+e.offsetWidth<=e.parentElement.clientWidth-5));
   await page.locator('.assembly-workspace').screenshot({path:path.join(output,'popup-mobile.png')});
   await position.getByRole('button',{name:'Cancel',exact:true}).click();
-  assert.deepEqual(errors,[]);console.log('PASS: real folded-panel insertion B→D→C; preserved manual offsets and unaffected panels; stable labels and source sides; bounded popup dragging and reopening; save/reload and exact STEP/GLB export; projected anchors in three camera views; independent movement after insertion.');
+  // Reconnect an existing panel: D Top -> A Left is occupied by B.
+  await loaded();await select('D');await page.getByRole('button',{name:'Reconnect',exact:true}).click();
+  await editor.getByRole('combobox',{name:'Reference panel',exact:true}).selectOption(a);
+  for(const [group,side] of [['Reference connection side','Left'],['Moving connection side','Top']])await editor.getByRole('group',{name:group,exact:true}).getByRole('button',{name:side,exact:true}).click();
+  await loaded();await editor.getByRole('button',{name:'Connect',exact:true}).click();await editor.waitFor({state:'detached'});await loaded();
+  const reconnected=structuredClone(placements.at(-1));assert.equal(reconnected.entries.find(e=>e.id===b).targetId,d);
+  assert.deepEqual(reconnected.entries.find(e=>e.id===a).matrix,saved.entries.find(e=>e.id===a).matrix);
+  assert.ok(await page.locator('.asm-side-label').evaluateAll(nodes=>nodes.every(n=>['L','R','T','B'].includes(n.textContent))));
+  await page.getByRole('button',{name:'Save Assembly',exact:true}).click();await page.getByText('Assembly saved to this project.',{exact:true}).waitFor();
+  const reconnectExport=await exportAssembly('reconnected.glb');await exportSTEP('reconnected.step',reconnectExport.metadata.cadTransformsMm);
+  await page.reload({waitUntil:'networkidle'});await loaded();assert.deepEqual(placements.at(-1).entries,reconnected.entries);
+  assert.deepEqual(errors,[]);console.log('PASS: existing D Top → A Left reconnection with occupied-side displacement, save/reload and STEP export; real folded-panel insertion B→D→C; preserved manual offsets and unaffected panels; stable labels and source sides; bounded popup dragging and reopening; save/reload and exact STEP/GLB export; projected anchors in three camera views; independent movement after insertion.');
 } catch(error){console.error(logs.slice(-2500));try{const pages=browser?.contexts()[0]?.pages();if(pages?.length)await pages[0].screenshot({path:path.join(output,'failure.png'),fullPage:true});}catch{}throw error;}
 finally{await browser?.close();server?.kill('SIGTERM');apiServer.kill('SIGTERM');}

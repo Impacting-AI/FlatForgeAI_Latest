@@ -109,3 +109,46 @@ def test_legacy_side_is_not_silently_guessed(api,tmp_path):
     response=insertion(client,project,[*rows,d]);assert response.status_code==409
     assert 'no reliable named side' in response.json()['detail']
     assert placed(client,project,rows)['entries'][1]['matrix']==rows[1]['matrix']
+
+@pytest.mark.parametrize('reference_side,moving_side',[('left','top'),('right','bottom'),('top','left'),('bottom','right')])
+def test_reconnect_existing_panel_into_occupied_side(api,tmp_path,reference_side,moving_side):
+    client,project=api
+    pid,_=panel(project,cq.Solid.makeBox(100,160,3),tmp_path)
+    small,_=panel(project,cq.Solid.makeBox(45,70,3),tmp_path)
+    a=entry('a',pid)
+    b=side_mate(client,project,a,entry('b',pid,'a'),reference_side,OPPOSITE[reference_side])
+    c=side_mate(client,project,b,entry('c',pid,'b'),reference_side,OPPOSITE[reference_side])
+    d=side_mate(client,project,a,entry('d',small,'a'),OPPOSITE[reference_side],reference_side)
+    rows=freeze(placed(client,project,[a,b,c,d]));rows[2]['pose']['offset']=[7,9,21]
+    before=placed(client,project,rows)
+    # Reconnect the existing D, replacing its old edge. This is the reported
+    # D Top -> A Left pairing for the first parameter set, not a new panel.
+    preview=side_mate(client,project,rows[0],entry('d',small,'a'),reference_side,moving_side)
+    result=insertion(client,project,[*rows[:3],preview]);assert result.status_code==200,result.text
+    result=result.json();after={e['id']:e for e in result['entries']}
+    assert after['d']['targetId']=='a' and after['b']['targetId']=='d' and after['c']['targetId']=='b'
+    assert after['a']['matrix']==before['entries'][0]['matrix']
+    assert result['insertion']['movedIds']==['b','c']
+    assert after['c']['pose']['offset']==[7,9,21]
+    assert len(after)==4
+    from flatforge.assembly import location
+    fixed_solid=cq.Solid.makeBox(100,160,3).moved(location(after['b']['matrix']))
+    moving_solid=cq.Solid.makeBox(45,70,3).moved(location(after['d']['matrix']))
+    assert fixed_solid.intersect(moving_solid).Volume()<1e-7
+    assert fixed_solid.distance(moving_solid)==pytest.approx(after['b']['gap'],abs=1e-6)
+    check=approved(client,project,result['entries']);assert check['valid']
+    saved=client.put(f'/projects/{project}/assembly',json={'revision':0,'token':check['token'],'entries':[{**r,'label':r['id'].upper()} for r in result['entries']]});assert saved.status_code==200,saved.text
+    assert client.get(f'/projects/{project}/assembly').json()['entries']==saved.json()['entries']
+
+
+def test_reconnect_reorders_later_reference_and_rejects_cycles(api,tmp_path):
+    client,project=api;pid,_=panel(project,cq.Solid.makeBox(100,160,3),tmp_path)
+    a=entry('a',pid);d=side_mate(client,project,a,entry('d',pid,'a'))
+    b=side_mate(client,project,a,entry('b',pid,'a'),'top','bottom')
+    c=side_mate(client,project,b,entry('c',pid,'b'))
+    rows=freeze(placed(client,project,[a,d,b,c]))
+    rows[1]=side_mate(client,project,rows[2],entry('d',pid,'b'))
+    response=insertion(client,project,rows);assert response.status_code==200,response.text
+    assert next(e for e in response.json()['entries'] if e['id']=='c')['targetId']=='d'
+    rows[2]['targetId']='d'
+    assert insertion(client,project,rows).status_code==422

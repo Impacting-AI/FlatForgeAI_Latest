@@ -141,6 +141,20 @@ class AssemblyInput(StrictModel):
 
     @model_validator(mode='after')
     def connection_tree(self):
+        if self.insertId:
+            # Reconnection can target a later row. Order the graph, never the
+            # panel labels; missing parents and cycles remain explicit errors.
+            remaining = list(self.entries)
+            ordered = []
+            ready = set()
+            while remaining:
+                batch = [e for e in remaining if e.targetId is None or e.targetId in ready]
+                if not batch:
+                    raise ValueError('Connection would create a cycle or reference a missing panel')
+                ordered.extend(batch)
+                ready.update(e.id for e in batch)
+                remaining = [e for e in remaining if e not in batch]
+            self.entries = ordered
         seen = set()
         for i, entry in enumerate(self.entries):
             if self.policy == 'constrained' and (entry.pose or entry.connection and entry.gap + entry.connection.normalOffset < 0):

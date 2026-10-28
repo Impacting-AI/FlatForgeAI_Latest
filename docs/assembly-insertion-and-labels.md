@@ -107,3 +107,39 @@ Executed verification:
 
 CAD round trips use OpenCascade/CadQuery; no interactive FreeCAD session is claimed.
 The only Python warning was the existing Starlette/httpx deprecation warning.
+
+## Reconnection and annotation correction (28 October 2026)
+
+The screenshot report exposed an omitted path: `AssemblyWorkspace` only sent
+`insertId` for newly added panels, and the connection editor only detected
+occupancy in Add mode. Reconnect therefore bypassed occupied-side graph handling.
+Both paths now use the same insertion operation. The selected panel's previous
+parent edge is replaced, not duplicated. Insertion requests are topologically
+ordered before normal validation; missing references, cycles and duplicate IDs
+remain invalid. Reference choices include later-added unrelated panels and exclude
+the moving panel's descendants. Multiple occupied branches still require a choice.
+Existing independent child poses remain fixed unless they belong to the displaced
+component; reconnect does not turn initial connections into rigid group constraints.
+
+Annotations had a 60 ms update throttle and estimated collision rectangles. This
+could lag behind a moving camera/model and underestimate rendered labels. They now
+update from current world matrices whenever camera, panel, viewport or selection
+state changes, with actual DOM dimensions for visibility/collision checks. Stationary
+frames reuse their result. Main name styling is unchanged. Side badges alone use
+navy backgrounds and compact L/R/T/B text; accessible names/tooltips retain the full
+side names. The same source-local geometric anchors and occlusion handling remain.
+
+Correction files: `AssemblyWorkspace.tsx`, `AssemblyConnectionEditor.tsx`,
+`assembly-labels.ts`, `app/globals.css`, `assembly.py`, `assembly_insertion.py`,
+`test_assembly_insertion.py`, `assembly-insertion.browser.mjs`, and
+`assembly-labels.test.mjs`.
+
+Executed checks: 47 Python tests and 56 JavaScript tests passed; TypeScript, focused
+ESLint and production build passed. The real-CAD browser test exercised existing
+D Top → A Left reconnection into an occupied side, both saves/reloads and STEP/GLB
+exports, in addition to insertion, rotation, independent moves, camera views and
+popup dragging. CAD round trips retained four valid original solids and their exact
+preview matrices. This reproduces the reported side pairing with fixture solids;
+the screenshot alone does not provide the user's original CAD/project transforms.
+The existing limitations above remain: ambiguous/nonparallel exits require a clear
+connection choice, and labels hide when occluded/crowded rather than detach.

@@ -13,9 +13,7 @@ def insert(entries, sources, moving_id, branch_id, rotation_matrix, bounds):
     rows = {e.id:e.model_copy(deep=True) for e in entries}
     new = rows.get(moving_id)
     if not new or not new.connection or not new.sides or new.pose:
-        raise HTTPException(422, 'Insertion needs a new side connection preview.')
-    if any(e.targetId == moving_id for e in entries):
-        raise HTTPException(422, 'Only a newly added panel can be inserted.')
+        raise HTTPException(422, 'Insertion needs an unfrozen side connection preview.')
     fixed_id = new.targetId
     fixed = rows[fixed_id]
     incident = [e for e in entries if e.id != moving_id and (e.targetId == fixed_id or e.id == fixed_id and e.targetId)]

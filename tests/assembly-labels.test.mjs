@@ -6,7 +6,7 @@ import * as THREE from 'three';
 const compile=source=>'data:text/javascript;base64,'+Buffer.from(ts.transpile(source,{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext})).toString('base64');
 const helper=compile(fs.readFileSync(new URL('../components/flatforge/assembly-workspace-state.ts',import.meta.url),'utf8').replace("'./face-connection-state'",JSON.stringify(new URL('../components/flatforge/face-connection-state.ts',import.meta.url).href)));
 const source=fs.readFileSync(new URL('../components/flatforge/assembly-labels.ts',import.meta.url),'utf8').replace("'./assembly-workspace-state'",JSON.stringify(helper)).replace("'three'",JSON.stringify(import.meta.resolve('three')));
-const {surfaceLabelAnchors}=await import(compile(source));
+const {surfaceLabelAnchors,createAssemblyLabels}=await import(compile(source));
 
 test('surface anchors avoid a central opening instead of using the bounding-box centre',()=>{
  const shape=new THREE.Shape();shape.moveTo(-2,-2);shape.lineTo(2,-2);shape.lineTo(2,2);shape.lineTo(-2,2);shape.closePath();
@@ -30,4 +30,28 @@ test('nested mesh transforms produce local anchors that follow arbitrary panel r
 test('empty or degenerate geometry does not invent a surface anchor',()=>{
  const group=new THREE.Group();assert.deepEqual(surfaceLabelAnchors(group),[]);
  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute([0,0,0,0,0,0,0,0,0],3));group.add(new THREE.Mesh(geometry));assert.deepEqual(surfaceLabelAnchors(group),[]);
+});
+
+
+test('labels follow camera and panel transforms in the same frame without a timer',()=>{
+ const previous=globalThis.document;
+ class Node {children=[];dataset={};style={};hidden=false;offsetWidth=74;offsetHeight=25;
+  appendChild(node){this.children.push(node);}setAttribute(){}remove(){}
+ }
+ globalThis.document={createElement:()=>new Node()};
+ try{
+  const host=new Node();host.clientWidth=1000;host.clientHeight=600;
+  const group=new THREE.Group();group.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,.1),new THREE.MeshBasicMaterial({side:THREE.DoubleSide})));
+  const camera=new THREE.PerspectiveCamera(32,1000/600,.01,100);camera.position.set(1,2,5);camera.lookAt(0,0,0);
+  const labels=createAssemblyLabels({host,camera,groups:new Map([['panel',{group,localBounds:new THREE.Box3().setFromObject(group)}]]),entries:()=>[{id:'panel',label:'A'}],active:()=>null,onSelect(){},onSide(){},onSideHover(){}});
+  const node=host.children[0].children[0];
+  for(let i=0;i<4;i++){
+   group.position.x=i*.1;group.rotation.z=i*.2;camera.position.x=1+i*.3;camera.lookAt(group.position);
+   labels.update();assert.equal(node.hidden,false);
+   const point=new THREE.Vector3(...node.dataset.anchor.split(',').map(Number)).applyMatrix4(group.matrixWorld).project(camera);
+   const coords=node.style.transform.match(/translate\(([^p]+)px,([^p]+)px\)/).slice(1).map(Number);
+   assert.ok(Math.abs(coords[0]-(point.x+1)*500)<1e-8);assert.ok(Math.abs(coords[1]-(1-point.y)*300)<1e-8);
+  }
+  labels.dispose();
+ }finally{globalThis.document=previous;}
 });
