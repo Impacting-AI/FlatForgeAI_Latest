@@ -3,6 +3,7 @@ import type { AssemblyEntry, CadFaceReference, Face, AssemblySide } from './type
 export type FaceRole = 'reference' | 'moving';
 export type FaceSelection = { referenceEntryId:string; movingEntryId:string; reference?:CadFaceReference; moving?:CadFaceReference; pick:FaceRole|null;allowed?:Partial<Record<FaceRole,string[]>>;sideNames?:Partial<Record<FaceRole,AssemblySide>> };
 export type FaceDraft = FaceSelection & {
+  insertBranchId?:string;
   original:AssemblyEntry;
   sides?:Partial<Record<FaceRole,AssemblySide>>;
   fields:{gap:string;u:string;v:string;normal:string;twist:string};

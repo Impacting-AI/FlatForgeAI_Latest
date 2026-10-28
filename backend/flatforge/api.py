@@ -281,6 +281,10 @@ def save_assembly(id:str,body:assembly_projects.SaveInput):
 def assembly_faces(id:str,body:assembly_cad.SourceReference):
  return assembly_cad.faces(id,body)
 
+@app.post('/projects/{id}/assembly/sides',dependencies=[Depends(auth)])
+def assembly_sides(id:str,body:assembly_cad.SourceReference):
+ return assembly_cad.faces(id,body,meshes=False)
+
 @app.post('/projects/{id}/assembly/place',dependencies=[Depends(auth)])
 def assembly_place(id:str,body:assembly_cad.AssemblyInput):
  return assembly_cad.place(id,body)

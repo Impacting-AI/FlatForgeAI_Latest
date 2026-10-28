@@ -12,7 +12,7 @@ import { placeAssembly, cadEntries, checkAssembly, downloadAssemblyStep, type Ca
 
 import { createAssemblyFacePicker } from './assembly-face-picker';
 import type { FaceRole, FaceSelection } from './face-connection-state';
-import type { CadFaceReference } from './types';
+import type { CadFaceReference,AssemblySide } from './types';
 import { createAssemblyGizmo } from './assembly-gizmo';
 import { createAssemblyLabels } from './assembly-labels';
 import { positionValues, type PositionValues } from './assembly-workspace-state';
@@ -22,6 +22,7 @@ import { prepareInspectionModel, applyInspectionAppearance, configureInspectionR
 export type AssemblyViewerHandle = {fit:(view?:string)=>void};
 
 type Props = {
+ insertId?:string;insertBranchId?:string;onSideSelected?:(id:string,side:AssemblySide)=>void;
  projectId: string;
  live: boolean;
  entries: AssemblyEntry[];
@@ -41,7 +42,7 @@ type Props = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,hiddenIds=[],moving=false,moveGroup=false,onSelect,onMove,onDrag,onCatalog,onPlaced},ref){
+ function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,hiddenIds=[],moving=false,moveGroup=false,onSelect,onMove,onDrag,onCatalog,onPlaced,insertId,insertBranchId,onSideSelected},ref){
   const host = useRef<HTMLDivElement>(null);
   const viewApi = useRef<{fit:(view?:string)=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
   const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
@@ -57,14 +58,15 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   const [stepError,setStepError] = useState('');
   const entriesLatest = useRef(entries);
   const layoutRef = useRef<(()=>void)|null>(null);
-  const entriesKey=JSON.stringify(entries);
-  const interaction=useRef({selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced});
+  const entriesKey=JSON.stringify({entries,insertId,insertBranchId});
+  const insertion=useRef({insertId,insertBranchId});
+  const interaction=useRef({selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced,onSideSelected});
   const displayRef=useRef<(()=>void)|null>(null);
   const gizmoRef=useRef<ReturnType<typeof createAssemblyGizmo>|null>(null);
   const pickerRef=useRef<ReturnType<typeof createAssemblyFacePicker>|null>(null);
-  useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced};void pickerRef.current?.update(selection);displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced]);
+  useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced,onSideSelected};void pickerRef.current?.update(selection);displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced,onSideSelected]);
   // Parent selection/highlight updates must not restart CAD placement.
-  useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey);layoutRef.current?.();},[entriesKey]);
+  useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey).entries;insertion.current={insertId,insertBranchId};layoutRef.current?.();},[entriesKey,insertId,insertBranchId]);
   useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid,token:cad.result?.token??null});},[cad,ready,onValidation]);
   useEffect(()=>{onReadyChange(ready);},[ready,onReadyChange]);
 
@@ -120,7 +122,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     for(const [id,item] of items)item.group.visible=!interaction.current.hiddenIds.includes(id);
     applyRef.current?.(paintLatest.current,wireLatest.current);
     const id=interaction.current.activeId,entry=entriesLatest.current.find(e=>e.id===id),frame=id?placed?.frames?.[id]:null;
-    gizmoRef.current?.set(placedKey===JSON.stringify(entriesLatest.current)&&interaction.current.moving&&id&&entry&&frame&&!interaction.current.hiddenIds.includes(id)?{id,frame,values:positionValues(entry),gap:entry.gap,group:interaction.current.moveGroup}:null);
+    gizmoRef.current?.set(placedKey===JSON.stringify({entries:entriesLatest.current,...insertion.current})&&interaction.current.moving&&id&&entry&&frame&&!interaction.current.hiddenIds.includes(id)?{id,frame,values:positionValues(entry),gap:entry.gap,group:interaction.current.moveGroup}:null);
    }
    displayRef.current=syncDisplay;
 
@@ -144,15 +146,15 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      onStart:()=>{layoutVersion++;validationController?.abort();placementController?.abort();clearTimeout(validationTimer);pending=null;cadLatest.current=null;setReady(false);setCad({key:'',checking:true,result:null,error:''});interaction.current.onDrag?.(true);},
      onChange:values=>{interaction.current.onMove?.(values);pickerRef.current?.refresh();},
      onEnd:()=>{interaction.current.onDrag?.(false);requestAnimationFrame(()=>{if(alive)layoutRef.current?.();});}});
-    labels=createAssemblyLabels({host:root,camera,groups:items,entries:()=>entriesLatest.current,active:()=>interaction.current.activeId,onSelect:id=>interaction.current.onSelect?.(id)});
+    labels=createAssemblyLabels({host:root,camera,groups:items,entries:()=>entriesLatest.current,active:()=>interaction.current.activeId,onSelect:id=>interaction.current.onSelect?.(id),onSide:(id,side)=>interaction.current.onSideSelected?.(id,side),onSideHover:(id,side)=>pickerRef.current?.highlightSide(id,side)});
     if(live){
      pickerRef.current=createAssemblyFacePicker({projectId,scene,camera,canvas:renderer.domElement,groups:items,
       entries:()=>cadEntries(entriesLatest.current,panels),
       onPick:(role,face)=>interaction.current.onFacePicked?.(role,face),onMessage:message=>interaction.current.onFaceMessage?.(message),
-      onSelect:id=>interaction.current.onSelect?.(id),onCatalog:catalog=>interaction.current.onCatalog?.(catalog),
+      onSelect:id=>interaction.current.onSelect?.(id),onCatalog:catalog=>{labels?.setCatalog(catalog);interaction.current.onCatalog?.(catalog);},
       blocked:()=>!!gizmoRef.current?.intercepting,
       onPanelHover:id=>{if(hoveredId!==id){hoveredId=id;applyRef.current?.(paintLatest.current,wireLatest.current);}}});
-     void pickerRef.current.update(interaction.current.selection);
+     void pickerRef.current.loadAll();void pickerRef.current.update(interaction.current.selection);
     }
     let submittedKey='';
     async function validateLayout():Promise<CadCheck>{
@@ -170,14 +172,14 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     // ── Position panels from connection tree ──────────────────────────────
     async function layout(){
      if(gizmoRef.current?.dragging)return;
-     const version=++layoutVersion,snapshot=entriesLatest.current,requestKey=JSON.stringify(snapshot);
+     const version=++layoutVersion,snapshot=entriesLatest.current,requestKey=JSON.stringify({entries:snapshot,...insertion.current});
      gizmoRef.current?.set(null);
      placementController?.abort();validationController?.abort();clearTimeout(validationTimer);pending=null;cadLatest.current=null;
      placementController=new AbortController();const controller=placementController;
      setStepError('');setCad({key:requestKey,checking:live,result:null,error:''});setReady(false);
      try {
       if(live){
-       const result=await placeAssembly(projectId,cadEntries(snapshot,panels),controller.signal);
+       const result=await placeAssembly(projectId,cadEntries(snapshot,panels),controller.signal,insertion.current.insertId,insertion.current.insertBranchId);
        if(!alive||version!==layoutVersion)return;
        if(result.units!=='mm'||result.entries.length!==snapshot.length)throw new Error('Incomplete CAD assembly placement.');
        for(const entry of snapshot){
@@ -251,12 +253,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    const resize=new ResizeObserver(()=>{const w=root.clientWidth,h=root.clientHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();});
    resize.observe(root);
    function loop(){frame=requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);labels?.update();
-    const popup=root.parentElement?.querySelector<HTMLElement>('[data-position-popup]');
-    if(popup&&gizmoRef.current?.anchor){
-     const point=gizmoRef.current.anchor.position.clone().project(camera),w=root.clientWidth,h=root.clientHeight;
-     popup.style.left=(w<640?12:Math.max(12,Math.min(w-popup.offsetWidth-12,(point.x+1)*w/2+115)))+'px';
-     popup.style.top=(w<640?75:Math.max(75,Math.min(h-popup.offsetHeight-95,(1-point.y)*h/2-60)))+'px';
-    }
+
    }
    loop();
 

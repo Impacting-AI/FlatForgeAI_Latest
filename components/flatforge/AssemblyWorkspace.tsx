@@ -3,6 +3,7 @@ import {useCallback,useMemo,useRef,useState} from 'react';
 import {Plus,Undo2,Redo2,List,Move3D,RotateCw,Link2,Maximize2,X,Eye,EyeOff,Trash2,Save} from 'lucide-react';
 import AssemblyViewer,{type AssemblyViewerHandle} from './AssemblyViewer';
 import AssemblyConnectionEditor from './AssemblyConnectionEditor';
+import {useAssemblyPopupDrag} from './useAssemblyPopupDrag';
 import {useProjectAssembly} from './useProjectAssembly';
 import type {AssemblyEntry,AssemblySide,Panel,CadFaceReference} from './types';
 import type {CadFaceCatalog,CadPlacement} from './assembly-cad';
@@ -13,6 +14,7 @@ import {namedEntries,nextLabel,stagedPanel,positionValues,freezePlacements,moveI
 type MoveDraft={id:string;base:AssemblyEntry[];preview:AssemblyEntry[];group:boolean;rotate:boolean;fields:{u:string;v:string;normal:string;turn:string}};
 export default function AssemblyWorkspace({projectId,live,panels}:{projectId:string;live:boolean;panels:Panel[]}){
  const store=useProjectAssembly(projectId,live),entries=useMemo(()=>namedEntries(store.entries),[store.entries]);
+ const workspace=useRef<HTMLElement|null>(null);useAssemblyPopupDrag(workspace,projectId);
  const view=useRef<AssemblyViewerHandle|null>(null);
  const [active,setActive]=useState<string|null>(null),[listOpen,setListOpen]=useState(false),[addOpen,setAddOpen]=useState(false),[repeat,setRepeat]=useState(false);
  const [draft,setDraft]=useState<FaceDraft|null>(null),[base,setBase]=useState<AssemblyEntry[]>([]),[isNew,setIsNew]=useState(false);
@@ -23,7 +25,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const [history,setHistory]=useState<AssemblyHistory>({past:[],future:[]});
  const editing=!!draft||!!move;
  const effective=draft?(isNew?[...base,draft.preview??draft.original]:base.map(e=>e.id===draft.movingEntryId?(draft.preview??draft.original):e)):move?.preview??entries;
- const key=JSON.stringify(effective),valid=validation.key===key&&validation.valid&&!dragging;
+ const key=JSON.stringify({entries:effective,insertId:isNew&&draft&&previewFaceDraft(draft)?draft.movingEntryId:undefined,insertBranchId:draft?.insertBranchId}),valid=validation.key===key&&validation.valid&&!dragging;
  const selected=effective.find(e=>e.id===active),moveError=move&&Object.values(move.fields).some(v=>!v.trim()||!Number.isFinite(Number(v)));
  const moving=!!move&&!move.rotate&&!moveError&&!store.saving;
  const selection:FaceSelection|null=draft;
@@ -68,7 +70,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function chooseSide(role:FaceRole,side:AssemblySide){
   if(!draft)return;const id=role==='reference'?draft.referenceEntryId:draft.movingEntryId,catalog=catalogs[id],region=catalog?.sides?.[side];if(!catalog||!region)return;
   const chosen=region.candidates.find(c=>c.faceId===region.automatic);
-  setDraft(updateFaceDraft(draft,{sides:{...draft.sides,[role]:side},sideNames:{...draft.sideNames,[role]:side},allowed:{...draft.allowed,[role]:region.candidates.map(c=>c.faceId)},
+  setDraft(updateFaceDraft(draft,{insertBranchId:undefined,sides:{...draft.sides,[role]:side},sideNames:{...draft.sideNames,[role]:side},allowed:{...draft.allowed,[role]:region.candidates.map(c=>c.faceId)},
    [role]:chosen?{faceId:chosen.faceId,sourceSha:catalog.sourceSha,point:chosen.point}:undefined,pick:!chosen&&region.candidates.length?role:null,message:chosen?'':region.message}));
  }
  const updateMove=useCallback((fields:MoveDraft['fields'])=>setMove(old=>{
@@ -82,7 +84,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function apply(){
   if(!valid||store.saving)return;
   if(move&&!moveError){commit(move.preview);clearEdit();}
-  else if(draft&&previewFaceDraft(draft)&&placement){commit(freezePlacements(effective,placement));clearEdit();}
+  else if(draft&&previewFaceDraft(draft)&&placement){const labels=new Map(effective.map(e=>[e.id,e.label]));commit(freezePlacements(placement.entries,placement).map(e=>({...e,label:labels.get(e.id)})));clearEdit();}
  }
  async function save(){
   if(editing||store.saving||!store.loaded||entries.length&&!valid)return;
@@ -90,10 +92,10 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   // checked matrix snapshot; saving does not run placement again.
   await store.save(placement,validation.token);
  }
- return <section className="assembly-workspace" aria-label="Interactive assembly workspace" data-unsaved-assembly={store.dirty||editing?'true':undefined} aria-busy={store.saving}>
+ return <section ref={workspace} className="assembly-workspace" aria-label="Interactive assembly workspace" data-unsaved-assembly={store.dirty||editing?'true':undefined} aria-busy={store.saving}>
    {(notice||store.error||store.message||!store.loaded)&&<div className="asm-workspace-notice" role={store.error?'alert':'status'}>{store.error||notice||store.message||'Loading saved assembly…'}{store.error&&<button onClick={()=>{if((store.dirty||editing)&&!window.confirm('Discard current edits and reload the saved project assembly?'))return;clearEdit();setHistory({past:[],future:[]});store.reload();}}>Reload saved assembly</button>}</div>}
   <AssemblyViewer ref={view} projectId={projectId} live={live} entries={effective} panels={available} paint={paint} wire={wire} onReadyChange={setReady}
-   selection={selection} previewOnly={editing||addOpen} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={setValidation}
+   insertId={isNew&&draft&&previewFaceDraft(draft)?draft.movingEntryId:undefined} insertBranchId={draft?.insertBranchId} onSideSelected={(id,side)=>{if(draft){const role=id===draft.referenceEntryId?'reference':id===draft.movingEntryId?'moving':null;if(role)chooseSide(role,side);}else select(id);}} selection={selection} previewOnly={editing||addOpen} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={setValidation}
    activeId={active} hiddenIds={hidden} moving={moving} moveGroup={move?.group??false} onSelect={select} onMove={onMove} onDrag={setDragging} onCatalog={receiveCatalog} onPlaced={setPlacement}>
    <div className="asm-workspace-toolbar">
     <button className="primary" disabled={!store.loaded||store.saving||editing||dragging||entries.length>=100||!!entries.length&&!ready} onClick={()=>setAddOpen(!addOpen)}><Plus size={15}/>{entries.length?'Add Panel':'Select First Panel'}</button>
@@ -122,8 +124,8 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
     <button disabled={store.saving} title="Remove panel and its connection branch" aria-label="Remove selected panel" onClick={()=>{if(window.confirm(`Remove ${title(selected.id)} and its connection branch?`)){commit(removeAssemblyBranch(entries,selected.id));setActive(null);}}}><Trash2 size={15}/></button>
     {selected.sides&&<small>{selected.sides.reference} → {selected.sides.moving} · Initial gap {selected.gap.toFixed(2)} mm · independent positioning</small>}
    </div>}
-   {draft&&<AssemblyConnectionEditor draft={draft} entries={effective} catalogs={catalogs} valid={valid} connecting={isNew} onSide={chooseSide}
-    onReference={id=>setDraft(updateFaceDraft(draft,{referenceEntryId:id,reference:undefined,sides:{moving:draft.sides?.moving},sideNames:{moving:draft.sides?.moving},allowed:{moving:draft.allowed?.moving},pick:null,message:''}))}
+   {draft&&<AssemblyConnectionEditor draft={draft} entries={effective} catalogs={catalogs} valid={valid} connecting={isNew} insertion={placement?.insertion} onBranch={id=>setDraft(old=>old?{...old,insertBranchId:id}:null)} onSide={chooseSide}
+    onReference={id=>setDraft(updateFaceDraft(draft,{referenceEntryId:id,reference:undefined,insertBranchId:undefined,sides:{moving:draft.sides?.moving},sideNames:{moving:draft.sides?.moving},allowed:{moving:draft.allowed?.moving},pick:null,message:''}))}
     onGap={gap=>setDraft(updateFaceDraft(draft,{fields:{...draft.fields,gap}}))} onApply={apply} onCancel={cancel}/>}
    {move&&<section className="asm-context asm-position-card" data-position-popup="true" data-unsaved-assembly="true" aria-label="Panel position controls"><header><strong>{title(move.id)} · {move.rotate?'Rotate':move.group?'Move branch':'Move panel'}</strong><button aria-label={collapsed?'Expand position controls':'Collapse position controls'} onClick={()=>setCollapsed(!collapsed)}>{collapsed?'+':'−'}</button></header>
     {collapsed?<p>X {move.fields.u} · Y {move.fields.v} · Z {move.fields.normal} mm</p>:<>

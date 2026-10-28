@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { assemblyFaces, type CadEntry, type CadFaceCatalog } from './assembly-cad';
-import type { CadFaceReference } from './types';
+import type { CadFaceReference,AssemblySide } from './types';
 import type { FaceRole, FaceSelection } from './face-connection-state';
 
 /** CAD-face proxies and highlights live outside panel groups, so exports never
@@ -12,6 +12,7 @@ export function createAssemblyFacePicker(options:{
   onSelect:(id:string|null)=>void;onPanelHover:(id:string|null)=>void;
   onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;
 }) {
+  let sideHover:{id:string;side:AssemblySide}|null=null;
   let selection:FaceSelection|null=null,alive=true,sequence=0;
   const catalogs=new Map<string,{data:CadFaceCatalog;root:THREE.Group;meshes:THREE.Mesh[]}>();
   const pending=new Map<string,Promise<void>>(),abort=new AbortController();
@@ -58,7 +59,11 @@ export function createAssemblyFacePicker(options:{
     }
   }
   function renderSelection(){
-    clearVisuals();if(!selection)return;
+    clearVisuals();
+    if(sideHover){const source=catalogs.get(sideHover.id),group=options.groups.get(sideHover.id)?.group;
+     if(source&&group?.visible)for(const region of source.data.sides?.[sideHover.side].candidates??[]){const meshSource=source.meshes.find(m=>m.userData.faceId===region.faceId);if(!meshSource)continue;const mesh=new THREE.Mesh(meshSource.geometry,new THREE.MeshBasicMaterial({color:0x2788ee,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));mesh.userData.sharedFaceGeometry=true;mesh.matrixAutoUpdate=false;mesh.matrix.copy(group.matrixWorld);mesh.raycast=()=>{};visuals.add(mesh);}
+    }
+    if(!selection)return;
     if(selection.pick){
      const role=selection.pick,id=role==='reference'?selection.referenceEntryId:selection.movingEntryId,source=catalogs.get(id),group=options.groups.get(id)?.group;
      if(source&&group?.visible)for(const id of selection.allowed?.[role]??[]){
@@ -88,12 +93,12 @@ export function createAssemblyFacePicker(options:{
       }
     }
   }
-  async function load(id:string){
-    if(catalogs.has(id))return;
-    if(pending.has(id))return pending.get(id);
+  async function load(id:string,meshes=true):Promise<void>{
+    if(catalogs.has(id)&&(!meshes||catalogs.get(id)!.data.faces.length))return;
+    if(pending.has(id)){await pending.get(id);return load(id,meshes);}
     const entry=options.entries().find(entry=>entry.id===id);
     if(!entry)throw new Error('The selected assembly entry is unavailable.');
-    const promise=assemblyFaces(options.projectId,entry,abort.signal).then(data=>{
+    const promise=assemblyFaces(options.projectId,entry,abort.signal,meshes).then(data=>{
       if(!alive)return;
       if(data.units!=='mm'||data.entryId!==id)throw new Error('CAD face catalog does not match this panel.');
       const root=new THREE.Group(),meshes=data.faces.map(face=>{
@@ -133,7 +138,7 @@ export function createAssemblyFacePicker(options:{
     options.onPick(role,{faceId:face.id,sourceSha:source.data.sourceSha,point:point.toArray()});
   };
   options.canvas.addEventListener('pointermove',pointerMove);options.canvas.addEventListener('pointerleave',clearHover);options.canvas.addEventListener('pointerdown',pointerDown);options.canvas.addEventListener('pointerup',pointerUp);
-  return {update,refresh:renderSelection,dispose(){
+  return {update,async loadAll(){for(const entry of options.entries()){if(!alive)return;try{await load(entry.id,false);}catch(error){if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);}}},highlightSide(id:string|null,side:AssemblySide|null){sideHover=id&&side?{id,side}:null;renderSelection();if(id)void load(id).then(()=>{if(alive)renderSelection();}).catch(()=>{});},refresh:renderSelection,dispose(){
     alive=false;abort.abort();clearHover();tooltip.remove();clearVisuals();options.scene.remove(visuals);
     options.canvas.removeEventListener('pointermove',pointerMove);options.canvas.removeEventListener('pointerleave',clearHover);options.canvas.removeEventListener('pointerdown',pointerDown);options.canvas.removeEventListener('pointerup',pointerUp);
     for(const source of catalogs.values())for(const mesh of source.meshes){mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();}

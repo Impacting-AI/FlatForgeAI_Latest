@@ -226,7 +226,8 @@ def connection_sides(source, bounds):
             if not anchor.IsDone() or not anchor.NbSolution():
                 continue
             point = anchor.PointOnShape2(1)
-            candidates.append({'faceId': row['id'], 'point': [point.X(),point.Y(),point.Z()], 'normal': row['normal'], 'area': row['area']})
+            candidates.append({'faceId': row['id'], 'point': [point.X(),point.Y(),point.Z()], 'normal': row['normal'], 'area': row['area'],
+                               'labelPoints': [list(edge.positionAt(.5).toTuple()) for edge in sorted(face.Edges(),key=lambda edge:edge.Length(),reverse=True)[:8]]})
         candidates.sort(key=lambda c: (-c['area'], c['faceId']))
         automatic = None
         if candidates:

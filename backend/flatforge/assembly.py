@@ -135,6 +135,8 @@ class Entry(SourceReference):
 
 class AssemblyInput(StrictModel):
     policy: Literal['constrained', 'free'] = 'constrained'
+    insertId: str | None = None
+    insertBranchId: str | None = None
     entries: list[Entry] = Field(min_length=1, max_length=100)
 
     @model_validator(mode='after')
@@ -204,11 +206,11 @@ def source_pick_meshes(key):
     return connections.pick_meshes(source_faces(key))
 
 
-def faces(project_id, body):
+def faces(project_id, body, meshes=True):
     with CAD_LOCK:
         source = load_sources(project_id, [body])[body.id]
         return {'entryId': body.id, 'revision': body.revision, 'sourceSha': source['sha256'],
-                'units': 'mm', 'faces': source_pick_meshes(source['key']),
+                'units': 'mm', 'faces': source_pick_meshes(source['key']) if meshes else [],
                 'sides': connections.connection_sides(source, bounds)}
 
 
@@ -216,6 +218,10 @@ def place(project_id, body):
     with CAD_LOCK:
         sources = load_sources(project_id, body.entries)
         try:
+            if body.insertId:
+                if body.policy != 'free': raise HTTPException(422, 'Insertion is available in the free assembly workspace.')
+                from .assembly_insertion import insert
+                return insert(body.entries,sources,body.insertId,body.insertBranchId,rotation_matrix,bounds)
             return connections.solve(body.entries, sources, rotation_matrix, bounds)
         except HTTPException:
             raise

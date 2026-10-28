@@ -270,3 +270,11 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .asm-side-buttons button[aria-pressed=true]{background:#146a7a;color:#fff;border-color:#146a7a}
 .assembly-workspace>.asm-workspace-notice{position:relative;inset:auto;margin:10px 12px;pointer-events:auto;overflow-wrap:anywhere}
 .asm-workspace-notice button{margin-left:10px}
+
+/* Anchored annotations never shift away from their geometric attachment. */
+.assembly-workspace .asm-side-label{min-width:0;max-width:none;font-size:9px;padding:2px 5px;background:#ffffffc9;border-color:#d4dce0;color:#526570;box-shadow:none}
+.assembly-workspace .asm-side-label[aria-pressed=true]{background:#e7f4fa;color:#12566c;border-color:#4e8da4}
+.asm-draggable-header{cursor:grab;touch-action:none;user-select:none}
+.asm-draggable-header:active{cursor:grabbing}
+.assembly-workspace .asm-popup-reset{margin-left:auto;padding:2px 5px;min-width:24px;font-size:14px}
+.assembly-workspace .asm-side-label[data-active-panel=true]{border-color:#4e8da4;color:#12566c}

@@ -1,13 +1,15 @@
 'use client';
 import type {AssemblyEntry,AssemblySide} from './types';
-import type {CadFaceCatalog} from './assembly-cad';
+import type {CadFaceCatalog,CadPlacement} from './assembly-cad';
 import {faceDraftError,previewFaceDraft,type FaceDraft,type FaceRole} from './face-connection-state';
 
-export default function AssemblyConnectionEditor({draft,entries,catalogs,valid,connecting,onSide,onReference,onGap,onApply,onCancel}:{
- draft:FaceDraft;entries:AssemblyEntry[];catalogs:Record<string,CadFaceCatalog>;valid:boolean;connecting:boolean;
+export default function AssemblyConnectionEditor({draft,entries,catalogs,valid,connecting,insertion,onBranch,onSide,onReference,onGap,onApply,onCancel}:{
+ insertion?:CadPlacement['insertion'];onBranch:(id:string)=>void;draft:FaceDraft;entries:AssemblyEntry[];catalogs:Record<string,CadFaceCatalog>;valid:boolean;connecting:boolean;
  onSide:(role:FaceRole,side:AssemblySide)=>void;onReference:(id:string)=>void;onGap:(value:string)=>void;onApply:()=>void;onCancel:()=>void;
 }){
  const name=(id:string)=>`Panel ${entries.find(e=>e.id===id)?.label??'?'}`;
+ const reference=entries.find(e=>e.id===draft.referenceEntryId),side=draft.sides?.reference;
+ const occupants=connecting&&side?entries.filter(e=>e.id!==draft.movingEntryId&&((e.targetId===draft.referenceEntryId&&e.sides?.reference===side)||(reference?.targetId===e.id&&reference.sides?.moving===side))):[];
  const error=faceDraftError(draft),complete=!!previewFaceDraft(draft);
  return <section className="asm-context asm-position-card" data-unsaved-assembly="true" aria-label="Connection controls">
   <header><strong>{name(draft.movingEntryId)} → {name(draft.referenceEntryId)}</strong><span>{connecting?'Add connection':'Reconnect'}</span></header>
@@ -19,6 +21,9 @@ export default function AssemblyConnectionEditor({draft,entries,catalogs,valid,c
     <small>{!catalog?'Loading connection regions…':!catalog.sides?'Update the CAD service to use side connections.':!side?'Choose a side.':draft[role]?`${side[0].toUpperCase()+side.slice(1)} side selected`:catalog.sides[side].message}</small>
    </div>;
   })}
+  {occupants.length>1&&<label className="asm-field">Insert before branch<select aria-label="Insert before branch" value={draft.insertBranchId??''} onChange={e=>onBranch(e.target.value)}><option value="">Choose occupied connection</option>{occupants.map(e=><option key={e.id} value={e.id}>{name(e.id)}</option>)}</select></label>}
+  {occupants.length>0&&<p>Occupied side: insertion moves the selected connected branch. Unrelated panels stay fixed; manual offsets and rotations are retained.</p>}
+  {insertion&&<p role="status">Preview: {name(insertion.referenceId)} → {name(insertion.panelId)} → {name(insertion.displacedId)}. {insertion.movedIds.length} existing panel(s) move.{insertion.rerooted?' Connection traversal starts from the fixed reference panel.':''}</p>}
   <div className="asm-inline-values"><label><span>Initial connection gap</span><span><input type="number" min={0} step="any" aria-label="Connection gap" value={draft.fields.gap} onChange={e=>onGap(e.target.value)}/><small>mm</small></span></label></div>
   <p>Sides follow each panel’s original plane and rotate with it. Connect aligns the chosen regions; you can then move either panel independently.</p>
   {draft.message&&<p role="status">{draft.message}</p>}{error&&<p role="alert">{error}</p>}
