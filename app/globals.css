@@ -280,3 +280,12 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .assembly-workspace .asm-side-label[data-active-panel=true]{border-color:#86c8ec;color:#fff}
 
 .assembly-workspace .asm-side-label:hover{background:#216f9b;color:#fff;border-color:#8bd5f5}
+
+.assembly-workspace .asm-side-label[data-connection-role=from]{outline:3px solid #e8a735;outline-offset:2px}
+.assembly-workspace .asm-side-label[data-connection-role=to]{outline:3px solid #36bfa6;outline-offset:2px}
+
+.assembly-workspace[data-connect-mode=true] .asm-side-label{cursor:crosshair}
+
+.assembly-workspace[data-connect-mode=true] .asm-side-label[data-connection-role='']{outline:1px solid #8fcce9;outline-offset:1px}
+
+.assembly-workspace .asm-selection-toolbar,.assembly-workspace .asm-context{top:var(--assembly-toolbar-bottom,68px)}

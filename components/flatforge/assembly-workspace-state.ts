@@ -1,4 +1,4 @@
-import type { AssemblyEntry, CadFaceReference } from './types';
+import type { AssemblyEntry, AssemblySide, CadFaceReference } from './types';
 import type { CadFace, CadFaceCatalog, CadPlacement } from './assembly-cad';
 import { beginFaceDraft, type FaceDraft } from './face-connection-state';
 
@@ -77,4 +77,10 @@ export function moveIndependently(entries:AssemblyEntry[],id:string,values:Posit
  const selected=entries.find(e=>e.id===id);if(!selected?.pose)throw new Error('Load the current placement before moving.');
  const before=positionValues(selected),ids=group?descendants(entries,id):new Set([id]);
  return entries.map(e=>{if(!ids.has(e.id))return e;const p=positionValues(e);return withPosition(e,{u:p.u+values.u-before.u,v:p.v+values.v-before.v,normal:p.normal+values.normal-before.normal});});
+}
+
+/** Both connection interfaces expose the same occupied incoming/outgoing edges. */
+export function connectionOccupants(entries:AssemblyEntry[],movingId:string,referenceId:string,side?:AssemblySide){
+ const reference=entries.find(e=>e.id===referenceId);
+ return side?entries.filter(e=>e.id!==movingId&&((e.targetId===referenceId&&e.sides?.reference===side)||(reference?.targetId===e.id&&reference.sides?.moving===side))):[];
 }

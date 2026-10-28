@@ -7,7 +7,7 @@ import { decodeAssemblies, encodeAssemblies } from '../components/flatforge/asse
 // its one runtime dependency to the original source for Node's type stripper.
 const source=fs.readFileSync(new URL('../components/flatforge/assembly-workspace-state.ts',import.meta.url),'utf8');
 const compiled=ts.transpile(source,{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}).replace("'./face-connection-state'",JSON.stringify(new URL('../components/flatforge/face-connection-state.ts',import.meta.url).href));
-const {alphabeticLabel,namedEntries,nextLabel,faceSide,faceReference,descendants,stagedPanel,positionValues,withPosition,recordAction,freezePlacements,moveIndependently}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
+const {connectionOccupants,alphabeticLabel,namedEntries,nextLabel,faceSide,faceReference,descendants,stagedPanel,positionValues,withPosition,recordAction,freezePlacements,moveIndependently}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
 const root={id:'a',panelId:'one',targetId:null,targetFace:null,myFace:'-X',gap:10};
 const ref={faceId:'face-3',sourceSha:'a'.repeat(64),point:[0,0,0]};
 const child={...root,id:'b',panelId:'two',targetId:'a',targetFace:'+X',connection:{type:'planar',reference:ref,moving:ref,offsetU:0,offsetV:0,normalOffset:0,twist:17}};
@@ -54,4 +54,12 @@ test('frozen placements keep individual, root and explicit branch movements dist
  assert.deepEqual(fixed,before);assert.deepEqual(freezePlacements(branch,placement),branch,'repeated edits never restore old mate positions');
  assert.throws(()=>moveIndependently(fixed,'b',{u:NaN,v:0,normal:0}),/finite/);
  assert.throws(()=>freezePlacements(rows,{...placement,sourceHashes:{}}),/not available/);
+});
+
+test('both connection modes detect incoming and outgoing occupancy without counting the moving panel',()=>{
+ const b={...child,sides:{reference:'right',moving:'left'}};
+ const c={...b,id:'c',targetId:'b',sides:{reference:'left',moving:'right'}};
+ const moving={...c,id:'d'};
+ assert.deepEqual(connectionOccupants([root,b,c,moving],'d','b','left').map(e=>e.id),['a','c']);
+ assert.deepEqual(connectionOccupants([root,b,c,moving],'d','b','right'),[]);
 });

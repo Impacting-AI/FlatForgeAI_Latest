@@ -184,6 +184,44 @@ def measure_connection(entry, sources, matrices, linear_eps):
             'offsetU': float(delta[0]), 'offsetV': float(delta[1]), 'satisfied': not issues}, issues
 
 
+def top_align(entry, rows, sources, rotation_matrix, bounds):
+    """Initial side mate only. Use the same source-local up as side naming.
+
+    Measure the original BREP in a frame whose Y is that transformed up.
+    Tangential translation preserves the selected face-normal gap and rotation.
+    Existing poses never pass through this operation.
+    """
+    parent = sources[entry.targetId]
+    planar = [row for _,row in parent['faces'] if row['supported']]
+    if not planar:
+        raise HTTPException(409, 'No reliable panel plane is available for top alignment.')
+    main = max(planar, key=lambda row: row['area'])
+    n = np.array(main['normal'])
+    if n[np.argmax(np.abs(n))] < 0: n = -n
+    right = np.array([1.,0.,0.])
+    if abs(right @ n) > .999: right = np.array([0.,1.,0.])
+    right -= n*(right @ n); right /= np.linalg.norm(right)
+    up = np.cross(n,right)
+    preview = solve(list(rows.values()), sources, rotation_matrix, bounds)
+    matrices = {row['id']:matrix(row['matrix']) for row in preview['entries']}
+    a,b = matrices[entry.targetId],matrices[entry.id]
+    _,details = connection_frame(entry,sources,a)
+    basis = details[3]
+    up = a[:3,:3] @ up
+    # An angled side may have a vertical normal component. Align in its tangent
+    # plane; never change the normal clearance to force a world-coordinate top.
+    up -= basis[:,2]*(up @ basis[:,2])
+    if np.linalg.norm(up) < 1e-8:
+        raise HTTPException(409, 'This connection has no independent tangential top direction.')
+    up /= np.linalg.norm(up)
+    frame=np.eye(4);frame[:3,:3]=np.column_stack((np.cross(up,basis[:,2]),up,basis[:,2])).T
+    top_a=bounds(parent['shape'].moved(location(frame @ a)))['max'][1]
+    top_b=bounds(sources[entry.id]['shape'].moved(location(frame @ b)))['max'][1]
+    delta=basis.T @ (up*(top_a-top_b))
+    entry.connection.offsetU += float(delta[0])
+    entry.connection.offsetV += float(delta[1])
+
+
 def connection_sides(source, bounds):
     """Classify *source-local* outer planar regions, not screen/world AABBs.
 

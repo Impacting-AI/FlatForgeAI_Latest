@@ -1,5 +1,5 @@
 'use client';
-import {descendants} from './assembly-workspace-state';
+import {connectionOccupants,descendants} from './assembly-workspace-state';
 import type {AssemblyEntry,AssemblySide} from './types';
 import type {CadFaceCatalog,CadPlacement} from './assembly-cad';
 import {faceDraftError,previewFaceDraft,type FaceDraft,type FaceRole} from './face-connection-state';
@@ -9,9 +9,9 @@ export default function AssemblyConnectionEditor({draft,entries,catalogs,valid,c
  onSide:(role:FaceRole,side:AssemblySide)=>void;onReference:(id:string)=>void;onGap:(value:string)=>void;onApply:()=>void;onCancel:()=>void;
 }){
  const name=(id:string)=>`Panel ${entries.find(e=>e.id===id)?.label??'?'}`;
- const reference=entries.find(e=>e.id===draft.referenceEntryId),side=draft.sides?.reference;
+ const side=draft.sides?.reference;
  const excluded=descendants(entries,draft.movingEntryId);
- const occupants=side?entries.filter(e=>e.id!==draft.movingEntryId&&((e.targetId===draft.referenceEntryId&&e.sides?.reference===side)||(reference?.targetId===e.id&&reference.sides?.moving===side))):[];
+ const occupants=connectionOccupants(entries,draft.movingEntryId,draft.referenceEntryId,side);
  const error=faceDraftError(draft),complete=!!previewFaceDraft(draft);
  return <section className="asm-context asm-position-card" data-unsaved-assembly="true" aria-label="Connection controls">
   <header><strong>{name(draft.movingEntryId)} → {name(draft.referenceEntryId)}</strong><span>{connecting?'Add connection':'Reconnect'}</span></header>

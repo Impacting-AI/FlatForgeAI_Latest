@@ -8,7 +8,7 @@ from . import assembly_connections as cad
 OPPOSITE = {'left':'right','right':'left','top':'bottom','bottom':'top'}
 
 
-def insert(entries, sources, moving_id, branch_id, rotation_matrix, bounds):
+def insert(entries, sources, moving_id, branch_id, rotation_matrix, bounds, align_top=False):
     from .assembly import Entry, PanelPose, AssemblyInput
     rows = {e.id:e.model_copy(deep=True) for e in entries}
     new = rows.get(moving_id)
@@ -16,6 +16,9 @@ def insert(entries, sources, moving_id, branch_id, rotation_matrix, bounds):
         raise HTTPException(422, 'Insertion needs an unfrozen side connection preview.')
     fixed_id = new.targetId
     fixed = rows[fixed_id]
+    if align_top and new.sides.reference in ('left','right') and new.sides.moving in ('left','right'):
+        cad.top_align(new, rows, sources, rotation_matrix, bounds)
+        entries = [rows[e.id] for e in entries]
     incident = [e for e in entries if e.id != moving_id and (e.targetId == fixed_id or e.id == fixed_id and e.targetId)]
     if any(not e.connection or not e.sides for e in incident):
         raise HTTPException(409, 'An existing envelope connection has no reliable named side. Reconnect it using named sides before automatic insertion; manual movement remains available.')

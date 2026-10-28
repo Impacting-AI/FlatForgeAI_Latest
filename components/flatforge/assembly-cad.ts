@@ -50,7 +50,7 @@ export async function downloadAssemblyStep(projectId: string, token: string) {
 }
 
 export async function placeAssembly(projectId:string,entries:CadEntry[],signal:AbortSignal,insertId?:string,insertBranchId?:string):Promise<CadPlacement>{
-  return (await request(projectId,'place',{entries,policy:'free',insertId,insertBranchId},signal)).json();
+  return (await request(projectId,'place',{entries,policy:'free',insertId,insertBranchId,alignTop:!!insertId},signal)).json();
 }
 export async function assemblyFaces(projectId:string,entry:CadEntry,signal:AbortSignal,meshes=true):Promise<CadFaceCatalog>{
   return (await request(projectId,meshes?'faces':'sides',{id:entry.id,panelId:entry.panelId,revision:entry.revision},signal)).json();

@@ -135,6 +135,7 @@ class Entry(SourceReference):
 
 class AssemblyInput(StrictModel):
     policy: Literal['constrained', 'free'] = 'constrained'
+    alignTop: bool = False
     insertId: str | None = None
     insertBranchId: str | None = None
     entries: list[Entry] = Field(min_length=1, max_length=100)
@@ -235,7 +236,7 @@ def place(project_id, body):
             if body.insertId:
                 if body.policy != 'free': raise HTTPException(422, 'Insertion is available in the free assembly workspace.')
                 from .assembly_insertion import insert
-                return insert(body.entries,sources,body.insertId,body.insertBranchId,rotation_matrix,bounds)
+                return insert(body.entries,sources,body.insertId,body.insertBranchId,rotation_matrix,bounds,body.alignTop)
             return connections.solve(body.entries, sources, rotation_matrix, bounds)
         except HTTPException:
             raise

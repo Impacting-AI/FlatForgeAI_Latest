@@ -18,7 +18,7 @@ export function surfaceLabelAnchors(group:THREE.Group){
 }
 
 export function createAssemblyLabels(options:{host:HTMLElement;camera:THREE.Camera;groups:Map<string,{group:THREE.Group;localBounds:THREE.Box3}>;
- entries:()=>AssemblyEntry[];active:()=>string|null;onSelect:(id:string)=>void;onSide:(id:string,side:AssemblySide)=>void;onSideHover:(id:string|null,side:AssemblySide|null)=>void}){
+ selecting?:()=>boolean;targets?:()=>{id:string;side:AssemblySide;role:'from'|'to'}[];entries:()=>AssemblyEntry[];active:()=>string|null;onSelect:(id:string)=>void;onSide:(id:string,side:AssemblySide)=>void;onSideHover:(id:string|null,side:AssemblySide|null)=>void}){
  const layer=document.createElement('div');layer.className='asm-model-labels';options.host.appendChild(layer);
  let selectedSide:{id:string;side:AssemblySide}|null=null;
  const restoreHighlight=()=>options.onSideHover(selectedSide?.id??null,selectedSide?.side??null);
@@ -40,7 +40,8 @@ export function createAssemblyLabels(options:{host:HTMLElement;camera:THREE.Came
   for(const item of options.groups.values())item.group.updateMatrixWorld(true);
   const width=options.host.clientWidth,height=options.host.clientHeight,active=options.active(),entries=options.entries();
   if(selectedSide&&selectedSide.id!==active){selectedSide=null;restoreHighlight();}
-  const signature=[width,height,active,selectedSide?.id,selectedSide?.side,catalogVersion,...options.camera.matrixWorld.elements,...options.camera.projectionMatrix.elements,...[...options.groups.values()].flatMap(i=>[i.group.visible,...i.group.matrixWorld.elements])].join(',');
+  const targets=options.targets?.()??[];
+  const signature=[options.selecting?.(),JSON.stringify(targets),width,height,active,selectedSide?.id,selectedSide?.side,catalogVersion,...options.camera.matrixWorld.elements,...options.camera.projectionMatrix.elements,...[...options.groups.values()].flatMap(i=>[i.group.visible,...i.group.matrixWorld.elements])].join(',');
   if(signature===lastSignature)return;lastSignature=signature;
   options.camera.getWorldPosition(cameraPoint);
   const objects=[...options.groups.values()].filter(i=>i.group.visible).map(i=>i.group);
@@ -53,6 +54,7 @@ export function createAssemblyLabels(options:{host:HTMLElement;camera:THREE.Came
    const fullSide=side?side[0].toUpperCase()+side.slice(1):'';
    const text=side?side[0].toUpperCase():label;
    if(node.textContent!==text)node.textContent=text;node.setAttribute('aria-label',side?`${label} ${fullSide} side`:`Select ${label}`);node.dataset.activePanel=String(id===active);node.setAttribute('aria-pressed',String(side?selectedSide?.id===id&&selectedSide.side===side:id===active));
+   node.dataset.connectionRole=targets.find(t=>t.id===id&&t.side===side)?.role??'';
    node.title=side&&region&&!region.automatic?`${fullSide}: choose one of ${region.candidates.length} connection regions`:label+(side?' · '+fullSide:'');
    let points=side?(region?.candidates??[]).flatMap(c=>(c.labelPoints?.length?c.labelPoints:[c.point]).map(point=>new THREE.Vector3(...point).multiplyScalar(.001))):anchors.get(id)??[];
    const labelKey=id+':'+(side??'panel'),previous=chosenPoints.get(labelKey);
@@ -67,7 +69,7 @@ export function createAssemblyLabels(options:{host:HTMLElement;camera:THREE.Came
     if(x-w/2<3||x+w/2>width-3||y-h/2<3||y+h/2>height-3||occupied.some(o=>Math.abs(o.x-x)<(o.w+w)/2+3&&Math.abs(o.y-y)<(o.h+h)/2+3))continue;
     ray.setFromCamera(new THREE.Vector2(projected.x,projected.y),options.camera);
     ray.far=ray.ray.origin.distanceTo(world)+.00008;
-    const hit=ray.intersectObjects(objects,true)[0];if(!hit||hit.point.distanceTo(world)>.00008)continue;
+    const hit=ray.intersectObjects(objects,true)[0];if((!hit||hit.point.distanceTo(world)>.00008)&&!(side&&options.selecting?.()))continue;
     node.style.transform=`translate(${x}px,${y}px) translate(-50%,-50%)`;node.dataset.anchor=point.toArray().join(',');node.hidden=false;node.style.visibility='';chosenPoints.set(labelKey,point);occupied.push({x,y,w,h});found=true;break;
    }
    if(!found)node.hidden=true;
