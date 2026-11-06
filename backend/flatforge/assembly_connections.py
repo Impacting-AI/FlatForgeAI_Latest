@@ -158,7 +158,17 @@ def solve(entries, sources, rotation_matrix, bounds):
             frames[entry.id] = {'kind': 'root', 'origin': ((np.array(boxes[entry.id]['min']) + np.array(boxes[entry.id]['max']))/2).tolist(),
                                 'u': [1,0,0], 'v': [0,0,1], 'n': [0,-1,0]}
         result.append({**entry.model_dump(), 'matrix': values(transform)})
-    return {'units': 'mm', 'entries': result, 'bounds': boxes, 'frames': frames,
+    mates = []
+    for entry in entries:
+        if entry.mateState == 'active':
+            row, _ = measure_connection(entry, sources, matrices, 1e-5)
+            # Finite faces need not overlap in projection for a plane mate.
+            row['state'] = 'active'
+            row['satisfied'] = row['planeSatisfied']
+            mates.append(row)
+        elif entry.mateState == 'suspended':
+            mates.append({'entryId': entry.id, 'targetId': entry.targetId, 'state': 'suspended', 'satisfied': False})
+    return {'units': 'mm', 'mates': mates, 'entries': result, 'bounds': boxes, 'frames': frames,
             'sourceHashes': {entry.id: sources[entry.id]['sha256'] for entry in entries}}
 
 
@@ -181,7 +191,7 @@ def measure_connection(entry, sources, matrices, linear_eps):
         issues.append(f'{entry.id}: selected faces no longer overlap in projection. Plane gap is {requested:.6g} mm but actual face clearance is {distance:.6g} mm. Reduce offsets or select different faces.')
     return {'entryId': entry.id, 'targetId': entry.targetId, 'axis': 'face-normal', 'side': 1,
             'requested': requested, 'actual': float(delta[2]), 'surfaceDistance': distance,
-            'offsetU': float(delta[0]), 'offsetV': float(delta[1]), 'satisfied': not issues}, issues
+            'offsetU': float(delta[0]), 'offsetV': float(delta[1]), 'planeSatisfied': bool(rotation_ok and offset_ok), 'projectionOverlap': bool(surface_ok), 'satisfied': not issues}, issues
 
 
 def top_align(entry, rows, sources, rotation_matrix, bounds):

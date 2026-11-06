@@ -21,7 +21,7 @@ def insert(entries, sources, moving_id, branch_id, rotation_matrix, bounds, alig
         entries = [rows[e.id] for e in entries]
     incident = [e for e in entries if e.id != moving_id and (e.targetId == fixed_id or e.id == fixed_id and e.targetId)]
     if any(not e.connection or not e.sides for e in incident):
-        raise HTTPException(409, 'An existing envelope connection has no reliable named side. Reconnect it using named sides before automatic insertion; manual movement remains available.')
+        raise HTTPException(409, 'An existing connection has no reliable named side. Use Edit mate for face relationships or reconnect using named sides before automatic insertion; Free Move remains available.')
     occupied = []
     for e in entries:
         if e.id == moving_id:
@@ -78,14 +78,17 @@ def insert(entries, sources, moving_id, branch_id, rotation_matrix, bounds, alig
         affected.add(id);todo.extend(adjacency[id])
     if fixed_id in affected or moving_id in affected:
         raise HTTPException(409,'Insertion would create a conflicting connection cycle.')
+    if incoming and any(rows[id].mateState == 'active' for id in affected):
+        raise HTTPException(409, 'Re-rooting this side insertion would reverse active mates. Suspend those mates with Free Move or edit their references explicitly first.')
     for id,row in rows.items():
-        if not row.pose:
+        if not row.pose and row.mateState != 'active':
             frame=initial['frames'][id]
             row.pose=PanelPose(matrix=cad.values(matrices[id]),sourceSha=sources[id]['sha256'],pivot=frame['origin'],axis=frame['n'])
         if id in affected:
-            base=cad.matrix(row.pose.matrix);base[:3,3]+=delta
-            row.pose.matrix=cad.values(base)
-            row.pose.pivot=tuple(np.array(row.pose.pivot)+delta)
+            if row.pose:
+                base=cad.matrix(row.pose.matrix);base[:3,3]+=delta
+                row.pose.matrix=cad.values(base)
+                row.pose.pivot=tuple(np.array(row.pose.pivot)+delta)
             matrices[id][:3,3]+=delta
         row.matrix=cad.values(matrices[id])
     new_edge=new.model_copy(deep=True)

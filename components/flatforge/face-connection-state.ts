@@ -1,8 +1,9 @@
 import type { AssemblyEntry, CadFaceReference, Face, AssemblySide } from './types';
 
 export type FaceRole = 'reference' | 'moving';
-export type FaceSelection = { referenceEntryId:string; movingEntryId:string; reference?:CadFaceReference; moving?:CadFaceReference; pick:FaceRole|null;allowed?:Partial<Record<FaceRole,string[]>>;sideNames?:Partial<Record<FaceRole,AssemblySide>> };
+export type FaceSelection = { anyPanel?:boolean; referenceEntryId:string; movingEntryId:string; reference?:CadFaceReference; moving?:CadFaceReference; pick:FaceRole|null;allowed?:Partial<Record<FaceRole,string[]>>;sideNames?:Partial<Record<FaceRole,AssemblySide>> };
 export type FaceDraft = FaceSelection & {
+  mate?:boolean;
   insertBranchId?:string;
   original:AssemblyEntry;
   sides?:Partial<Record<FaceRole,AssemblySide>>;
@@ -27,7 +28,8 @@ export function faceDraftError(draft:FaceDraft) {
 
 export function previewFaceDraft(draft:FaceDraft):AssemblyEntry|undefined {
   if(faceDraftError(draft)||!draft.reference||!draft.moving)return;
-  const original={...draft.original};delete original.pose;delete original.matrix;
+  const original={...draft.original};delete original.pose;delete original.matrix;delete original.rootOffset;
+  if(draft.mate){delete original.sides;original.mateState='active';}else delete original.mateState;
   if(draft.sides?.reference&&draft.sides?.moving)original.sides={reference:draft.sides.reference,moving:draft.sides.moving};
   return {...original,targetId:draft.referenceEntryId,gap:Number(draft.fields.gap),connection:{type:'planar',
     reference:draft.reference,moving:draft.moving,offsetU:Number(draft.fields.u),offsetV:Number(draft.fields.v),

@@ -8,7 +8,7 @@ import type { FaceRole, FaceSelection } from './face-connection-state';
 export function createAssemblyFacePicker(options:{
   projectId:string;scene:THREE.Scene;camera:THREE.Camera;canvas:HTMLCanvasElement;
   entries:()=>CadEntry[];groups:Map<string,{group:THREE.Group}>;
-  onPick:(role:FaceRole,reference:CadFaceReference)=>void;onMessage:(message:string)=>void;
+  onPick:(role:FaceRole,reference:CadFaceReference,entryId:string)=>void;onMessage:(message:string)=>void;
   onSelect:(id:string|null)=>void;onPanelHover:(id:string|null)=>void;
   onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;
 }) {
@@ -38,14 +38,15 @@ export function createAssemblyFacePicker(options:{
     if(options.blocked()||event.buttons){clearHover();return;}
     setRay(event);const id=panelHit();options.onPanelHover(id??null);
     const role=selection?.pick,target=role==='reference'?selection?.referenceEntryId:selection?.movingEntryId;
-    if(!role||id!==target){clearHover();return;}
+    if(!role||!id||!selection?.anyPanel&&id!==target){clearHover();return;}
+    if(!catalogs.get(id)?.data.faces.length){void load(id).catch(error=>options.onMessage((error as Error).message));clearHover();return;}
     const allowed=selection?.allowed?.[role];
     const hit=faceHits(id!)[0],source=catalogs.get(id!);if(!hit||!source||allowed&&!allowed.includes(hit.object.userData.faceId)){clearHover();return;}
     const face=source.data.faces.find(f=>f.id===hit.object.userData.faceId)!;
     const key=id+':'+face.id;
     if(key!==hoverKey){clearHover();hoverKey=key;hover=new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0x70bde0:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
     const side=selection?.sideNames?.[role];
-    tooltip.hidden=false;tooltip.textContent=(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
+    tooltip.hidden=false;tooltip.textContent=selection?.anyPanel?`${face.id} · ${face.type} · ${face.supported?'Click to select':'Planar mates only'}`:(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
     const rect=options.canvas.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(rect.width-220,event.clientX-rect.left+14))+'px';tooltip.style.top=Math.max(55,event.clientY-rect.top-35)+'px';
   };
   function clearVisuals(){
@@ -111,7 +112,7 @@ export function createAssemblyFacePicker(options:{
   async function update(next:FaceSelection|null){
     selection=next;clearHover();const version=++sequence;renderSelection();if(!next)return;
     try{
-      await Promise.all([load(next.referenceEntryId),load(next.movingEntryId)]);
+      await Promise.all([next.referenceEntryId,next.movingEntryId].filter(Boolean).map(id=>load(id)));
       if(!alive||version!==sequence)return;
       renderSelection();
     }catch(error){if(alive&&version===sequence&&!abort.signal.aborted)options.onMessage((error as Error).message);}
@@ -122,9 +123,10 @@ export function createAssemblyFacePicker(options:{
     if(options.blocked()||!start||Math.hypot(event.clientX-start.x,event.clientY-start.y)>5)return;
     setRay(event);
     if(!selection?.pick){options.onSelect(panelHit()??null);return;}
-    const role=selection.pick,id=role==='reference'?selection.referenceEntryId:selection.movingEntryId;
+    const role=selection.pick,id=selection.anyPanel?panelHit():(role==='reference'?selection.referenceEntryId:selection.movingEntryId);
+    if(!id)return;
     const source=catalogs.get(id),group=options.groups.get(id)?.group;
-    if(!source||!group){options.onMessage('Loading CAD faces. Try the face again in a moment.');return;}
+    if(!source?.data.faces.length||!group){void load(id).catch(error=>options.onMessage((error as Error).message));options.onMessage('Loading CAD faces. Try the face again in a moment.');return;}
     if(panelHit()!==id){options.onMessage('Click the requested panel, or orbit to expose its connection surface.');return;}
     const allowed=selection.allowed?.[role];
     const hits=faceHits(id),hit=hits[0];
@@ -135,7 +137,7 @@ export function createAssemblyFacePicker(options:{
     const face=source.data.faces.find(face=>face.id===hit.object.userData.faceId)!;
     if(!face.supported){options.onMessage(`${face.type} surface: a constant-gap connection needs a planar face. Pick a planar flange or surface.`);return;}
     const point=hit.point.clone().applyMatrix4(group.matrixWorld.clone().invert()).multiplyScalar(1000);
-    options.onPick(role,{faceId:face.id,sourceSha:source.data.sourceSha,point:point.toArray()});
+    options.onPick(role,{faceId:face.id,sourceSha:source.data.sourceSha,point:point.toArray()},id);
   };
   options.canvas.addEventListener('pointermove',pointerMove);options.canvas.addEventListener('pointerleave',clearHover);options.canvas.addEventListener('pointerdown',pointerDown);options.canvas.addEventListener('pointerup',pointerUp);
   return {update,async loadAll(){for(const entry of options.entries()){if(!alive)return;try{await load(entry.id,false);}catch(error){if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);}}},highlightSide(id:string|null,side:AssemblySide|null){sideHover=id&&side?{id,side}:null;renderSelection();if(id)void load(id).then(()=>{if(alive)renderSelection();}).catch(()=>{});},refresh:renderSelection,dispose(){

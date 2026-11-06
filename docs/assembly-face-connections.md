@@ -1,167 +1,107 @@
-# STEP 6: selected CAD faces, gaps and local alignment
+# STEP 6: persistent planar CAD mates
 
-For the current STEP 6 controls and interaction, see [Interactive assembly workspace](assembly-workspace.md). The implementation history and geometric rules below remain useful context.
+## Workflow
 
-## What changed
+Add panels separately (the default), then **Connect / Mate → click reference
+face → click moving face → preview → Apply Mate**. The Add picker can still
+open the original side-connection workflow, and **Connect sides** retains
+interactive L/R/T/B connections and occupied-side insertion.
 
-The former “faces” were six global bounding-envelope sides. Those controls
-could enforce directional support-plane clearances, but could not identify an
-actual flange, align its normal, or separate a face gap from sliding alignment.
-They remain available for existing layouts; saved configurations are not
-automatically converted.
+Face picking highlights complete original BREP faces, with blue for the reference
+and orange for the moving face. The picking proxies are tessellated per CAD
+face; triangles are not treated as separate faces. Narrow flanges can be exposed
+using the existing orbit/zoom controls. Boundary ambiguity and nonplanar faces
+produce explicit messages. Clicking the reference/moving button reselects that
+endpoint without discarding the numeric fields. Cancel discards the preview.
 
-Each non-root entry now has **Connect actual CAD faces**. Choose an earlier
-reference entry A, click a planar face on A at the desired connection point,
-then click a planar face on moving entry B. Selected faces are blue/orange.
-Local U/V/N arrows originate at A's picked anchor. Picking through another panel,
-ambiguous boundary clicks and curved-face connections are rejected explicitly.
-Orbit, pan, zoom and fit remain available; dragging is not a face click.
+The contextual editor exposes gap, local U/V offsets, additional normal
+separation, and in-plane rotation. It remains draggable through the existing
+popup behavior. Save/export are disabled until previews are applied or canceled.
 
-The editor provides a nonnegative gap, signed U/V offsets, signed normal
-adjustment and in-plane rotation. It previews the entire dependent branch.
-**Apply position** saves only after the latest exact CAD check passes.
-**Cancel** restores the saved layout. **Reset alignment** clears offsets and
-twist while retaining gap. **Reselect both faces** explicitly restores a temporary
-envelope preview for picking, including recovery from stale face identities.
-Incomplete or invalid numbers retain the last valid preview and block Apply.
-Exports are disabled while a draft is open. The existing navigation guard also
-protects unsaved assembly drafts.
+## Geometry and degrees of freedom
 
-## Geometry and shared transformations
+Face IDs are pinned to the immutable source STEP SHA-256. Rebuilt sources require
+reselection; no nearest-face guessing is performed. Anchors are source-local
+picked points validated against the original trimmed BREP, including holes,
+within 0.001 mm picking tolerance.
 
-`POST /projects/{id}/assembly/faces` returns original BREP face identifiers,
-surface type, oriented normal, local frame, and picking tessellations in mm.
-Face IDs are paired with a SHA-256 digest of the immutable source STEP. Anchors
-are source-local coordinates. Rebuilt sources require explicit reselection;
-there is no nearest-face guessing or topology-index reassignment.
+For each planar face, V is source +Z projected into the plane, falling back to
+source +Y when necessary; U = V × N. The reference panel's rigid transformation
+carries this frame into the assembly. These directions are not screen axes.
 
-Planar faces use V as the projection of the source panel's +Z onto the plane.
-When parallel to Z, +Y supplies the up reference. U = V × N. The entire frame
-rotates with A's assembly transformation. These are face-local directions,
-not screen coordinates or blindly applied world X/Y/Z offsets.
+The defined zero-offset default aligns picked points, opposes normals, and aligns
+V axes. Twist rotates the moving frame about the reference normal. This is an
+explicit fully parameterized planar relationship, not a general mechanical
+constraint solver. Users control the otherwise ambiguous in-plane position and
+rotation through U, V and twist.
 
-The solver validates anchors on the original trimmed faces, including holes,
-within 0.001 mm picking tolerance. It removes only verified picking roundoff
-normal to the plane. B's selected normal is aligned opposite A's normal, its V
-axis is aligned to A's V at zero twist, and optional twist rotates B about N.
-All rotations are proper rigid rotations; scale, reflection and deformation
-are forbidden.
+For reference world anchor `a`, moving source anchor `b`, reference world frame
+`(U,V,N)` and solved proper rotation `R`:
 
-For A's world anchor `a`, B's source anchor `b`, reference basis `(U,V,N)` and
-solved B rotation `R`, the translation is:
+`t = a + U*offsetU + V*offsetV + N*(gap + normalOffset) - R*b`
 
-```text
-t = a + U * offsetU + V * offsetV + N * (gap + normalOffset) - R * b
-```
+U/V changes preserve normal separation. Normal adjustment explicitly changes the
+total gap, which must remain nonnegative for an active mate. The preview reports
+both measured plane separation and exact finite-face distance. If finite faces
+no longer overlap in projection, it explains why those distances differ; this
+does not invalidate a plane mate. No claim is made about the global shortest
+clearance between entire panel solids. STEP 6 continues to allow intentional
+solid overlaps without clash coloring or collision restrictions.
 
-U/V movement therefore preserves the normal gap. Normal adjustment explicitly
-changes effective separation, which must remain nonnegative. Validation checks
-the requested frame rotation, all three anchor displacements, and the exact
-distance between the transformed **trimmed BREP faces**. If offsets remove
-their projected overlap, the actual surface distance exceeds the plane gap:
-the application reports both distances and blocks Apply/export. It does not
-claim an exact shortest clearance between every surface of the two solids.
+## Active mates versus Free Move
 
-`POST /projects/{id}/assembly/place` is authoritative for all live placements,
-including compatible envelope layouts. Entries are evaluated in dependency
-order. Each child uses its reference's final matrix; moving an upstream entry
-updates descendants without moving unrelated branches. Duplicate identities,
-cycles, missing parents and forward references are rejected. Each moving panel
-has one parent; closed constraint loops and multi-parent mates are unsupported.
+`AssemblyEntry.mateState` is optional and backward compatible:
 
-The viewer applies returned matrices to existing GLBs, converting **only** mm
-translations to metres. Validation signs the exact matrices and source hashes.
-STEP export uses those signed matrices with the existing original CAD solids;
-it does not tessellate or fuse parts. Selection helpers are outside panel groups
-and are excluded from both STEP and GLB exports.
+- Absent: existing independent side/envelope positioning, unchanged.
+- `active`: derive the pose from the selected faces and parent transformation.
+  An independent `pose` is forbidden, preventing silent constraint overrides.
+- `suspended`: preserve the mate parameters as provenance and use an explicit
+  independent rigid pose. The interface never reports this as satisfied.
 
-All panel pairs retain the existing exact common-volume collision checks.
-Contact without positive solid volume is allowed. Collisions or conflicting
-clearances block approval without automatically rearranging unrelated panels.
+Edit mate updates active dependent panels in graph order. Unrelated frozen panels
+stay fixed. Free Move first snapshots current placements, then suspends only
+active edges crossing between moved and stationary panels. Thus moving B alone
+in A → B → C freezes C and suspends A–B and B–C; descendants of C can retain
+active internal relationships. Move branch is separate and preserves active
+relationships inside the translated group. Edit mate / Apply Mate explicitly
+resumes a suspended relationship.
+
+Side insertion can translate a downstream active mate chain without freezing its
+relationships. A side insertion that would reverse active mates or lacks named
+connection-side references reports a conflict instead of silently rewriting them.
+
+## Persistence and export
+
+The existing `/assembly/place` engine is authoritative. It returns final rigid
+matrices, source hashes, local frames, and active/suspended mate measurements.
+`/assembly/validate` verifies the same matrices and signs them. The viewer applies
+those matrices, converting translations from millimeters to meters exactly once.
+
+Existing project Save Assembly stores mate state, face references, offsets,
+twist, source revision and final transforms with revision compare-and-swap.
+Saving does not recalculate placement. STEP export transforms the original CAD
+solids with the same signed matrices; it neither remeshes nor fuses parts.
+Face highlights, labels and controller arrows are excluded from exported geometry.
 
 ## Scope and limitations
 
-- Supports planar trimmed connection faces, including irregular outlines and
-  holes, unequal panel sizes, arbitrary source/reference orientations, in-plane
-  twist, repeated panel instances and dependent connection trees.
-- Curved/nonplanar connection surfaces require a planar reference face. A pair
-  that must remain nonparallel cannot express a constant face gap with this
-  mate. B is explicitly rotated into opposing planar alignment.
-- Excessive tangential offsets that remove projected face overlap are rejected.
-  A valid face gap can still conflict with other folded surfaces; exact solid
-  validation remains mandatory.
-- Existing browser-local, per-project assembly persistence is retained with
-  optional face-connection data. No new database schema or cross-device sync is
-  introduced. Source panel data, historical reviews and individual CAD solids
-  are untouched.
-- Actual face selection/validation requires the Python CAD service. Offline
-  samples retain envelope placement only. Deploy frontend and backend together.
-- Picking meshes assist interaction; engineering checks use BREP geometry.
-  Browser verification used Chromium, including a narrow mobile viewport.
-  FreeCAD GUI testing and universal CAD/surface support are not claimed.
+Supported: opposing planar mates on unequal, irregular, folded or rotated panels;
+local offsets/twist; active multi-panel trees; explicit suspension/resumption;
+side-connection fallback; original-solid STEP export.
 
-## Changed files
-
-| Area | Files |
-| --- | --- |
-| Face references, frames and placement | `backend/flatforge/assembly_connections.py` |
-| CAD APIs, validation and shared export | `backend/flatforge/assembly.py`, `api.py` |
-| Viewer, picking and connection editor | `components/flatforge/AssemblyViewer.tsx`, `assembly-face-picker.ts`, `AssemblyConnectionEditor.tsx` |
-| Drafts, requests, persistence and integration | `face-connection-state.ts`, `assembly-cad.ts`, `assembly-storage.ts`, `types.ts`, `FlatForge.tsx` |
-| STEP 6 styling and compatibility documentation | `app/globals.css`, `assembly-geometry.ts` comment, `docs/assembly-spacing.md` |
-| Regression tests | `backend/tests/test_face_connections.py`, `tests/face-connection.test.mjs`, `tests/face-connection.browser.mjs` |
-
-No STEP 2–5 geometry generation, engineering calculations or individual export
-implementation was changed.
+The first panel remains the fixed mate reference (Free Move can reposition it).
+Each moving panel has one parent relationship; applying a replacement mate is
+explicit in the editor. Cycles, missing references, duplicate identities and
+independent poses conflicting with active mates are rejected. Closed loops,
+multiple simultaneous constraints per component, curved/tangent/concentric mates,
+and automatic topology repair after source rebuilding are not implemented.
 
 ## Verification
 
-Executed on 2026-10-27:
-
-- 46 Node tests passed, covering draft validation, storage, stale-reference
-  recovery, existing envelope placements, review, viewer and route helpers.
-- 24 Python tests passed across face connections, legacy assembly CAD,
-  project isolation, upload/review/rebuild/persistence and individual export.
-- CAD tests measured a 20 mm gap with a +50 mm local V shift; also tested signed
-  U/V offsets, positive/negative normal adjustments, contact, twist, angled
-  source faces, irregular outlines/cutouts, unequal dimensions, rotated roots,
-  descendant updates, fixed unrelated branches, stale references, invalid
-  anchors/holes, curved-face rejection, collisions, invalid matrices and cycles.
-- The legacy real-API/WebGL assembly suite passed, including six measured gaps,
-  combined directions, rotations, legacy storage, collisions, source recovery,
-  delayed validation, interactions and five downloaded STEP roundtrips.
-- The new real-API/WebGL face suite exercised actual geometric face clicks,
-  highlights, Apply/Cancel, independent offsets, invalid input, lost-overlap
-  rejection, draft export blocking, navigation protection, persistence, mobile
-  layout and stale-face reselection. Downloaded face-connected STEP/GLB files
-  were compared against shared matrices. STEP was opened with CadQuery/OpenCascade
-  to verify valid solids, counts, placed bounds, volumes and analytic face types.
-- TypeScript checking and the production build passed. Focused assembly-module
-  ESLint passed. `FlatForge.tsx` retains its three pre-existing set-state-in-effect
-  errors and five image warnings, confirmed against the parent commit; no clean
-  whole-project lint result is claimed. Build output retains Vinext's bundle-size
-  warning and route-classification notice.
-- The existing drawing-navigation browser suite passed: project/drawing CRUD,
-  drawing isolation, Steps 1–5, refresh/direct URLs/back/forward, unsaved guards,
-  stale review/log handling, and project-wide multi-panel views.
-
-Commands:
-
-```sh
-node --experimental-strip-types --test tests/*.test.mjs
-npx tsc --noEmit
-PYTHONPATH=backend OPENBLAS_NUM_THREADS=1 python -m pytest -q \
-  backend/tests/test_face_connections.py backend/tests/test_assembly_cad.py \
-  backend/tests/test_project_context.py \
-  backend/tests/test_workflow.py::test_upload_review_worker_exports_and_persistence \
-  backend/tests/test_bend_editor_workflow.py
-node tests/assembly.browser.mjs
-node tests/face-connection.browser.mjs
-npm run build
-```
-
-Browser suites require Playwright and Chromium (external installations can use
-`PLAYWRIGHT_MODULE` and `FLATFORGE_CHROMIUM`) and run sequentially. They start a
-disposable real Python API from bundled sample artifacts; CAD responses are not
-mocked. Generated STEP files are re-imported with the same CAD kernel used by
-the application, not reconstructed from meshes.
+`backend/tests/test_active_mates.py` covers active chains, unequal/folded/rotated
+geometry, local offsets, multiple gaps, source/cycle/pose conflicts, suspension,
+save/reload, STEP re-import and downstream mates during side insertion.
+`tests/active-mates.browser.mjs` exercises real WebGL face picking and the Python
+CAD API, editing, validation, chain updates, Free Move, saving and STEP/GLB parity.
+The existing side, insertion, movement and engineering suites remain regression
+coverage. Run results are reported separately; listing a test is not a claim it ran.

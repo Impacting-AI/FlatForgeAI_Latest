@@ -72,7 +72,7 @@ try {
   async function loaded() { await page.locator('[data-assembly-ready="true"]').waitFor({ timeout: 45000 }); await page.locator('[data-cad-valid="true"]').waitFor({timeout:45000}); }
   async function add(panel, first = false) {
     await page.getByRole('button', { name: first ? 'Select First Panel' : 'Add Panel', exact: true }).click();
-    await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:panel.filename+' Ready · folded CAD solid',exact:true}).click();
+    if(!first)await page.getByRole('checkbox',{name:'Place separately for face mating',exact:true}).uncheck();await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:panel.filename+' Ready · folded CAD solid',exact:true}).click();
     await loaded();
   }
   async function exportAssembly(filename) {
@@ -107,7 +107,7 @@ try {
 
 
   const editor=page.getByRole('region',{name:'Connection controls'}),position=page.getByRole('region',{name:'Panel position controls'});
-  async function addInstance(panel,first=false){await page.getByRole('button',{name:first?'Select First Panel':'Add Panel',exact:true}).click();if(!first)await page.getByRole('checkbox',{name:'Include drawings already added',exact:true}).check();await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:panel.filename+' Ready · folded CAD solid',exact:true}).click();await loaded();}
+  async function addInstance(panel,first=false){await page.getByRole('button',{name:first?'Select First Panel':'Add Panel',exact:true}).click();if(!first)await page.getByRole('checkbox',{name:'Include drawings already added',exact:true}).check();if(!first)await page.getByRole('checkbox',{name:'Place separately for face mating',exact:true}).uncheck();await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:panel.filename+' Ready · folded CAD solid',exact:true}).click();await loaded();}
   async function connect(parent){if(parent)await editor.getByRole('combobox',{name:'Reference panel',exact:true}).selectOption(parent);for(const [group,side] of [['Reference connection side','Left'],['Moving connection side','Right']])await editor.getByRole('group',{name:group,exact:true}).getByRole('button',{name:side,exact:true}).click();await editor.getByRole('spinbutton',{name:'Connection gap',exact:true}).fill('20');await loaded();await editor.getByRole('button',{name:'Connect',exact:true}).click();await editor.waitFor({state:'detached'});await loaded();}
   async function select(label){await page.getByRole('button',{name:'Fit Assembly',exact:true}).click();await page.waitForTimeout(200);const button=page.getByRole('button',{name:'Select Panel '+label,exact:true});if(await button.isVisible())await button.click();else{await page.getByRole('button',{name:'Panels',exact:true}).click();await page.getByRole('complementary',{name:'Assembly panels'}).locator('div').filter({has:page.locator('b',{hasText:new RegExp('^'+label+'$')})}).locator('button').first().click();await page.getByRole('button',{name:'Close panel list',exact:true}).click();}}
   async function move(label,value){await select(label);await page.getByRole('button',{name:'Move',exact:true}).click();await position.getByRole('spinbutton',{name:'Y offset — up',exact:true}).fill(String(value));await loaded();await position.getByRole('button',{name:'Apply position',exact:true}).click();await loaded();}

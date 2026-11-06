@@ -7,7 +7,7 @@ export type SideRegion={labelPoints?:[number,number,number][];faceId:string;poin
 export type CadSides=Record<AssemblySide,{candidates:SideRegion[];automatic:string|null;message:string}>;
 export type CadFaceCatalog={sides?:CadSides;entryId:string;revision:number;sourceSha:string;units:'mm';faces:CadFace[]};
 export type CadFrame={kind:'root'|'face';origin:[number,number,number];u:[number,number,number];v:[number,number,number];n:[number,number,number]};
-export type CadPlacement={insertion?:{panelId:string;referenceId:string;displacedId:string;movedIds:string[];translationMm:number[];rerooted:boolean};sourceHashes?:Record<string,string>;frames?:Record<string,CadFrame>;units:'mm';entries:(CadEntry & {matrix:number[]})[];bounds:Record<string,{min:number[];max:number[]}>};
+export type CadPlacement={mates?:{entryId:string;targetId:string;state:'active'|'suspended';satisfied:boolean;actual?:number;surfaceDistance?:number;projectionOverlap?:boolean}[];insertion?:{panelId:string;referenceId:string;displacedId:string;movedIds:string[];translationMm:number[];rerooted:boolean};sourceHashes?:Record<string,string>;frames?:Record<string,CadFrame>;units:'mm';entries:(CadEntry & {matrix:number[]})[];bounds:Record<string,{min:number[];max:number[]}>};
 export type CadClash = { entryIdA: string; entryIdB: string; depth: number; pointCount: number; volume?: number };
 export type CadCheck = { valid: boolean; token: string | null; collisions: CadClash[];
   contacts: { entryIdA: string; entryIdB: string }[]; issues: string[];

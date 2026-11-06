@@ -116,6 +116,7 @@ class Entry(SourceReference):
     rootOffset: tuple[float, float, float] | None = None
     pose: PanelPose | None = None
     sides: ConnectionSides | None = None
+    mateState: Literal['active', 'suspended'] | None = None
 
     @model_validator(mode="after")
     def valid_connection(self):
@@ -123,6 +124,14 @@ class Entry(SourceReference):
             raise ValueError('Only the root can have an assembly-origin offset')
         if self.connection and self.targetId is None:
             raise ValueError("A face connection needs a reference panel")
+        if self.mateState and not self.connection:
+            raise ValueError('A mate state requires an actual CAD face relationship')
+        if self.mateState == 'active' and self.pose:
+            raise ValueError('An active mate cannot also have an independent pose; suspend it before Free Move')
+        if self.mateState == 'suspended' and not self.pose:
+            raise ValueError('A suspended mate needs a frozen placement')
+        if self.mateState == 'active' and self.gap + self.connection.normalOffset < 0:
+            raise ValueError('The total mate plane separation cannot be negative')
         return self
 
     @field_validator('rotation')
@@ -142,7 +151,7 @@ class AssemblyInput(StrictModel):
 
     @model_validator(mode='after')
     def connection_tree(self):
-        if self.insertId:
+        if self.insertId or any(e.mateState for e in self.entries):
             # Reconnection can target a later row. Order the graph, never the
             # panel labels; missing parents and cycles remain explicit errors.
             remaining = list(self.entries)

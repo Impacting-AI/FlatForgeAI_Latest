@@ -72,7 +72,7 @@ try {
   async function loaded() { await page.locator('[data-assembly-ready="true"]').waitFor({ timeout: 45000 }); await page.locator('[data-cad-valid="true"]').waitFor({timeout:45000}); }
   async function add(panel, first = false) {
     await page.getByRole('button', { name: first ? 'Select First Panel' : 'Add Panel', exact: true }).click();
-    await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:panel.filename+' Ready · folded CAD solid',exact:true}).click();
+    if(!first)await page.getByRole('checkbox',{name:'Place separately for face mating',exact:true}).uncheck();await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:panel.filename+' Ready · folded CAD solid',exact:true}).click();
     await loaded();
   }
   async function exportAssembly(filename) {
@@ -141,7 +141,7 @@ try {
   // Add a third, repeated instance through the same four-side workflow.
   await page.getByRole('button',{name:'Add Panel',exact:true}).click();
   await page.getByRole('checkbox',{name:'Include drawings already added',exact:true}).check();
-  await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:sample.panels[0].filename+' Ready · folded CAD solid',exact:true}).click();await loaded();
+  await page.getByRole('checkbox',{name:'Place separately for face mating',exact:true}).uncheck();await page.getByRole('region',{name:'Choose a panel'}).getByRole('button',{name:sample.panels[0].filename+' Ready · folded CAD solid',exact:true}).click();await loaded();
   assert.equal(await editor.getByRole('combobox',{name:'Reference panel',exact:true}).locator('option').count(),2);
   await connect(b);const c=placements.at(-1).entries[2].id;
   const before=structuredClone(placements.at(-1).entries);

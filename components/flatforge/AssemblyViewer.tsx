@@ -36,7 +36,7 @@ type Props = {
  onCatalog?:(catalog:CadFaceCatalog)=>void;onPlaced?:(placement:CadPlacement)=>void;
  selection?:FaceSelection|null;
  previewOnly?:boolean;
- onFacePicked?:(role:FaceRole,face:CadFaceReference)=>void;
+ onFacePicked?:(role:FaceRole,face:CadFaceReference,entryId:string)=>void;
  onFaceMessage?:(message:string)=>void;
  onValidation?:(result:{key:string;valid:boolean;token:string|null})=>void;
 };
@@ -151,7 +151,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     if(live){
      pickerRef.current=createAssemblyFacePicker({projectId,scene,camera,canvas:renderer.domElement,groups:items,
       entries:()=>cadEntries(entriesLatest.current,panels),
-      onPick:(role,face)=>interaction.current.onFacePicked?.(role,face),onMessage:message=>interaction.current.onFaceMessage?.(message),
+      onPick:(role,face,id)=>interaction.current.onFacePicked?.(role,face,id),onMessage:message=>interaction.current.onFaceMessage?.(message),
       onSelect:id=>interaction.current.onSelect?.(id),onCatalog:catalog=>{labels?.setCatalog(catalog);interaction.current.onCatalog?.(catalog);},
       blocked:()=>!!gizmoRef.current?.intercepting,
       onPanelHover:id=>{if(hoveredId!==id){hoveredId=id;applyRef.current?.(paintLatest.current,wireLatest.current);}}});

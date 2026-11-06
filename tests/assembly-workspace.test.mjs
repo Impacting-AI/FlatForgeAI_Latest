@@ -63,3 +63,15 @@ test('both connection modes detect incoming and outgoing occupancy without count
  assert.deepEqual(connectionOccupants([root,b,c,moving],'d','b','left').map(e=>e.id),['a','c']);
  assert.deepEqual(connectionOccupants([root,b,c,moving],'d','b','right'),[]);
 });
+
+test('active mates remain relationships until Free Move explicitly suspends incident edges',()=>{
+ const rows=[root,{...child,mateState:'active'},{...child,id:'c',targetId:'b',mateState:'active'},{...child,id:'d',targetId:'a',mateState:'active'}];
+ const I=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+ const placement={entries:rows.map((e,i)=>({...e,revision:4,matrix:I.map((v,j)=>j===12?i*100:v)})),bounds:Object.fromEntries(rows.map(e=>[e.id,{min:[0,0,0],max:[100,80,2]}])),sourceHashes:Object.fromEntries(rows.map(e=>[e.id,'a'.repeat(64)]))};
+ const saved=freezePlacements(rows,placement);assert.ok(saved[0].pose);assert.equal(saved[1].pose,undefined);
+ const snapshots=freezePlacements(rows,placement,true);assert.ok(snapshots.every(e=>e.pose));
+ const moved=moveIndependently(snapshots,'b',{u:-20,v:50,normal:0});
+ assert.equal(moved[1].mateState,'suspended');assert.equal(moved[2].mateState,'suspended');assert.equal(moved[3].mateState,'active');assert.equal(moved[3].pose,undefined);
+ assert.deepEqual(moved[0].pose,snapshots[0].pose);assert.deepEqual(moved[2].pose,snapshots[2].pose);assert.deepEqual(moved[1].pose.offset,[-20,-0,50]);
+ const group=moveIndependently(snapshots,'b',{u:0,v:50,normal:0},true);assert.equal(group[1].mateState,'suspended');assert.equal(group[2].mateState,'active');assert.equal(group[2].pose,undefined);
+});

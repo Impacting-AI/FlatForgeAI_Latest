@@ -65,18 +65,22 @@ export function recordAction(history:AssemblyHistory,current:AssemblyEntry[]):As
 
 /** Snapshot only unpositioned entries. Subsequent Move edits one independent
  * pose, while retaining original connection provenance and exact source hash. */
-export function freezePlacements(entries:AssemblyEntry[],placement:CadPlacement):AssemblyEntry[]{
+export function freezePlacements(entries:AssemblyEntry[],placement:CadPlacement,forMove=false):AssemblyEntry[]{
  return entries.map(entry=>{
-  if(entry.pose)return entry;
+  if(entry.pose||entry.mateState==='active'&&!forMove)return entry;
   const row=placement.entries.find(e=>e.id===entry.id),hash=placement.sourceHashes?.[entry.id],box=placement.bounds[entry.id],frame=placement.frames?.[entry.id];
   if(!row||!hash||!box)throw new Error('Current CAD placements are not available. Reload the assembly.');
   return {...entry,revision:row.revision,pose:{matrix:row.matrix,sourceSha:hash,pivot:frame?.origin??box.min.map((v,i)=>(v+box.max[i])/2) as [number,number,number],axis:frame?.n??[0,0,1],offset:[0,0,0],turn:0}};
  });
 }
+export function suspendMovedMates(entries:AssemblyEntry[],id:string,group=false){
+ const moved=group?descendants(entries,id):new Set([id]);
+ return entries.map(e=>e.mateState==='active'&&moved.has(e.id)!==moved.has(e.targetId??'')?{...e,mateState:'suspended' as const}:e.mateState==='active'?{...e,pose:undefined}:e);
+}
 export function moveIndependently(entries:AssemblyEntry[],id:string,values:PositionValues,group=false){
  const selected=entries.find(e=>e.id===id);if(!selected?.pose)throw new Error('Load the current placement before moving.');
  const before=positionValues(selected),ids=group?descendants(entries,id):new Set([id]);
- return entries.map(e=>{if(!ids.has(e.id))return e;const p=positionValues(e);return withPosition(e,{u:p.u+values.u-before.u,v:p.v+values.v-before.v,normal:p.normal+values.normal-before.normal});});
+ return suspendMovedMates(entries.map(e=>{if(!ids.has(e.id))return e;const p=positionValues(e);return withPosition(e,{u:p.u+values.u-before.u,v:p.v+values.v-before.v,normal:p.normal+values.normal-before.normal});}),id,group);
 }
 
 /** Both connection interfaces expose the same occupied incoming/outgoing edges. */
