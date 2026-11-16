@@ -122,7 +122,7 @@ try {
     for(const [dx,dy] of [[0,35],[40,0],[0,-35],[-40,0]]){
       const x=box.x+box.width/2+dx,y=box.y+box.height/2+dy;
       await page.mouse.move(x,y);await page.waitForTimeout(650);await page.mouse.move(x+1,y);await page.waitForTimeout(100);
-      if(await page.locator('.asm-face-tooltip').isVisible()){
+      if(await page.locator('.asm-face-tooltip:visible').filter({hasText:'Click to select'}).count()){
         await page.mouse.click(x+1,y);return;
       }
     }
@@ -132,9 +132,38 @@ try {
   await add(sample.panels[0],true);await add(sample.panels[1]);
   const initial=structuredClone(placements.at(-1));
   await page.getByRole('button',{name:'Connect / Mate',exact:true}).click();
+  if(process.env.FLATFORGE_TEST_EDGE){
+    await mate.getByLabel('Mate geometry').selectOption('edge');
+    await page.getByRole('combobox',{name:'Assembly camera view'}).selectOption('top');
+    const pickEdge=async label=>{
+      await page.waitForTimeout(350);
+      const box=await page.getByRole('button',{name:'Select Panel '+label,exact:true}).boundingBox();
+      assert.ok(box);
+      for(const [dx,dy] of [[0,-1],[0,1],[1,0],[-1,0]]){
+        for(let d=18;d<270;d+=4){
+          const x=box.x+box.width/2+d*dx,y=box.y+box.height/2+d*dy;
+          await page.mouse.move(x,y);
+          if(await page.locator('.asm-face-tooltip:visible').filter({hasText:'/ edge-'}).count()){
+            await page.mouse.click(x,y);return;
+          }
+        }
+      }
+      throw Error('No visible straight CAD edge on '+label);
+    };
+    await pickEdge('A');await mate.getByRole('button',{name:/^Reference: Panel A .*edge-/}).waitFor();
+    await pickEdge('B');await mate.getByRole('button',{name:/^Moving: Panel B .*edge-/}).waitFor();
+    await mate.getByLabel('Plane gap',{exact:true}).fill('20');await loaded();
+    await mate.getByRole('button',{name:'Apply Mate'}).click();await loaded();
+    await page.getByRole('button',{name:'Save Assembly',exact:true}).click();
+    await page.getByText('Assembly saved to this project.',{exact:true}).waitFor();
+    const before=structuredClone(placements.at(-1).entries);
+    await page.reload({waitUntil:'networkidle'});await loaded();assert.deepEqual(placements.at(-1).entries,before);
+    const exported=await exportAssembly('edges.glb');await exportSTEP('edges.step',exported.metadata.cadTransformsMm);
+    assert.deepEqual(errors,[]);console.log('PASS: CAD edge clicks, Apply, persistence, STEP/GLB parity.');
+  } else {
   await pickFace('A');await mate.getByRole('button',{name:/^Reference: Panel A/}).waitFor();
   await pickFace('A');await page.getByText('Select faces on two different panels.',{exact:true}).waitFor();
-  await pickFace('B');await loaded();
+  await pickFace('B');
   await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill('20');
   await mate.getByRole('spinbutton',{name:'Local V offset',exact:true}).fill('50');
   await mate.getByRole('spinbutton',{name:'In-plane rotation',exact:true}).fill('13');await loaded();
@@ -153,9 +182,11 @@ try {
   assert.equal(placements.at(-1).entries.find(e=>e.id===b).pose,null);
   await add(sample.panels[2]);
   await page.getByRole('button',{name:'Connect / Mate',exact:true}).click();
-  await pickFace('B');await pickFace('C');await loaded();
+  await pickFace('B');await pickFace('C');
+  await page.getByRole('status').filter({hasText:'intersect by'}).waitFor();
+  assert.equal(await mate.getByRole('button',{name:'Apply Mate'}).isEnabled(),false);
   await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill('9');
-  await mate.getByRole('spinbutton',{name:'Local U offset',exact:true}).fill('200');await loaded();
+  await mate.getByRole('spinbutton',{name:'Local U offset',exact:true}).fill('3200');await loaded();
   await mate.getByRole('button',{name:'Apply Mate',exact:true}).click();await loaded();
   const c=placements.at(-1).entries.find(e=>e.targetId===b).id;
   const chainBefore=structuredClone(placements.at(-1));
@@ -190,5 +221,6 @@ try {
   const mobile=await mate.boundingBox();assert.ok(mobile.x>=0&&mobile.x+mobile.width<=390);
   await mate.getByRole('button',{name:'Cancel',exact:true}).click();
   assert.deepEqual(errors,[]);console.log('PASS: actual CAD face clicks, same-panel rejection, gap/local offsets/twist, invalid inputs, apply/edit/resume, independent Free Move suspension, save/reload and original-solid STEP/GLB parity.');
+  }
 } catch(error){console.error(logs.slice(-2500));try{const pages=browser?.contexts()[0]?.pages();if(pages?.length)await pages[0].screenshot({path:path.join(output,'failure.png'),fullPage:true});}catch{}throw error;}
 finally{await browser?.close();server?.kill('SIGTERM');apiServer.kill('SIGTERM');}

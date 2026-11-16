@@ -2,7 +2,8 @@ import type { AssemblyEntry, AssemblySide, Panel } from './types';
 
 export type CadEntry = AssemblyEntry & { revision: number; matrix?: number[] };
 export type CadBounds = { units: 'mm'; entries: { id: string; revision: number; bounds: { min: number[]; max: number[] } }[] };
-export type CadFace = {id:string;type:string;area:number;supported:boolean;center:[number,number,number];normal?:[number,number,number];u?:[number,number,number];v?:[number,number,number];positions:number[];indices:number[]};
+export type CadEdge={id:string;a:[number,number,number];b:[number,number,number]};
+export type CadFace = {edges?:CadEdge[];id:string;type:string;area:number;supported:boolean;center:[number,number,number];normal?:[number,number,number];u?:[number,number,number];v?:[number,number,number];positions:number[];indices:number[]};
 export type SideRegion={labelPoints?:[number,number,number][];faceId:string;point:[number,number,number];normal:[number,number,number];area:number};
 export type CadSides=Record<AssemblySide,{candidates:SideRegion[];automatic:string|null;message:string}>;
 export type CadFaceCatalog={sides?:CadSides;entryId:string;revision:number;sourceSha:string;units:'mm';faces:CadFace[]};
@@ -37,8 +38,8 @@ async function request(projectId: string, action: string, body: unknown, signal?
 export async function assemblyCadBounds(projectId: string, entries: CadEntry[], signal: AbortSignal): Promise<CadBounds> {
   return (await request(projectId, 'geometry', { entries }, signal)).json();
 }
-export async function checkAssembly(projectId: string, entries: CadEntry[], signal: AbortSignal): Promise<CadCheck> {
-  return (await request(projectId, 'validate', { entries,policy:'free' }, signal)).json();
+export async function checkAssembly(projectId: string, entries: CadEntry[], signal: AbortSignal,mateCheckId?:string): Promise<CadCheck> {
+  return (await request(projectId, 'validate', { entries,policy:'free',mateCheckId }, signal)).json();
 }
 export async function downloadAssemblyStep(projectId: string, token: string) {
   const response = await request(projectId, 'step', { token });

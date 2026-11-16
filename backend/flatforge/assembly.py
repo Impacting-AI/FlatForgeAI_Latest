@@ -56,19 +56,31 @@ class Spacing(StrictModel):
 
 
 class FaceReference(StrictModel):
+    edgeId: str | None = Field(default=None, pattern=r'^edge-[1-9][0-9]*$')
     faceId: str = Field(pattern=r'^face-[1-9][0-9]*$')
     sourceSha: str = Field(pattern=r'^[0-9a-f]{64}$')
     point: tuple[float, float, float]
 
 
 class FaceConnection(StrictModel):
-    type: Literal['planar'] = 'planar'
+    type: Literal['planar','straight-edge'] = 'planar'
+    alignment: Literal['picked','top'] = 'picked'
+    flip: bool = False
     reference: FaceReference
     moving: FaceReference
     offsetU: float = 0
     offsetV: float = 0
     normalOffset: float = 0
     twist: float = 0
+
+
+    @model_validator(mode='after')
+    def consistent_references(self):
+        if (self.type == 'straight-edge') != bool(self.reference.edgeId) or bool(self.reference.edgeId) != bool(self.moving.edgeId):
+            raise ValueError('Both references must have the selected geometric type')
+        if self.type == 'straight-edge' and self.twist:
+            raise ValueError('A twist about the support normal would break edge alignment. Use Flip endpoints.')
+        return self
 
 
 class SourceReference(StrictModel):
@@ -144,6 +156,7 @@ class Entry(SourceReference):
 
 class AssemblyInput(StrictModel):
     policy: Literal['constrained', 'free'] = 'constrained'
+    mateCheckId: str | None = None
     alignTop: bool = False
     insertId: str | None = None
     insertBranchId: str | None = None
@@ -384,7 +397,22 @@ def validate(project_id, body):
     with CAD_LOCK:
         sources = load_sources(project_id, body.entries)
         try:
-            result, _ = check_placement(body.entries, sources, body.policy)
+            result, shapes = check_placement(body.entries, sources, body.policy)
+            if body.mateCheckId:
+                from .assembly_seams import active_branch, joint_conflicts
+                branch = active_branch(body.entries, body.mateCheckId)
+                matrices = {e.id: connections.matrix(e.matrix) for e in body.entries}
+                for entry in body.entries:
+                    # A side-connected child can have an independent frozen pose.
+                    # Do not approve a mate that leaves its saved side joint behind.
+                    if entry.targetId in branch and entry.sides and entry.connection and entry.pose and not entry.mateState:
+                        expected, _ = connections.connection_frame(entry, sources, matrices[entry.targetId])
+                        if not np.allclose(expected, matrices[entry.id], atol=LINEAR_EPS_MM, rtol=0):
+                            result['valid'] = False
+                            result['issues'].append(f"{sources[entry.id]['name']} has a fixed side connection that conflicts with this mate. Reconnect that panel first.")
+                for a,b,volume in joint_conflicts(body.entries, branch, shapes, result['bounds'], VOLUME_EPS_MM3):
+                    result['valid'] = False
+                    result['issues'].append(f"{sources[a]['name']} and {sources[b]['name']} intersect by {volume:.6g} mm³. Change the mating references, gap or offsets.")
         except HTTPException:
             raise
         except Exception as error:

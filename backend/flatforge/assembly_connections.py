@@ -9,7 +9,7 @@ import numpy as np
 from fastapi import HTTPException
 from OCP.gp import gp_Trsf
 
-PICK_EPS_MM = .001
+from .assembly_seams import PICK_EPS_MM, straight_edges, seam_reference
 
 
 def matrix(values):
@@ -53,7 +53,8 @@ def pick_meshes(catalog):
     for face, record in catalog:
         # Do not modify triangulation caches on the solids used for CAD checks.
         vertices, triangles = face.copy(mesh=False).tessellate(.05, .12)
-        output.append({**record, 'positions': [c for p in vertices for c in p.toTuple()],
+        edges = [{'id': id, 'a': a.tolist(), 'b': b.tolist()} for id,_,a,b in straight_edges(face)] if record['supported'] else []
+        output.append({**record, 'edges': edges, 'positions': [c for p in vertices for c in p.toTuple()],
                        'indices': [i for triangle in triangles for i in triangle]})
     return output
 
@@ -80,6 +81,9 @@ def connection_frame(entry, sources, parent_matrix):
     connection = entry.connection
     face_a, point_a, basis_a = resolve(sources[entry.targetId], connection.reference)
     face_b, point_b, basis_b = resolve(sources[entry.id], connection.moving)
+    if connection.alignment == 'top' or connection.type == 'straight-edge':
+        face_a, point_a, basis_a = seam_reference(sources[entry.targetId], face_a, connection.reference, basis_a, False, connection)
+        face_b, point_b, basis_b = seam_reference(sources[entry.id], face_b, connection.moving, basis_b, True, connection)
     basis = parent_matrix[:3, :3] @ basis_a
     anchor = parent_matrix[:3, :3] @ point_a + parent_matrix[:3, 3]
     angle = math.radians(connection.twist % 360)

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { assemblyFaces, type CadEntry, type CadFaceCatalog } from './assembly-cad';
+import { assemblyFaces, type CadEntry, type CadEdge, type CadFace, type CadFaceCatalog } from './assembly-cad';
 import type { CadFaceReference,AssemblySide } from './types';
 import type { FaceRole, FaceSelection } from './face-connection-state';
 
@@ -20,8 +20,27 @@ export function createAssemblyFacePicker(options:{
   const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
   let down:{x:number;y:number}|null=null;
   const tooltip=document.createElement('div');tooltip.className='asm-face-tooltip';tooltip.hidden=true;options.canvas.parentElement!.appendChild(tooltip);
-  let hover:THREE.Mesh|null=null,hoverKey='';
-  function clearHover(){if(hover){options.scene.remove(hover);(hover.material as THREE.Material).dispose();hover=null;}hoverKey='';tooltip.hidden=true;}
+  function edgeLine(edge:CadEdge,group:THREE.Group,color:number){
+    const geometry=new THREE.BufferGeometry().setFromPoints([edge.a,edge.b].map(p=>new THREE.Vector3(...p).multiplyScalar(.001)));
+    const line=new THREE.Line(geometry,new THREE.LineBasicMaterial({color,depthTest:false}));
+    line.matrixAutoUpdate=false;line.matrix.copy(group.matrixWorld);line.renderOrder=4;line.raycast=()=>{};return line;
+  }
+  // Pick only trimmed LINE edges on the visible support face. Pixel tolerance
+  // stays constant as the camera zooms; the saved point comes from the CAD line.
+  function nearestEdge(face:CadFace,group:THREE.Group){
+    const rect=options.canvas.getBoundingClientRect();
+    const hits=(face.edges??[]).flatMap(edge=>{
+      const [a,b]=[edge.a,edge.b].map(p=>new THREE.Vector3(...p).multiplyScalar(.001).applyMatrix4(group.matrixWorld));
+      const q=new THREE.Vector3();ray.ray.distanceSqToSegment(a,b,undefined,q);
+      const screen=q.clone().project(options.camera);
+      if(screen.z< -1||screen.z>1)return [];
+      const distance=Math.hypot((screen.x-mouse.x)*rect.width/2,(screen.y-mouse.y)*rect.height/2);
+      return distance<=8?[{edge,distance,point:q.applyMatrix4(group.matrixWorld.clone().invert()).multiplyScalar(1000)}]:[];
+    }).sort((a,b)=>a.distance-b.distance);
+    return hits.length>1&&hits[1].distance-hits[0].distance<.5?undefined:hits[0];
+  }
+  let hover:THREE.Mesh|THREE.Line|null=null,hoverKey='';
+  function clearHover(){if(hover){options.scene.remove(hover);if(hover instanceof THREE.Line)hover.geometry.dispose();(hover.material as THREE.Material).dispose();hover=null;}hoverKey='';tooltip.hidden=true;}
   function setRay(event:PointerEvent){const rect=options.canvas.getBoundingClientRect();mouse.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);ray.setFromCamera(mouse,options.camera);}
   function panelHit(){
     const objects=[...options.groups.values()].filter(item=>item.group.visible).map(item=>item.group);
@@ -43,10 +62,12 @@ export function createAssemblyFacePicker(options:{
     const allowed=selection?.allowed?.[role];
     const hit=faceHits(id!)[0],source=catalogs.get(id!);if(!hit||!source||allowed&&!allowed.includes(hit.object.userData.faceId)){clearHover();return;}
     const face=source.data.faces.find(f=>f.id===hit.object.userData.faceId)!;
-    const key=id+':'+face.id;
-    if(key!==hoverKey){clearHover();hoverKey=key;hover=new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0x70bde0:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
+    const candidate=selection?.geometry==='edge'?nearestEdge(face,options.groups.get(id)!.group):undefined;
+    if(selection?.geometry==='edge'&&!candidate){clearHover();return;}
+    const key=id+':'+face.id+':'+(candidate?.edge.id??'');
+    if(key!==hoverKey){clearHover();hoverKey=key;hover=candidate?edgeLine(candidate.edge,options.groups.get(id)!.group,0x008dd2):new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0x70bde0:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
     const side=selection?.sideNames?.[role];
-    tooltip.hidden=false;tooltip.textContent=selection?.anyPanel?`${face.id} · ${face.type} · ${face.supported?'Click to select':'Planar mates only'}`:(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
+    tooltip.hidden=false;tooltip.textContent=candidate?face.id+' / '+candidate.edge.id+' · Click to mate':selection?.anyPanel?`${face.id} · ${face.type} · ${face.supported?'Click to select':'Planar mates only'}`:(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
     const rect=options.canvas.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(rect.width-220,event.clientX-rect.left+14))+'px';tooltip.style.top=Math.max(55,event.clientY-rect.top-35)+'px';
   };
   function clearVisuals(){
@@ -80,9 +101,14 @@ export function createAssemblyFacePicker(options:{
       group.updateMatrixWorld(true);
       const index=source.data.faces.findIndex(face=>face.id===reference.faceId);if(index<0)continue;
       const face=source.data.faces[index];
+      if(reference.edgeId){
+        const edge=face.edges?.find(e=>e.id===reference.edgeId);
+        if(edge)visuals.add(edgeLine(edge,group,role==='reference'?0x0079dd:0xe88700));
+        continue;
+      }
       const mesh=new THREE.Mesh(source.meshes[index].geometry,new THREE.MeshBasicMaterial({color:role==='reference'?0x2788ee:0xffa336,opacity:.42,transparent:true,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
       mesh.userData.sharedFaceGeometry=true;mesh.matrixAutoUpdate=false;mesh.matrix.copy(group.matrixWorld);mesh.renderOrder=2;mesh.raycast=()=>{};visuals.add(mesh);
-      if(role==='reference'&&face.normal&&face.u&&face.v){
+      if(role==='reference'&&selection.alignment!=='top'&&face.normal&&face.u&&face.v){
         const origin=new THREE.Vector3(...reference.point).multiplyScalar(.001).applyMatrix4(group.matrixWorld);
         const size=new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3()).length()*.08;
         for(const [vector,color] of [[face.u,0xed4545],[face.v,0x25a665],[face.normal,0x2377e5]] as const){
@@ -132,10 +158,15 @@ export function createAssemblyFacePicker(options:{
     const hits=faceHits(id),hit=hits[0];
     if(!hit||allowed&&!allowed.includes(hit.object.userData.faceId)){options.onMessage('Choose a highlighted region on the selected side.');return;}
     if(hits.some(other=>other.object.userData.faceId!==hit.object.userData.faceId&&Math.abs(other.distance-hit.distance)<1e-6)){
-      options.onMessage('This point touches more than one CAD face. Click inside a single surface, away from its boundary.');return;
+      options.onMessage(selection.geometry==='edge'?'This edge borders two faces. Click just inside the flange that defines the gap direction.':'This point touches more than one CAD face. Click inside a single surface, away from its boundary.');return;
     }
     const face=source.data.faces.find(face=>face.id===hit.object.userData.faceId)!;
     if(!face.supported){options.onMessage(`${face.type} surface: a constant-gap connection needs a planar face. Pick a planar flange or surface.`);return;}
+    if(selection?.geometry==='edge'){
+      const candidate=nearestEdge(face,group);
+      if(!candidate){options.onMessage('Click closer to a straight edge on this planar face, away from a shared corner.');return;}
+      options.onPick(role,{faceId:face.id,edgeId:candidate.edge.id,sourceSha:source.data.sourceSha,point:candidate.point.toArray()},id);return;
+    }
     const point=hit.point.clone().applyMatrix4(group.matrixWorld.clone().invert()).multiplyScalar(1000);
     options.onPick(role,{faceId:face.id,sourceSha:source.data.sourceSha,point:point.toArray()},id);
   };

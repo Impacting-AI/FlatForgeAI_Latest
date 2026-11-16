@@ -26,7 +26,7 @@ export function decodeAssemblies(text: string | null): AssemblyProjects {
       if (entry.connection !== undefined) {
         const c=entry.connection;
         const validReference=(r:typeof c.reference)=>r&&/^face-[1-9][0-9]*$/.test(r.faceId)&&/^[a-f0-9]{64}$/.test(r.sourceSha)&&Array.isArray(r.point)&&r.point.length===3&&r.point.every(Number.isFinite);
-        if(!entry.targetId||!c||c.type!=='planar'||!validReference(c.reference)||!validReference(c.moving)
+        if(!entry.targetId||!c||!['planar','straight-edge'].includes(c.type)||!validReference(c.reference)||!validReference(c.moving)
           ||![c.offsetU,c.offsetV,c.normalOffset,c.twist].every(Number.isFinite)||entry.gap+c.normalOffset<0)throw new Error('Invalid saved CAD face connection.');
       }
       if(entry.label!==undefined&&(!/^[A-Z]+$/.test(entry.label)||entries.some(other=>other!==entry&&other.label===entry.label)))throw new Error('Invalid saved panel label.');
