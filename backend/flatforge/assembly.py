@@ -65,6 +65,7 @@ class FaceReference(StrictModel):
 class FaceConnection(StrictModel):
     type: Literal['planar','straight-edge'] = 'planar'
     alignment: Literal['picked','top'] = 'picked'
+    matchFootprints: bool = False  # absent on saved rim-to-rim mates
     startPose: list[float] | None = Field(default=None, min_length=16, max_length=16)
     flip: bool = False
     reference: FaceReference
@@ -77,6 +78,8 @@ class FaceConnection(StrictModel):
 
     @model_validator(mode='after')
     def consistent_references(self):
+        if self.matchFootprints and (self.type != 'planar' or self.startPose is None):
+            raise ValueError('Surface matching needs a planar mate and a rigid starting pose.')
         if self.startPose is not None:
             m = connections.matrix(self.startPose)
             r = m[:3,:3]
@@ -409,6 +412,18 @@ def validate(project_id, body):
                 branch = active_branch(body.entries, body.mateCheckId)
                 matrices = {e.id: connections.matrix(e.matrix) for e in body.entries}
                 for entry in body.entries:
+                    c = entry.connection
+                    if (entry.id == body.mateCheckId and c and c.matchFootprints and
+                            c.alignment == 'top' and c.offsetU == c.offsetV == c.twist == 0):
+                        fa, _, basis = connections.resolve(sources[entry.targetId], c.reference)
+                        fb, _, _ = connections.resolve(sources[entry.id], c.moving)
+                        parent = matrices[entry.targetId]
+                        relative = np.linalg.inv(parent) @ matrices[entry.id]
+                        relative[:3,3] -= basis[:,2] * (entry.gap + c.normalOffset)
+                        projected = fb.moved(connections.location(relative))
+                        if fa.intersect(projected).Area() <= LINEAR_EPS_MM**2:
+                            result['valid'] = False
+                            result['issues'].append('Selected faces have no shared surface area across the gap. Choose corresponding faces or change the mating references.')
                     # A side-connected child can have an independent frozen pose.
                     # Do not approve a mate that leaves its saved side joint behind.
                     if entry.targetId in branch and entry.sides and entry.connection and entry.pose and not entry.mateState:

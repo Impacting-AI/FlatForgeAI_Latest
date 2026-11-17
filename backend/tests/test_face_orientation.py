@@ -82,6 +82,31 @@ def test_sample_long_perforated_return_faces(api,tmp_path):
     check=joint_check(client,project,out)
     assert check['valid'],check
 
+    # Same two selections as above, now explicitly matching face footprints.
+    # Distance alone cannot distinguish an edge touch from area registration.
+    b['gap']=10
+    b['connection']['matchFootprints']=True
+    matched=placed(client,project,[a,b])
+    ma,mb=[np.array(e['matrix']).reshape(4,4).T for e in matched['entries']]
+    relative=np.linalg.inv(ma)@mb
+    np.testing.assert_allclose(relative[:3,:3],seed[:3,:3],atol=1e-8)
+    from flatforge.assembly_connections import location
+    selected=body.Faces()[519]
+    shifted=selected.moved(location(relative)).translate((0,0,-10))
+    overlap=selected.intersect(shifted).Area()
+    assert overlap==pytest.approx(8126,abs=1e-5)
+    outline=cq.Face.makeFromWires(selected.outerWire())
+    other_outline=cq.Face.makeFromWires(shifted.outerWire())
+    assert outline.intersect(other_outline).Area()==pytest.approx(outline.Area(),abs=1e-5)
+    assert matched['mates'][0]['actual']==pytest.approx(10)
+    check=joint_check(client,project,matched)
+    assert check['valid'],check
+    # Zero separation of co-directed skins is not a valid joint if both
+    # sheets occupy the same space. Do not repair it by sliding onto a rim.
+    b['gap']=0
+    failed=joint_check(client,project,placed(client,project,[a,b]))
+    assert not failed['valid'] and any('intersect' in msg for msg in failed['issues'])
+
 
 def test_opposing_normals_keep_preexisting_roll(api,tmp_path):
     from test_face_connections import reference

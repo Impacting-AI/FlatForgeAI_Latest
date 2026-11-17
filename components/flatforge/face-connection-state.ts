@@ -3,6 +3,7 @@ import type { AssemblyEntry, CadFaceReference, Face, AssemblySide } from './type
 export type FaceRole = 'reference' | 'moving';
 export type FaceSelection = { anyPanel?:boolean; geometry?:'face'|'edge'; alignment?:'top'|'picked'; flip?:boolean; referenceEntryId:string; movingEntryId:string; reference?:CadFaceReference; moving?:CadFaceReference; pick:FaceRole|null;allowed?:Partial<Record<FaceRole,string[]>>;sideNames?:Partial<Record<FaceRole,AssemblySide>> };
 export type FaceDraft = FaceSelection & {
+  matchFootprints?:boolean;
   startPose?:number[]|null;
   mate?:boolean;
   insertBranchId?:string;
@@ -15,7 +16,7 @@ export type FaceDraft = FaceSelection & {
 
 export function beginFaceDraft(entry:AssemblyEntry):FaceDraft {
   const c=entry.connection;
-  return {original:entry,startPose:c?.startPose,geometry:c?.type==='straight-edge'?'edge':'face',alignment:c?.alignment??'picked',flip:c?.flip??false,referenceEntryId:entry.targetId!,movingEntryId:entry.id,
+  return {original:entry,matchFootprints:c?.matchFootprints,startPose:c?.startPose,geometry:c?.type==='straight-edge'?'edge':'face',alignment:c?.alignment??'picked',flip:c?.flip??false,referenceEntryId:entry.targetId!,movingEntryId:entry.id,
     reference:c?.reference,moving:c?.moving,pick:null,message:'',preview:c?entry:undefined,
     fields:{gap:String(entry.gap),u:String(c?.offsetU??0),v:String(c?.offsetV??0),normal:String(c?.normalOffset??0),twist:String(c?.twist??0)}};
 }
@@ -32,7 +33,7 @@ export function previewFaceDraft(draft:FaceDraft):AssemblyEntry|undefined {
   const original={...draft.original};delete original.pose;delete original.matrix;delete original.rootOffset;
   if(draft.mate){delete original.sides;original.mateState='active';}else delete original.mateState;
   if(draft.sides?.reference&&draft.sides?.moving)original.sides={reference:draft.sides.reference,moving:draft.sides.moving};
-  return {...original,targetId:draft.referenceEntryId,gap:Number(draft.fields.gap),connection:{type:draft.geometry==='edge'?'straight-edge':'planar',...(draft.mate&&draft.geometry!=='edge'&&draft.startPose?{startPose:draft.startPose}:{}),...(draft.mate?{alignment:draft.alignment??'top',flip:!!draft.flip}:{}),
+  return {...original,targetId:draft.referenceEntryId,gap:Number(draft.fields.gap),connection:{type:draft.geometry==='edge'?'straight-edge':'planar',...(draft.mate&&draft.geometry!=='edge'&&draft.startPose?{startPose:draft.startPose,...(draft.matchFootprints?{matchFootprints:true}:{})}:{}),...(draft.mate?{alignment:draft.alignment??'top',flip:!!draft.flip}:{}),
     reference:draft.reference,moving:draft.moving,offsetU:Number(draft.fields.u),offsetV:Number(draft.fields.v),
     normalOffset:Number(draft.fields.normal),twist:Number(draft.fields.twist)}};
 }

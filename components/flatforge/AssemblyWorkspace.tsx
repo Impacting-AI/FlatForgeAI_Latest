@@ -99,7 +99,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    // its already twisted preview here would apply the user's twist twice.
    const reuse=draft?.startPose&&draft.referenceEntryId===next.referenceEntryId&&draft.movingEntryId===next.movingEntryId&&draft.original.mateState!=='suspended';
    const startPose=reuse?draft.startPose:new Matrix4().fromArray(from).invert().multiply(new Matrix4().fromArray(to)).toArray();
-   const d:FaceDraft={...next,original,startPose,mate:true,pick:null,message:'',fields:draft?.fields??{gap:String(original.connection?original.gap:0),u:'0',v:'0',normal:'0',twist:'0'}};
+   const d:FaceDraft={...next,original,startPose,matchFootprints:next.geometry!=='edge',mate:true,pick:null,message:'',fields:draft?.fields??{gap:String(original.connection?original.gap:0),u:'0',v:'0',normal:'0',twist:'0'}};
    d.preview=previewFaceDraft(d);setDraft(d);setActive(id);next.pick=null;
   }
   setMateSelection(next);setNotice('');

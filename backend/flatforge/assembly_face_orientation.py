@@ -49,9 +49,13 @@ def preserve_pose(connection, face_a, face_b, point_a, point_b, basis, normal_b,
         # Common reference axes even if the moving panel was rolled before selection.
         return final_rotation, point_a, _corner(points, rotation.T@v, rotation.T@u)
 
-    # Co-directed flange skins cannot be overlaid to form a butt joint. Match
+    # Historical co-directed joins matched opposite rims. New face mates match
+    # corresponding inward directions and register both footprints at their
+    # common top corner. Apply the plane gap only after in-plane registration.
+    # For historical joins, match
     # facing supporting rims. Rank placements by travel of the selected face,
     # so CAD origin, edge enumeration and click height do not decide the seam.
+    outer_b = np.array([p.toTuple() for p in face_b.outerWire().Vertices()])
     pivot = np.array(face_b.Center().toTuple())
     before = initial@pivot + start[:3,3]
     candidates = []
@@ -61,10 +65,11 @@ def preserve_pose(connection, face_a, face_b, point_a, point_b, basis, normal_b,
             # For skewed straight rims a second, in-plane turn may be necessary.
             # Prefer the least turn, then the least travel. Never invert panel up
             # merely to attach the far rim; explicit edge mating remains available.
-            dot = np.clip(inward_b @ -inward_a, -1., 1.)
+            target_inward = inward_a if connection.matchFootprints else -inward_a
+            dot = np.clip(inward_b @ target_inward, -1., 1.)
             if dot < -EPS:
                 continue
-            angle = np.arctan2(n @ np.cross(inward_b, -inward_a), dot)
+            angle = np.arctan2(n @ np.cross(inward_b, target_inward), dot)
             c,s = np.cos(angle),np.sin(angle)
             roll = basis @ np.array([[c,-s,0],[s,c,0],[0,0,1.]]) @ basis.T
             aligned = roll @ rotation
@@ -72,6 +77,9 @@ def preserve_pose(connection, face_a, face_b, point_a, point_b, basis, normal_b,
                 continue  # a default mate must not turn the panel over
             a = _corner(ends_a,v,u)
             b = aligned.T @ _corner(ends_b @ roll.T,v,u)
+            if connection.matchFootprints:
+                a = point_a
+                b = _corner(outer_b, aligned.T@v, aligned.T@u)
             delta = a + aligned@(pivot-b) - before
             travel = np.linalg.norm(delta-n*(delta@n))
             candidates.append((abs(angle), travel, a, b, aligned))
