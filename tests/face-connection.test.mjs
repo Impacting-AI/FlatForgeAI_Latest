@@ -43,3 +43,18 @@ test('reselecting stale faces repairs obsolete envelope metadata only in the dra
   assert.equal(draft.preview.connection,undefined);assert.equal(previewFaceDraft(draft),undefined);
   assert.equal(saved.spacing.x.gap,10);assert.ok(saved.connection);
 });
+
+test('second face on root or ancestor is retained and safely ordered',async()=>{
+  const {orderMateSelection}=await import('../components/flatforge/face-connection-state.ts');
+  const child={...original,id:'c',targetId:'b'};
+  const selection={referenceEntryId:'b',movingEntryId:'a',reference,moving,pick:null};
+  const result=orderMateSelection(selection,[root,original,child]);
+  assert.equal(result.swapped,true);
+  assert.equal(result.selection.referenceEntryId,'a');
+  assert.equal(result.selection.reference,moving);
+  assert.equal(result.selection.moving,reference);
+  assert.equal(selection.referenceEntryId,'b');
+  assert.equal(orderMateSelection({...selection,referenceEntryId:'c',movingEntryId:'b'},[root,original,child]).swapped,true);
+  assert.equal(orderMateSelection({...selection,referenceEntryId:'a',movingEntryId:'b'},[root,original,child]).swapped,false);
+  assert.throws(()=>orderMateSelection({...selection,movingEntryId:'b'},[root,original]),/different panels/);
+});

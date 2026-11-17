@@ -39,12 +39,14 @@ try {
   browser = await chromium.launch({ executablePath: process.env.FLATFORGE_CHROMIUM || undefined,
     headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
+  page.setDefaultNavigationTimeout(90000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const fixture = JSON.parse(fs.readFileSync(path.join(root, 'lib/sample-data.json')));
   const sample=await (await fetch(apiURL+'/bootstrap',{headers:{'x-flatforge-key':apiKey}})).json();
   const project=sample.projects.find(p=>p.id===fixture.projects[0].id);
   sample.panels=sample.panels.filter(p=>p.project_id===project.id);
   const submitted=[],validations=[],placements=[],catalogResponses=[],saves=[];
+  let slowFaces=false;
   let holdNextValidation=false,heldValidation=null,holdNextPlacement=false,heldPlacement=null,failNextStep=false;
   await page.route('**/api/bootstrap',async route=>{
     const response=await fetch(apiURL+'/bootstrap',{headers:{'x-flatforge-key':apiKey}});
@@ -52,6 +54,7 @@ try {
   });
   await page.route('**/api/engine/**',async route=>{
     const request=route.request(),pathname=new URL(request.url()).pathname.replace('/api/engine','');
+    if(slowFaces&&pathname.endsWith('/assembly/faces'))await new Promise(resolve=>setTimeout(resolve,1200));
     if(pathname.endsWith('/assembly/step')&&failNextStep){failNextStep=false;await route.fulfill({status:503,json:{detail:'Test CAD connection interrupted; please retry.'}});return;}
     if(pathname.endsWith('/assembly/validate'))submitted.push(request.postDataJSON().entries);
     if(pathname.endsWith('/assembly')&&request.method()==='PUT')saves.push(request.postDataJSON());
@@ -161,6 +164,17 @@ try {
     const exported=await exportAssembly('edges.glb');await exportSTEP('edges.step',exported.metadata.cadTransformsMm);
     assert.deepEqual(errors,[]);console.log('PASS: CAD edge clicks, Apply, persistence, STEP/GLB parity.');
   } else {
+  // Previously B-first/A-second silently discarded the root face.
+  await pickFace('B');await mate.getByRole('button',{name:/^Reference: Panel B/}).waitFor();
+  slowFaces=true;
+  const coldA=await page.getByRole('button',{name:'Select Panel A',exact:true}).boundingBox();
+  await page.mouse.click(coldA.x+coldA.width/2,coldA.y+coldA.height/2+35);
+  await mate.getByRole('button',{name:/^Reference: Panel A/}).waitFor();
+  slowFaces=false;
+  await mate.getByRole('button',{name:/^Moving: Panel B/}).waitFor();
+  await page.getByText(/Both faces selected.*stays fixed/).waitFor();
+  await mate.getByRole('button',{name:'Cancel',exact:true}).click();await loaded();
+  await page.getByRole('button',{name:'Connect / Mate',exact:true}).click();
   await pickFace('A');await mate.getByRole('button',{name:/^Reference: Panel A/}).waitFor();
   await pickFace('A');await page.getByText('Select faces on two different panels.',{exact:true}).waitFor();
   await pickFace('B');

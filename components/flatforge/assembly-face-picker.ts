@@ -13,7 +13,7 @@ export function createAssemblyFacePicker(options:{
   onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;
 }) {
   let sideHover:{id:string;side:AssemblySide}|null=null;
-  let selection:FaceSelection|null=null,alive=true,sequence=0;
+  let selection:FaceSelection|null=null,alive=true,sequence=0,pickRevision=0;
   const catalogs=new Map<string,{data:CadFaceCatalog;root:THREE.Group;meshes:THREE.Mesh[]}>();
   const pending=new Map<string,Promise<void>>(),abort=new AbortController();
   const visuals=new THREE.Group();options.scene.add(visuals);
@@ -136,6 +136,7 @@ export function createAssemblyFacePicker(options:{
     pending.set(id,promise);return promise;
   }
   async function update(next:FaceSelection|null){
+    if(JSON.stringify(next)!==JSON.stringify(selection))pickRevision++;
     selection=next;clearHover();const version=++sequence;renderSelection();if(!next)return;
     try{
       await Promise.all([next.referenceEntryId,next.movingEntryId].filter(Boolean).map(id=>load(id)));
@@ -144,15 +145,22 @@ export function createAssemblyFacePicker(options:{
     }catch(error){if(alive&&version===sequence&&!abort.signal.aborted)options.onMessage((error as Error).message);}
   }
   const pointerDown=(event:PointerEvent)=>{down=event.button===0&&!options.blocked()?{x:event.clientX,y:event.clientY}:null;};
-  const pointerUp=(event:PointerEvent)=>{
+  const pointerUp=async(event:PointerEvent)=>{
     const start=down;down=null;
     if(options.blocked()||!start||Math.hypot(event.clientX-start.x,event.clientY-start.y)>5)return;
     setRay(event);
     if(!selection?.pick){options.onSelect(panelHit()??null);return;}
     const role=selection.pick,id=selection.anyPanel?panelHit():(role==='reference'?selection.referenceEntryId:selection.movingEntryId);
     if(!id)return;
+    const selectionKey=JSON.stringify(selection),revision=pickRevision;
+    if(!catalogs.get(id)?.data.faces.length){
+      options.onMessage('Loading the selected CAD face…');
+      try{await load(id);}catch(error){if(alive)options.onMessage((error as Error).message);return;}
+      if(!alive||options.blocked()||revision!==pickRevision||JSON.stringify(selection)!==selectionKey)return;
+      setRay(event);
+    }
     const source=catalogs.get(id),group=options.groups.get(id)?.group;
-    if(!source?.data.faces.length||!group){void load(id).catch(error=>options.onMessage((error as Error).message));options.onMessage('Loading CAD faces. Try the face again in a moment.');return;}
+    if(!source||!group)return;
     if(panelHit()!==id){options.onMessage('Click the requested panel, or orbit to expose its connection surface.');return;}
     const allowed=selection.allowed?.[role];
     const hits=faceHits(id),hit=hits[0];

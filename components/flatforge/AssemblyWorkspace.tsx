@@ -9,7 +9,7 @@ import {useAssemblyPopupDrag} from './useAssemblyPopupDrag';
 import {useProjectAssembly} from './useProjectAssembly';
 import type {AssemblyEntry,AssemblySide,Panel,CadFaceReference} from './types';
 import type {CadFaceCatalog,CadPlacement} from './assembly-cad';
-import {beginFaceDraft,previewFaceDraft,updateFaceDraft,type FaceDraft,type FaceRole,type FaceSelection} from './face-connection-state';
+import {orderMateSelection,beginFaceDraft,previewFaceDraft,updateFaceDraft,type FaceDraft,type FaceRole,type FaceSelection} from './face-connection-state';
 import {DEFAULT_ASSEMBLY_GAP_MM,removeAssemblyBranch} from './assembly-geometry';
 import {connectionOccupants,descendants,namedEntries,nextLabel,stagedPanel,positionValues,freezePlacements,suspendMovedMates,moveIndependently,recordAction,type PositionValues,type AssemblyHistory} from './assembly-workspace-state';
 
@@ -87,12 +87,15 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  }
  function facePicked(role:FaceRole,face:CadFaceReference,id:string){
   if(!mateSelection){setDraft(old=>old?updateFaceDraft(old,{[role]:face,pick:null,message:''}):null);return;}
-  const next={...mateSelection,[role]:face,[role==='reference'?'referenceEntryId':'movingEntryId']:id,pick:role==='reference'?'moving' as const:null};
+  let next:FaceSelection={...mateSelection,[role]:face,[role==='reference'?'referenceEntryId':'movingEntryId']:id,pick:role==='reference'?'moving' as const:null};
   if(next.referenceEntryId===next.movingEntryId){setNotice('Select faces on two different panels.');return;}
+  let selectionNotice='';
   if(next.reference&&next.moving){
+   try{
+    const ordered=orderMateSelection(next,base);next=ordered.selection;
+    if(ordered.swapped)selectionNotice='Both faces selected. '+title(next.referenceEntryId)+' stays fixed; '+title(next.movingEntryId)+' moves to avoid reversing the existing connection tree.';
+   }catch(error){setNotice((error as Error).message);return;}
    const original=base.find(e=>e.id===next.movingEntryId)!;
-   if(!original.targetId){setNotice('The first panel is the fixed assembly reference. Select it first, or use Free Move.');return;}
-   if(descendants(base,original.id).has(next.referenceEntryId)){setNotice('This mate would create a circular dependency. Choose another reference.');return;}
    const from=mateStart.current.get(next.referenceEntryId),to=mateStart.current.get(next.movingEntryId);
    if(!from||!to){setNotice('Panel positions changed. Cancel and select the mating faces again.');return;}
    // Repicking an active joint keeps its original roll datum. Capturing
@@ -100,9 +103,10 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    const reuse=draft?.startPose&&draft.referenceEntryId===next.referenceEntryId&&draft.movingEntryId===next.movingEntryId&&draft.original.mateState!=='suspended';
    const startPose=reuse?draft.startPose:new Matrix4().fromArray(from).invert().multiply(new Matrix4().fromArray(to)).toArray();
    const d:FaceDraft={...next,original,startPose,matchFootprints:next.geometry!=='edge',mate:true,pick:null,message:'',fields:draft?.fields??{gap:String(original.connection?original.gap:0),u:'0',v:'0',normal:'0',twist:'0'}};
-   d.preview=previewFaceDraft(d);setDraft(d);setActive(id);next.pick=null;
+   d.preview=previewFaceDraft(d);setDraft(d);setActive(next.movingEntryId);next.pick=null;
   }
-  setMateSelection(next);setNotice('');
+  if(!next.reference||!next.moving)setDraft(old=>old?{...old,...next,preview:undefined}:null);
+  setMateSelection(next);setNotice(selectionNotice);
  }
  function repickMate(role:FaceRole){if(!mateSelection)return;setDraft(old=>old?{...old,[role]:undefined,preview:undefined}:null);setMateSelection({...mateSelection,[role]:undefined,pick:role});}
 

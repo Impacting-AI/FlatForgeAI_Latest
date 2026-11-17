@@ -55,3 +55,27 @@ export function reselectFaceDraft(draft:FaceDraft):FaceDraft {
   return {...draft,reference:undefined,moving:undefined,pick:'reference',preview,
     message:'Preview restored to envelope placement for picking. Select both faces again; saved positions change only after Apply.'};
 }
+
+/** Keep the existing root fixed, and never create an ancestor cycle just
+ * because the user clicked the descendant first. Preserve both exact picks. */
+export function orderMateSelection(selection:FaceSelection,entries:AssemblyEntry[]){
+  const next={...selection};
+  if(!next.reference||!next.moving)return {selection:next,swapped:false};
+  if(next.referenceEntryId===next.movingEntryId)throw new Error('Select faces on two different panels.');
+  const byId=new Map(entries.map(e=>[e.id,e]));
+  let current=byId.get(next.referenceEntryId);
+  if(!current||!byId.has(next.movingEntryId))throw new Error('A selected panel is unavailable. Cancel and reopen mating.');
+  const seen=new Set<string>();
+  while(current){
+    if(seen.has(current.id))throw new Error('The assembly has a circular connection. Correct that connection first.');
+    seen.add(current.id);
+    if(!current.targetId)break;
+    current=byId.get(current.targetId);
+  }
+  const swapped=!byId.get(next.movingEntryId)!.targetId||seen.has(next.movingEntryId);
+  if(swapped){
+    [next.referenceEntryId,next.movingEntryId]=[next.movingEntryId,next.referenceEntryId];
+    [next.reference,next.moving]=[next.moving,next.reference];
+  }
+  return {selection:next,swapped};
+}
