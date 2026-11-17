@@ -164,7 +164,20 @@ try {
   await pickFace('A');await mate.getByRole('button',{name:/^Reference: Panel A/}).waitFor();
   await pickFace('A');await page.getByText('Select faces on two different panels.',{exact:true}).waitFor();
   await pickFace('B');
+  // The chosen broad skins have folded returns: even a parallel 20 mm
+  // offset can penetrate their webs. Verify the warning before clearing them.
   await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill('20');
+  await page.getByRole('status').filter({hasText:'intersect by'}).waitFor();
+  assert.equal(await mate.getByRole('button',{name:'Apply Mate'}).isEnabled(),false);
+  const skinGap=1+Object.values(initial.bounds).reduce((sum,b)=>sum+b.max[2]-b.min[2],0);
+  await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill(String(skinGap));
+  await loaded();
+  // Both exposed broad skins point up in this assembly. Preserve the observed
+  // pose at selection, including roll, until an explicit twist is entered.
+  for(const row of placements.at(-1).entries){
+    const prior=initial.entries.find(e=>e.id===row.id);
+    row.matrix.slice(0,12).forEach((value,i)=>near(value,prior.matrix[i],1e-7));
+  }
   await mate.getByRole('spinbutton',{name:'Local V offset',exact:true}).fill('50');
   await mate.getByRole('spinbutton',{name:'In-plane rotation',exact:true}).fill('13');await loaded();
   const restoredPreview=page.waitForResponse(response=>response.url().endsWith('/assembly/place')&&response.ok());
@@ -172,19 +185,18 @@ try {
   await pickFace('B');await mate.getByRole('button',{name:/^Moving: Panel B/}).waitFor();await loaded();
   assert.equal(await mate.getByRole('spinbutton',{name:'Local V offset',exact:true}).inputValue(),'50');
   assert.equal(await mate.getByRole('spinbutton',{name:'In-plane rotation',exact:true}).inputValue(),'13');
-  near(placements.at(-1).mates[0].actual,20,1e-5);
+  near(placements.at(-1).mates[0].actual,skinGap,1e-5);
   const b=placements.at(-1).entries.find(e=>e.mateState==='active').id;
   assert.equal(placements.at(-1).entries.find(e=>e.id===b).connection.offsetV,50);
   await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill('-1');assert.equal(await mate.getByRole('button',{name:'Apply Mate'}).isEnabled(),false);
-  await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill('20');await loaded();
+  await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill(String(skinGap));await loaded();
   await page.locator('.assembly-workspace').screenshot({path:path.join(output,'mate-preview.png')});
   await mate.getByRole('button',{name:'Apply Mate',exact:true}).click();await mate.waitFor({state:'detached'});await loaded();
   assert.equal(placements.at(-1).entries.find(e=>e.id===b).pose,null);
   await add(sample.panels[2]);
   await page.getByRole('button',{name:'Connect / Mate',exact:true}).click();
   await pickFace('B');await pickFace('C');
-  await page.getByRole('status').filter({hasText:'intersect by'}).waitFor();
-  assert.equal(await mate.getByRole('button',{name:'Apply Mate'}).isEnabled(),false);
+  // This subsequent mate no longer implicitly rolls C into A.
   await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill('9');
   await mate.getByRole('spinbutton',{name:'Local U offset',exact:true}).fill('3200');await loaded();
   await mate.getByRole('button',{name:'Apply Mate',exact:true}).click();await loaded();
@@ -197,7 +209,7 @@ try {
   assert.notDeepEqual(placements.at(-1).entries.find(e=>e.id===c).matrix,chainBefore.entries.find(e=>e.id===c).matrix);
   near(placements.at(-1).mates.find(m=>m.entryId===c).actual,9,1e-5);
   await mate.getByRole('button',{name:'Apply Mate',exact:true}).click();await loaded();
-  near(placements.at(-1).mates[0].actual,20,1e-5);
+  near(placements.at(-1).mates[0].actual,skinGap,1e-5);
   const beforeFree=structuredClone(placements.at(-1));
   await choose('B');await page.getByRole('button',{name:'Move',exact:true}).click();await loaded();
   await position.getByRole('spinbutton',{name:'Y offset — up',exact:true}).fill('50');await loaded();

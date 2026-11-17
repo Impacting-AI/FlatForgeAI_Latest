@@ -65,6 +65,7 @@ class FaceReference(StrictModel):
 class FaceConnection(StrictModel):
     type: Literal['planar','straight-edge'] = 'planar'
     alignment: Literal['picked','top'] = 'picked'
+    startPose: list[float] | None = Field(default=None, min_length=16, max_length=16)
     flip: bool = False
     reference: FaceReference
     moving: FaceReference
@@ -76,6 +77,11 @@ class FaceConnection(StrictModel):
 
     @model_validator(mode='after')
     def consistent_references(self):
+        if self.startPose is not None:
+            m = connections.matrix(self.startPose)
+            r = m[:3,:3]
+            if self.type != 'planar' or not np.allclose(m[3], [0,0,0,1], atol=1e-8, rtol=0) or not np.allclose(r.T@r, np.eye(3), atol=1e-8, rtol=0) or abs(np.linalg.det(r)-1)>1e-8:
+                raise ValueError('A face mate requires a rigid starting pose.')
         if (self.type == 'straight-edge') != bool(self.reference.edgeId) or bool(self.reference.edgeId) != bool(self.moving.edgeId):
             raise ValueError('Both references must have the selected geometric type')
         if self.type == 'straight-edge' and self.twist:

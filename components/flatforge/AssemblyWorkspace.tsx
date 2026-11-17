@@ -1,4 +1,5 @@
 'use client';
+import {Matrix4} from 'three';
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {Plus,Undo2,Redo2,List,Move3D,RotateCw,Link2,Maximize2,X,Eye,EyeOff,Trash2,Save} from 'lucide-react';
 import AssemblyViewer,{type AssemblyViewerHandle} from './AssemblyViewer';
@@ -76,8 +77,10 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   beginConnection(panel,id,true);
  }
  const receiveCatalog=useCallback((catalog:CadFaceCatalog)=>setCatalogs(old=>({...old,[catalog.entryId]:catalog})),[]);
+ const mateStart=useRef(new Map<string,number[]>());
  function startMate(edit=false){
   if(!placement||!ready)return;
+  mateStart.current=new Map(placement.entries.map(e=>[e.id,e.matrix]));
   setBase(freezePlacements(entries,placement));setAddOpen(false);setHidden([]);setNotice('');
   if(edit&&selected?.connection){const next={...beginFaceDraft(selected),mate:true};next.preview=previewFaceDraft(next);setDraft(next);setMateSelection({...next,anyPanel:true,pick:null});}
   else {setDraft(null);setMateSelection({referenceEntryId:'',movingEntryId:'',pick:'reference',anyPanel:true,geometry:'face',alignment:'top'});}
@@ -90,7 +93,13 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    const original=base.find(e=>e.id===next.movingEntryId)!;
    if(!original.targetId){setNotice('The first panel is the fixed assembly reference. Select it first, or use Free Move.');return;}
    if(descendants(base,original.id).has(next.referenceEntryId)){setNotice('This mate would create a circular dependency. Choose another reference.');return;}
-   const d:FaceDraft={...next,original,mate:true,pick:null,message:'',fields:draft?.fields??{gap:String(original.connection?original.gap:0),u:'0',v:'0',normal:'0',twist:'0'}};
+   const from=mateStart.current.get(next.referenceEntryId),to=mateStart.current.get(next.movingEntryId);
+   if(!from||!to){setNotice('Panel positions changed. Cancel and select the mating faces again.');return;}
+   // Repicking an active joint keeps its original roll datum. Capturing
+   // its already twisted preview here would apply the user's twist twice.
+   const reuse=draft?.startPose&&draft.referenceEntryId===next.referenceEntryId&&draft.movingEntryId===next.movingEntryId&&draft.original.mateState!=='suspended';
+   const startPose=reuse?draft.startPose:new Matrix4().fromArray(from).invert().multiply(new Matrix4().fromArray(to)).toArray();
+   const d:FaceDraft={...next,original,startPose,mate:true,pick:null,message:'',fields:draft?.fields??{gap:String(original.connection?original.gap:0),u:'0',v:'0',normal:'0',twist:'0'}};
    d.preview=previewFaceDraft(d);setDraft(d);setActive(id);next.pick=null;
   }
   setMateSelection(next);setNotice('');

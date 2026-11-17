@@ -9,6 +9,7 @@ import numpy as np
 from fastapi import HTTPException
 from OCP.gp import gp_Trsf
 
+from .assembly_face_orientation import preserve_pose
 from .assembly_seams import PICK_EPS_MM, straight_edges, seam_reference
 
 
@@ -83,15 +84,20 @@ def connection_frame(entry, sources, parent_matrix):
     face_b, point_b, basis_b = resolve(sources[entry.id], connection.moving)
     if connection.alignment == 'top' or connection.type == 'straight-edge':
         face_a, point_a, basis_a = seam_reference(sources[entry.targetId], face_a, connection.reference, basis_a, False, connection)
-        face_b, point_b, basis_b = seam_reference(sources[entry.id], face_b, connection.moving, basis_b, True, connection)
+        if connection.startPose is None:
+            face_b, point_b, basis_b = seam_reference(sources[entry.id], face_b, connection.moving, basis_b, True, connection)
     basis = parent_matrix[:3, :3] @ basis_a
-    anchor = parent_matrix[:3, :3] @ point_a + parent_matrix[:3, 3]
     angle = math.radians(connection.twist % 360)
     c, s = math.cos(angle), math.sin(angle)
     turn = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.]])
     # Opposing normals, aligned V axes at zero twist; proper rotation (det +1).
     desired = basis @ turn @ np.diag([-1., 1., -1.])
-    rotation = desired @ basis_b.T
+    if connection.startPose is None:
+        rotation = desired @ basis_b.T  # historical mates and explicit edge mates
+    else:
+        relative, point_a, point_b = preserve_pose(connection, face_a, face_b, point_a, point_b, basis_a, basis_b[:,2], turn)
+        rotation = parent_matrix[:3,:3] @ relative
+    anchor = parent_matrix[:3,:3] @ point_a + parent_matrix[:3,3]
     separation = entry.gap + connection.normalOffset
     displacement = basis @ np.array([connection.offsetU, connection.offsetV, separation])
     result = np.eye(4)
