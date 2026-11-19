@@ -163,9 +163,9 @@ def run(config):
   report['status']=status;report['review_decisions']=overrides;dump(out/'report.json',report)
   artifacts={p.name:p.name for p in out.iterdir() if p.is_file() and p.name not in ['result.json','progress.json','progress.tmp']}
   dump(out/'result.json',{'status':status,'report':report,'artifacts':artifacts});return report
- report['conversion']={'input_format':source.suffix.lower()[1:],'status':'RUNNING' if source.suffix.lower()=='.dwg' else 'NOT_REQUIRED','engine':'ODA' if source.suffix.lower()=='.dwg' else 'Native DXF'}
+ report['conversion']={'input_format':source.suffix.lower()[1:],'status':'RUNNING' if source.suffix.lower()=='.dwg' else 'NOT_REQUIRED','engine':dwg.active_engine() if source.suffix.lower()=='.dwg' else 'Native DXF'}
  if source.suffix.lower()=='.dwg':
-  checkpoint('CONVERTING','Converting DWG to DXF with ODA…')
+  checkpoint('CONVERTING',f'Converting DWG to DXF with {dwg.active_engine()}…')
   try:
    source=dwg.convert(source,out/'dwg');report['conversion']['status']='DONE'
   except dwg.ConverterUnavailable as e:report['conversion']['status']='UNAVAILABLE';issue('DWG_CONVERTER',str(e));return finish('NEEDS_REVIEW')

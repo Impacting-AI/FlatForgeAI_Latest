@@ -5,6 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY flatforge ./flatforge
+RUN mkdir -p /app/lib
 RUN useradd --uid 10001 --create-home flatforge && mkdir -p /data && chown flatforge:flatforge /data
 USER flatforge
 EXPOSE 8000
