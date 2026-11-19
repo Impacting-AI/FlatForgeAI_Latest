@@ -255,7 +255,7 @@ WorkingDirectory=/opt/flatforge/backend
 EnvironmentFile=/opt/flatforge/.env
 Environment=DATABASE_URL=postgresql+psycopg://flatforge:REPLACE_DB_PASS@localhost/flatforge
 Environment=ADMIN_USERNAME=admin
-Environment=ADMIN_PASSWORD=REPLACE_WITH_STRONG_PASSWORD
+Environment=ADMIN_PASSWORD=Admin1234@
 ExecStart=/opt/flatforge/backend/.venv/bin/uvicorn flatforge.api:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=always
 RestartSec=5

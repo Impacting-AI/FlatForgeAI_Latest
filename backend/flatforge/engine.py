@@ -316,7 +316,7 @@ def run(config):
    issue('PARAMETER_REQUIRED',f'{field.capitalize()}: '+record['message'],field=field,suggested=record['value'])
  if issues:return finish('NEEDS_REVIEW')
  paint_points=[g.vec(p)-origin for e in doc.modelspace().query('LWPOLYLINE[layer=="צבע"]') for p in e.get_points()]
- if not general and (not paint_points or not all(faces[0].buffer(.01).covers(Point(p)) for p in paint_points)):issue('PAINT','Paint marker does not identify the selected main face unambiguously.');return finish('NEEDS_REVIEW')
+ if not general and (not paint_points or not all(faces[0].buffer(.01).covers(Point(p)) for p in paint_points)):report.setdefault('warnings',[]).append({'code':'PAINT','message':'Paint marker does not identify the selected main face unambiguously.'})
  if general:report['paint_evidence']={'source':'User review: root +Z is the finish reference' if manual else 'World-coordinate Zeva section markers; global base +Z is the finish reference','markers':[p['paint_handle'] for p in profs]}
  checkpoint('BUILDING','Section mapping complete. Building and validating the folded solid…')
  tf=g.transforms(faces,edges,order,t,r,bd,bend_model);solid,trimmed,stats=g.build_cad(faces,material,edges,tf,t,r,bd,3.,out,settings['bend_end_mode'])
