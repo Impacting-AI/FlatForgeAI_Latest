@@ -198,6 +198,13 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy same-origin always;
 
+    # Auth endpoints — no API key injected; frontend talks to these directly
+    location /api/engine/auth/ {
+        proxy_pass http://127.0.0.1:8000/auth/;
+        proxy_set_header Host $host;
+        proxy_read_timeout 30s;
+    }
+
     location = /api/bootstrap {
         proxy_pass http://127.0.0.1:8000/bootstrap;
         proxy_set_header X-Flatforge-Key "REPLACE_WITH_YOUR_API_KEY";
@@ -247,6 +254,8 @@ User=$USER
 WorkingDirectory=/opt/flatforge/backend
 EnvironmentFile=/opt/flatforge/.env
 Environment=DATABASE_URL=postgresql+psycopg://flatforge:REPLACE_DB_PASS@localhost/flatforge
+Environment=ADMIN_USERNAME=admin
+Environment=ADMIN_PASSWORD=REPLACE_WITH_STRONG_PASSWORD
 ExecStart=/opt/flatforge/backend/.venv/bin/uvicorn flatforge.api:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=always
 RestartSec=5

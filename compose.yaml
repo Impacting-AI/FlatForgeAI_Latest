@@ -25,6 +25,8 @@ services:
       DATABASE_URL: postgresql+psycopg://flatforge:${POSTGRES_PASSWORD}@database/flatforge
       FLATFORGE_API_KEY: ${FLATFORGE_API_KEY:?Set a long random FLATFORGE_API_KEY}
       FLATFORGE_DATA: /data
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
       USE_ODA: ${USE_ODA:-false}
       USE_CADSOFT: ${USE_CADSOFT:-false}
       ODA_FILE_CONVERTER: ${ODA_FILE_CONVERTER:-}

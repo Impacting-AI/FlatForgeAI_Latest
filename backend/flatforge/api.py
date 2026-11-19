@@ -1,4 +1,4 @@
-import os, json, time, uuid, tempfile, hashlib, hmac, zipfile, shutil
+import os, json, time, uuid, tempfile, hashlib, hmac, zipfile, shutil, secrets as _secrets
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -16,6 +16,9 @@ from . import tolerance_policy
 from . import assembly as assembly_cad
 from . import assembly_projects
 MAX_BYTES=int(os.getenv('MAX_UPLOAD_MB','50'))*1024*1024
+_sessions:dict[str,float]={}  # token -> expiry unix timestamp
+SESSION_TTL=86400  # 24 hours
+
 @asynccontextmanager
 async def lifespan(app):
  if len(os.getenv('FLATFORGE_API_KEY',''))<24:raise RuntimeError('Set FLATFORGE_API_KEY to a random secret of at least 24 characters.')
@@ -26,6 +29,33 @@ async def lifespan(app):
  except IntegrityError:pass
  yield
 app=FastAPI(title='FlatForge CAD API',version='1.1.0',lifespan=lifespan)
+
+class LoginInput(BaseModel):
+ username:str;password:str
+
+@app.post('/auth/login')
+def login(body:LoginInput):
+ admin_user=os.getenv('ADMIN_USERNAME','')
+ admin_pass=os.getenv('ADMIN_PASSWORD','')
+ if not admin_user or not admin_pass:raise HTTPException(503,'Admin credentials not configured on the server.')
+ valid_user=hmac.compare_digest(body.username,admin_user)
+ valid_pass=hmac.compare_digest(body.password,admin_pass)
+ if not (valid_user and valid_pass):raise HTTPException(401,'Invalid username or password.')
+ token=_secrets.token_hex(32)
+ _sessions[token]=time.time()+SESSION_TTL
+ return {'token':token}
+
+@app.post('/auth/logout')
+def logout(x_session_token:str=Header(default='')):
+ _sessions.pop(x_session_token,None)
+ return {'ok':True}
+
+@app.get('/auth/validate')
+def validate_session(x_session_token:str=Header(default='')):
+ exp=_sessions.get(x_session_token,0)
+ if time.time()>exp:raise HTTPException(401,'Session expired or not found.')
+ return {'ok':True}
+
 def auth(request:Request,x_flatforge_key:str=Header(default=''),x_flatforge_project_id:str|None=Header(default=None)):
  expected=os.getenv('FLATFORGE_API_KEY','')
  if not expected or not hmac.compare_digest(x_flatforge_key,expected):raise HTTPException(401,'Authentication required')

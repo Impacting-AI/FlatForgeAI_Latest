@@ -4,7 +4,7 @@ async function proxy(request:Request,{params}:{params:Promise<{path:string[]}>})
  const {url,key}=runtime();
  if(!url||!key)return Response.json({detail:'The Python conversion service is not connected. Deploy the supplied backend and configure its URL and secret.'},{status:503});
  const {path}=await params;
- if(path.some(p=>p==='..'||p.includes('/')||p.includes('\\'))||!['bootstrap','settings','projects','panels'].includes(path[0]))return Response.json({detail:'Invalid API route'},{status:400});
+ if(path.some(p=>p==='..'||p.includes('/')||p.includes('\\'))||!['bootstrap','settings','projects','panels','auth'].includes(path[0]))return Response.json({detail:'Invalid API route'},{status:400});
  const destination=new URL(url.replace(/\/$/,'')+'/'+path.map(encodeURIComponent).join('/'));destination.search=new URL(request.url).search;
  const headers=new Headers({'x-flatforge-key':key});const contentType=request.headers.get('content-type');if(contentType)headers.set('content-type',contentType);
  const projectId=request.headers.get('x-flatforge-project-id');if(projectId)headers.set('x-flatforge-project-id',projectId);
