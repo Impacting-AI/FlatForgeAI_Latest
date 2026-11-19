@@ -36,8 +36,8 @@ export default function LoginGate({ children }: { children: React.ReactNode }) {
   if (!token) return <LoginScreen onLogin={onLogin} />;
   return (
     <AuthCtx.Provider value={{ logout }}>
+      <TopBar logout={logout} />
       {children}
-      <LogoutBtn logout={logout} />
     </AuthCtx.Provider>
   );
 }
@@ -166,11 +166,22 @@ function LoginScreen({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function LogoutBtn({ logout }: { logout: () => void }) {
+function TopBar({ logout }: { logout: () => void }) {
   return (
-    <button onClick={logout} title="Sign out" aria-label="Sign out" style={S.logoutBtn} className="ff-logout">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-    </button>
+    <div style={S.topBar}>
+      <div style={S.topBarInner}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <div style={{ width:24, height:24, borderRadius:6, background:'linear-gradient(135deg,#0d9488,#14b8a6)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          </div>
+          <span style={{ fontSize:'.85rem', fontWeight:600, color:'var(--ff-topbar-fg,#94a3b8)', letterSpacing:'-.01em' }}>FlatForge</span>
+        </div>
+        <button onClick={logout} style={S.logoutBtn} className="ff-logout" title="Sign out" aria-label="Sign out">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Sign out
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -295,23 +306,39 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: '.75rem',
     color: 'var(--ff-muted,#334155)',
   },
-  logoutBtn: {
+  topBar: {
     position: 'fixed',
-    bottom: 20,
-    right: 20,
+    top: 0,
+    left: 0,
+    right: 0,
     zIndex: 9999,
-    width: 38,
-    height: 38,
-    borderRadius: '50%',
-    border: '1px solid rgba(20,184,166,.25)',
-    background: '#111918',
-    color: '#94a3b8',
-    cursor: 'pointer',
+    background: 'rgba(10,15,15,.85)',
+    backdropFilter: 'blur(12px)',
+    borderBottom: '1px solid rgba(20,184,166,.12)',
+  },
+  topBarInner: {
+    maxWidth: 1400,
+    margin: '0 auto',
+    padding: '0 20px',
+    height: 48,
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 2px 10px rgba(0,0,0,.3)',
-    transition: 'opacity .15s, background .15s',
+    justifyContent: 'space-between',
+  },
+  logoutBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 14px',
+    fontSize: '.8rem',
+    fontWeight: 600,
+    color: '#94a3b8',
+    background: 'rgba(20,184,166,.08)',
+    border: '1px solid rgba(20,184,166,.2)',
+    borderRadius: 8,
+    cursor: 'pointer',
+    transition: 'background .15s, color .15s',
+    letterSpacing: '.01em',
   },
 };
 
@@ -324,7 +351,7 @@ const css = `
   .ff-btn:hover:not(:disabled) { opacity:.88; transform:translateY(-1px); }
   .ff-btn:active:not(:disabled) { transform:translateY(0); }
   .ff-btn:disabled { opacity:.6; cursor:not-allowed; }
-  .ff-logout:hover { background:#0d9488 !important; color:#fff !important; }
+  .ff-logout:hover { background:rgba(20,184,166,.18) !important; color:#14b8a6 !important; border-color:rgba(20,184,166,.4) !important; }
   @keyframes ff-spin { to { transform:rotate(360deg); } }
   .ff-spin { animation:ff-spin .8s linear infinite; }
   * { box-sizing:border-box; }
