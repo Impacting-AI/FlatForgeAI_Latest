@@ -36,7 +36,6 @@ export default function LoginGate({ children }: { children: React.ReactNode }) {
   if (!token) return <LoginScreen onLogin={onLogin} />;
   return (
     <AuthCtx.Provider value={{ logout }}>
-      <TopBar logout={logout} />
       {children}
     </AuthCtx.Provider>
   );
@@ -166,14 +165,6 @@ function LoginScreen({ onLogin }: { onLogin: (t: string) => void }) {
   );
 }
 
-function TopBar({ logout }: { logout: () => void }) {
-  return (
-    <button onClick={logout} style={S.logoutBtn} className="ff-logout" title="Sign out" aria-label="Sign out">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-      Sign out
-    </button>
-  );
-}
 
 function Logo() {
   return (

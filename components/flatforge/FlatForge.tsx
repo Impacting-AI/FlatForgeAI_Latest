@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pencil, Trash2, MoreHorizontal, ArrowLeft, Layers3, Upload, Box, Settings2, FolderOpen, Plus, ChevronRight, ChevronDown, ArrowDownToLine, Check, CircleAlert, CircleCheck, FileUp, ScanLine, Ruler, Play, Pause, X, RotateCw, FileText, LoaderCircle, Download, Package, ArrowLeftRight, PanelTop, ExternalLink } from 'lucide-react';
+import { Pencil, Trash2, MoreHorizontal, ArrowLeft, Layers3, Upload, Box, Settings2, FolderOpen, Plus, ChevronRight, ChevronDown, ArrowDownToLine, Check, CircleAlert, CircleCheck, FileUp, ScanLine, Ruler, Play, Pause, X, RotateCw, FileText, LoaderCircle, Download, Package, ArrowLeftRight, PanelTop, ExternalLink, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -11,6 +11,7 @@ import { Slider } from '@/components/ui/slider';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { SidebarProvider, Sidebar, SidebarHeader, SidebarContent, SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
+import { useAuth } from './LoginGate';
 import { Toaster, toast } from 'sonner';
 import ModelViewer from './ModelViewer';
 import DrawingMeasurement from './DrawingMeasurement';
@@ -27,6 +28,18 @@ const labels:Record<string,string>={PASS:'Ready',NEEDS_REVIEW:'Needs review',FAI
 function Status({value}:{value:string}){return <span className={'status status-'+value.toLowerCase()}>{value==='PASS'?<CircleCheck/>:value==='NEEDS_REVIEW'?<CircleAlert/>:value==='FAILED'?<X/>:<LoaderCircle className="spin"/>}{labels[value]||value}</span>}
 const mm=(value?:number)=>value===undefined?'—':value.toLocaleString('en',{maximumFractionDigits:2});
 const activeStatuses=['QUEUED','CONVERTING','EXTRACTING','BUILDING'];
+function SidebarLogout(){
+  const {logout}=useAuth();
+  return(
+    <button onClick={logout} style={{display:'flex',alignItems:'center',gap:8,width:'100%',padding:'8px 12px',fontSize:'.8rem',fontWeight:500,color:'#94a3b8',background:'none',border:'1px solid rgba(255,255,255,.07)',borderRadius:8,cursor:'pointer',margin:'4px 0',transition:'background .15s,color .15s'}}
+      onMouseEnter={e=>{(e.currentTarget as HTMLButtonElement).style.background='rgba(239,68,68,.08)';(e.currentTarget as HTMLButtonElement).style.color='#f87171'}}
+      onMouseLeave={e=>{(e.currentTarget as HTMLButtonElement).style.background='none';(e.currentTarget as HTMLButtonElement).style.color='#94a3b8'}}
+      title="Sign out">
+      <LogOut size={14}/><span>Sign out</span>
+    </button>
+  );
+}
+
 export default function FlatForge({initialPath='/'}:{initialPath?:string}){
  const [data,setData]=useState<Bootstrap|null>(null);
  const request=useRef(0);
@@ -134,7 +147,7 @@ function FlatForgeWorkspace({data,refresh,route,navigate,registerGuard}:{data:Bo
   <SidebarMenu style={{marginTop:'auto'}}><SidebarMenuItem><SidebarMenuButton className="nav-item" onClick={openSettings}><Settings2/><span>Material defaults</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
  </>)}
  </SidebarContent>
- <SidebarFooter><div className="rail-material"><span>DEFAULT MATERIAL</span><strong>Aluminium <small>{data.settings.thickness} mm</small></strong><p>R{data.settings.radius} inside · BD {data.settings.deduction}</p><button onClick={openSettings}>Edit defaults <Settings2 size={13}/></button></div><div className="rail-bottom">FLATFORGE<br/><span>Panel engineering workspace</span></div></SidebarFooter></Sidebar>
+ <SidebarFooter><div className="rail-material"><span>DEFAULT MATERIAL</span><strong>Aluminium <small>{data.settings.thickness} mm</small></strong><p>R{data.settings.radius} inside · BD {data.settings.deduction}</p><button onClick={openSettings}>Edit defaults <Settings2 size={13}/></button></div><SidebarLogout/><div className="rail-bottom">FLATFORGE<br/><span>Panel engineering workspace</span></div></SidebarFooter></Sidebar>
  <section className="workspace">
  <header className="topbar">
  {screen==='home'
