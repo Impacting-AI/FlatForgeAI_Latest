@@ -135,3 +135,10 @@
 @media(max-width:850px){.project-grid{grid-template-columns:1fr 1fr;margin-left:16px;margin-right:16px}.back-to-projects span,.ws-project-item{display:none}}
 @media(max-width:600px){.project-grid{grid-template-columns:1fr}}
 .webgl-host{position:absolute;inset:0}.viewport-actions{position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:7px}.viewport-actions button{width:31px;height:31px;background:#ffffffdd;border-color:#d2dfd8;color:#678575}.viewport-actions svg{width:14px;height:14px}.axis-key{position:absolute;right:15px;bottom:18px;display:flex;gap:8px;font:10px monospace}.axis-key .x{color:#b66e68}.axis-key .y{color:#559575}.axis-key .z{color:#7297b0}.axis-key small{color:#99ada0}.viewport-help{position:absolute;left:14px;bottom:18px;font-size:8px;color:#90a69a;pointer-events:none}.viewport-help span{padding:0 5px}
+
+/* Interactive assembly face selection */
+.asm-pick-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#e5f5ef;border-bottom:1px solid #9bcdb8;color:#27624d;font-size:11px;line-height:1.5}
+.asm-pick-banner button{border:1px solid #8ab8a2;border-radius:4px;background:#fff;padding:4px 9px;color:#27624d;font-size:10px;white-space:nowrap}
+.asm-target-pick{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;padding:8px;border:1px solid #d9e7df;border-radius:5px;background:#f7faf8}
+.asm-target-pick strong{font-size:10px;color:#3c6555}
+.asm-target-pick button{font-size:10px;height:29px;white-space:nowrap}
