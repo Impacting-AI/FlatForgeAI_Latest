@@ -150,7 +150,7 @@ export default function FlatForge(){
  <div className="project-strip">
   <div><span className="strip-icon"><FolderOpen size={18}/></span><strong>{data.projects.length}</strong><span>projects</span></div>
   <div><CircleCheck className="text-green" size={17}/><strong>{data.panels.filter(p=>p.status==='PASS').length}</strong><span>ready</span></div>
-  <div><CircleAlert size={17}/><strong>{data.panels.filter(p=>p.status==='NEEDS_REVIEW'||p.status==='FAILED').length}</strong><span>need review</span></div>
+  <div><CircleAlert size={17}/><strong>{data.panels.filter(p=>p.status==='NEEDS_REVIEW'||p.status==='FAILED').length}</strong><span>exceptions</span></div>
   <div><LoaderCircle size={17}/><strong>{data.panels.filter(p=>activeStatuses.includes(p.status)).length}</strong><span>processing</span></div>
   <div className="strip-material"><span>Material</span><strong>Aluminium</strong><span className="divider"/><span>Units</span><strong>mm</strong></div>
  </div>
@@ -308,8 +308,8 @@ export default function FlatForge(){
    <p className="inspector-section" style={{marginTop:22}}>HOW TO</p>
    <ol className="asm-how">
     <li>Add the <strong>root panel</strong> — it anchors the assembly at the origin.</li>
-    <li>Add each <strong>next panel</strong>, pick which face of the new panel meets which face of an existing panel.</li>
-    <li>Set the <strong>gap</strong> in mm (sealant / structural gap between faces).</li>
+    <li>Add the next panel, click <strong>Pick face in 3D</strong> to select the existing face, then choose the new panel's mating face.</li>
+    <li>Set the <strong>gap</strong> and optional X/Y/Z offsets in mm.</li>
     <li>Edit any connection inline, or remove and re-add a panel to change it.</li>
    </ol>
   </div>
