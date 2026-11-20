@@ -76,7 +76,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   }),[]);
 
   // Re-mount Three.js scene only when panel set / connections change
-  const key = entries.map(e=>`${e.id}:${e.panelId}:${e.myFace}:${e.targetId}:${e.targetFace}:${e.gap}`).join('|');
+  const key = entries.map(e=>`${e.id}:${e.panelId}:${e.myFace}:${e.targetId}:${e.targetFace}:${e.gap}:${e.offset?.x||0}:${e.offset?.y||0}:${e.offset?.z||0}`).join('|');
 
   useEffect(()=>{
    if(!entries.length){
