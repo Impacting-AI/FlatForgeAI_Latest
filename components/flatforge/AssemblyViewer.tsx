@@ -46,11 +46,13 @@ type Props = {
  panels: Panel[];
  paint: boolean;
  wire: boolean;
+ pickMode?: boolean;
+ onPickFace?: (entryId:string,face:Face)=>void;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({entries,panels,paint,wire},ref){
+ function AssemblyViewer({entries,panels,paint,wire,pickMode=false,onPickFace},ref){
   const host = useRef<HTMLDivElement>(null);
   const viewApi = useRef<{fit:()=>void;screenshot:()=>void}|null>(null);
   const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
@@ -59,11 +61,13 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   // Track latest paint/wire for use inside async closures
   const paintLatest = useRef(paint);
   const wireLatest = useRef(wire);
+  const pickModeLatest = useRef(pickMode);
+  const onPickFaceLatest = useRef(onPickFace);
   const [msg,setMsg] = useState('');
   const [err,setErr] = useState(false);
 
   // Keep latest-value refs up to date without triggering re-mount
-  useEffect(()=>{ paintLatest.current=paint; wireLatest.current=wire; },[paint,wire]);
+  useEffect(()=>{ paintLatest.current=paint; wireLatest.current=wire; pickModeLatest.current=pickMode; onPickFaceLatest.current=onPickFace; },[paint,wire,pickMode,onPickFace]);
 
   // Expose imperative handle
   useImperativeHandle(ref,()=>({
@@ -72,7 +76,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   }),[]);
 
   // Re-mount Three.js scene only when panel set / connections change
-  const key = entries.map(e=>`${e.id}:${e.panelId}:${e.myFace}:${e.targetId}:${e.targetFace}:${e.gap}`).join('|');
+  const key = entries.map(e=>`${e.id}:${e.panelId}:${e.myFace}:${e.targetId}:${e.targetFace}:${e.gap}:${e.offset?.x||0}:${e.offset?.y||0}:${e.offset?.z||0}`).join('|');
 
   useEffect(()=>{
    if(!entries.length){
@@ -138,19 +142,20 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       const tItem=items.get(entry.targetId);
       const tWC=worldCenter.get(entry.targetId);
       if(!tItem||!tWC||!entry.targetFace) continue;
-      const tFacePos=tWC.clone().add(faceOff(entry.targetFace,tItem.halfSize));
-      const normal=NORMALS[entry.targetFace].clone();
+      const tFacePos=tWC.clone().add(faceOff(entry.targetFace,tItem.halfSize).applyQuaternion(tItem.group.quaternion));
+      const normal=NORMALS[entry.targetFace].clone().applyQuaternion(tItem.group.quaternion);
       const myOff=faceOff(entry.myFace,item.halfSize);
-      const wc=tFacePos.clone().addScaledVector(normal,entry.gap/1000).sub(myOff);
-      if(entry.targetFace!=='+Z'&&entry.targetFace!=='-Z'&&entry.myFace!=='+Z'&&entry.myFace!=='-Z'){
-       wc.z=item.halfSize.z; // keep panels resting on ground for lateral connections
-      }
+      const childRotation=new THREE.Quaternion().setFromUnitVectors(NORMALS[entry.myFace],normal.clone().negate());
+      item.group.quaternion.copy(childRotation);
+      const rotatedMyOffset=myOff.applyQuaternion(childRotation);
+      const offset=new THREE.Vector3(entry.offset?.x||0,entry.offset?.y||0,entry.offset?.z||0).multiplyScalar(.001);
+      const wc=tFacePos.clone().addScaledVector(normal,entry.gap/1000).sub(rotatedMyOffset).add(offset);
       worldCenter.set(entry.id,wc);
      }
     }
     for(const[id,wc]of worldCenter){
      const item=items.get(id);
-     if(item) item.group.position.copy(wc.clone().sub(item.localCenter));
+     if(item) item.group.position.copy(wc.clone().sub(item.localCenter.clone().applyQuaternion(item.group.quaternion)));
     }
 
     // ── Paint / wireframe ─────────────────────────────────────────────────
@@ -294,6 +299,32 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      camera.near=.001; camera.far=Math.max(100,dist*20);
      camera.updateProjectionMatrix(); controls.update();
     }
+    const pickRay=new THREE.Raycaster();
+    const pickPointer=new THREE.Vector2();
+    function handleFacePick(event:MouseEvent){
+     if(!pickModeLatest.current||!onPickFaceLatest.current)return;
+     const rect=renderer.domElement.getBoundingClientRect();
+     if(!rect.width||!rect.height)return;
+     pickPointer.set(((event.clientX-rect.left)/rect.width)*2-1,-((event.clientY-rect.top)/rect.height)*2+1);
+     pickRay.setFromCamera(pickPointer,camera);
+     const hits=pickRay.intersectObjects([...items.values()].map(v=>v.group),true);
+     if(!hits.length)return;
+     const hit=hits[0];
+     for(const entry of entries){
+      const item=items.get(entry.id);if(!item)continue;
+      let node:THREE.Object3D|null=hit.object;let belongs=false;
+      while(node){if(node===item.group){belongs=true;break;}node=node.parent;}
+      if(!belongs)continue;
+      const worldNormal=hit.face?.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
+      const localNormal=worldNormal?.applyMatrix3(new THREE.Matrix3().getNormalMatrix(item.group.matrixWorld).invert()).normalize();
+      if(!localNormal)continue;
+      const ax=Math.abs(localNormal.x),ay=Math.abs(localNormal.y),az=Math.abs(localNormal.z);
+      const face:Face=ax>=ay&&ax>=az?(localNormal.x>=0?'+X':'-X'):ay>=az?(localNormal.y>=0?'+Y':'-Y'):(localNormal.z>=0?'+Z':'-Z');
+      onPickFaceLatest.current(entry.id,face);break;
+     }
+    }
+    renderer.domElement.addEventListener('click',handleFacePick);
+    renderer.domElement.style.cursor=pickMode?'crosshair':'grab';
     viewApi.current={
      fit,
      screenshot:()=>{renderer.render(scene,camera);const a=document.createElement('a');a.href=renderer.domElement.toDataURL('image/png');a.download='FlatForge_Assembly.png';a.click();}
@@ -307,6 +338,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    loop();
 
    return()=>{
+    renderer.domElement.removeEventListener('click',handleFacePick);
     alive=false; cancelAnimationFrame(frame); resize.disconnect(); controls.dispose();
     applyRef.current=null;
     runClashRef.current=()=>[];
@@ -319,6 +351,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
   // Apply visual settings without reloading
   useEffect(()=>{applyRef.current?.(paint,wire);},[paint,wire]);
+  useEffect(()=>{if(host.current){const canvas=host.current.querySelector('canvas');if(canvas)canvas.style.cursor=pickMode?'crosshair':'grab';}},[pickMode]);
 
   return(
    <div className="viewer-stage">
@@ -330,7 +363,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      <Button variant="outline" size="icon" aria-label="Screenshot" onClick={()=>viewApi.current?.screenshot()}><Camera/></Button>
     </div>
     <div className="axis-key"><span className="x">X</span><span className="y">Y</span><span className="z">Z</span><small>mm</small></div>
-    <div className="viewport-help">Drag to orbit · Right-drag to pan · Scroll to zoom</div>
+    <div className="viewport-help">{pickMode?'Click a panel face to select the connection target.':'Drag to orbit · Right-drag to pan · Scroll to zoom'}</div>
    </div>
   );
  }

@@ -8,24 +8,29 @@ Unmatched dimensions and conflicting rotations remain review conditions.
 """
 import copy
 import math
+import hashlib
+import json
 import numpy as np
 from . import geometry as g
-from .section_mapping import map_normal_sections
+from .section_mapping import map_normal_sections, apply_normal
+from .parameters import normalized_angle
 
 
-def profile_values(p,t,r,bd):
+def profile_values(p,t,r,bd,angle_tolerance=.1,bend_model='constant_k',hinges=None):
     vectors=np.diff(p['points'],axis=0)
     hand=g.cross(g.unit(vectors[p['main']]),p['paint_normal'])
-    angles=np.array([math.degrees(math.atan2(g.cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])])
-    gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
+    turns=[math.degrees(math.atan2(g.cross(a,b)*hand,a@b)) for a,b in zip(vectors,vectors[1:])]
+    angles=np.array([normalized_angle(a,angle_tolerance) for a in turns])
+    p['angle_adjustments']=[{'vertex':i+1,'drawn_deg':float(a),'used_deg':float(b)} for i,(a,b) in enumerate(zip(turns,angles)) if abs(a-b)>1e-7]
+    gains=g.section_gains(angles,t,r,bd,hinges,bend_model)
     return angles,np.linalg.norm(vectors,axis=1)-np.r_[0,gains]-np.r_[gains,0]
 
 
-def commit(p,hinges,angles,method):
-    if any('angle' in e and abs(e['angle']-a)>1e-5 for e,a in zip(hinges,angles)):
+def commit(p,hinges,angles,method,angle_tolerance=.1):
+    if any('angle' in e and abs(e['angle']-a)>max(angle_tolerance,1e-5) for e,a in zip(hinges,angles)):
         return False
     for i,(e,a) in enumerate(zip(hinges,angles)):
-        e['angle']=float(a)
+        if 'angle' not in e:e['angle']=float(a)
         e.setdefault('evidence',[]).append({'profile':p['name'],'vertex':i+1,'angle':float(a),
             'handles_before':p['segments'][i]['handles'],'handles_after':p['segments'][i+1]['handles'],
             'paint_marker':p['paint_handle'],'layer':p.get('layer'),'method':method})
@@ -76,53 +81,75 @@ def boundary_lengths(face,a,b):
     return options
 
 
-def local_candidates(p,faces,edges,t,r,bd):
+def local_candidates(p,faces,edges,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k',diagnostic=False):
     lookup={frozenset(e['faces']):e for e in edges};adj={i:[] for i in range(len(faces))}
     for e in edges:
         a,b=e['faces'];adj[a].append(b);adj[b].append(a)
-    # Base is the root selected by the geometry/paint convention, not a named ID.
-    root=next(i for i in adj if not any(e['child']==i for e in edges))
     main=p['main'];count=len(p['segments'])
     if not 0<main<count-1:return []
-    turns,expected=profile_values(p,t,r,bd);found=[]
-    for left in root_paths(adj,root,main):
-        for right in root_paths(adj,root,count-main-1):
-            if set(left[1:])&set(right[1:]):continue
-            chain=left[::-1]+right[1:]
-            hinges=[lookup[frozenset((a,b))] for a,b in zip(chain,chain[1:])]
-            # Parallel chains already have a true normal-section interpretation.
-            if abs(g.cross(g.support(hinges[main-1])[0],g.support(hinges[main])[0]))<1e-5:continue
-            actual=[];valid=True
-            for i,f in enumerate(chain):
-                if i==main:actual.append(None);continue
-                if i in (0,count-1):
-                    e=hinges[0 if i==0 else -1];_,n,c=g.support(e)
-                    actual.append(float(max(abs(np.array(q)@n-c) for q in faces[f].exterior.coords)))
-                else:
-                    a,b=hinges[i-1:i+1];ua,na,ca=g.support(a);ub,nb,cb=g.support(b)
-                    if abs(g.cross(ua,ub))>1e-5:valid=False;break
-                    actual.append(float(abs((nb*cb)@na-ca)))
-            if not valid:continue
-            for length,segment in boundary_lengths(faces[root],hinges[main-1],hinges[main]):
-                lengths=np.array([length if x is None else x for x in actual]);error=float(max(abs(lengths-expected)))
-                if error>.5:continue
-                rotations=[]
-                for e,a,f0,f1 in zip(hinges,turns,chain,chain[1:]):
-                    u,n,c=g.support(e)
-                    travel=np.array(faces[f1].representative_point().coords[0])-np.array(faces[f0].representative_point().coords[0])
-                    direction=n*np.sign(travel@n)
-                    rotations.append(float(a*np.sign(g.cross(u,direction))*(1 if e['parent']==f0 else -1)))
-                found.append({'chain':chain,'hinges':hinges,'angles':rotations,'flat_lengths':lengths,
-                              'expected':expected,'error':error,'boundary':segment,
-                              'signature':tuple(sorted((e['index'],round(a,6)) for e,a in zip(hinges,rotations)))})
+    turns,expected=profile_values(p,t,r,bd,angle_tolerance,bend_model);found=[]
+    # A local detail can describe any plate, not only the largest tree root.
+    # Parent/child orientation stays unchanged when calculating signed folds.
+    for root in adj:
+        for left in root_paths(adj,root,main):
+            for right in root_paths(adj,root,count-main-1):
+                if set(left[1:])&set(right[1:]):continue
+                chain=left[::-1]+right[1:]
+                hinges=[lookup[frozenset((a,b))] for a,b in zip(chain,chain[1:])]
+                turns,expected=profile_values(p,t,r,bd,angle_tolerance,bend_model,hinges)
+                # Parallel chains already have a true normal-section interpretation.
+                if abs(g.cross(g.support(hinges[main-1])[0],g.support(hinges[main])[0]))<1e-5:continue
+                actual=[];valid=True
+                for i,f in enumerate(chain):
+                    if i==main:actual.append(None);continue
+                    if i in (0,count-1):
+                        e=hinges[0 if i==0 else -1];_,n,c=g.support(e)
+                        actual.append(float(max(abs(np.array(q)@n-c) for q in faces[f].exterior.coords)))
+                    else:
+                        a,b=hinges[i-1:i+1];ua,na,ca=g.support(a);ub,nb,cb=g.support(b)
+                        if abs(g.cross(ua,ub))>1e-5:valid=False;break
+                        actual.append(float(abs((nb*cb)@na-ca)))
+                if not valid:continue
+                for length,segment in boundary_lengths(faces[root],hinges[main-1],hinges[main]):
+                    lengths=np.array([length if x is None else x for x in actual]);error=float(max(abs(lengths-expected)))
+                    if error>strip_tolerance and not diagnostic:continue
+                    rotations=[]
+                    for e,a,f0,f1 in zip(hinges,turns,chain,chain[1:]):
+                        u,n,c=g.support(e)
+                        travel=np.array(faces[f1].representative_point().coords[0])-np.array(faces[f0].representative_point().coords[0])
+                        direction=n*np.sign(travel@n)
+                        rotations.append(float(a*np.sign(g.cross(u,direction))*(1 if e['parent']==f0 else -1)))
+                    found.append({'chain':chain,'hinges':hinges,'angles':rotations,'flat_lengths':lengths,
+                                  'expected':expected,'error':error,'boundary':segment,
+                                  'signature':tuple(sorted((e['index'],round(a,6)) for e,a in zip(hinges,rotations)))})
     return found
 
 
-def map_details(faces,outer,edges,profiles,t,r,bd):
-    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd)
+def signatures_agree(a,b,tolerance):
+    aa=dict(a);bb=dict(b)
+    return aa.keys()==bb.keys() and all(abs(aa[k]-bb[k])<=max(tolerance,1e-5) for k in aa)
+
+
+def candidate_id(candidate,kind):
+    # Includes geometry correspondence and rotations: a changed candidate needs
+    # a new decision, rather than silently reusing an old dropdown index.
+    payload=(kind,candidate['signature'])
+    return kind+'-'+hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:16]
+
+
+def candidate_summary(c,kind):
+    return {'id':candidate_id(c,kind),'kind':kind,'faces':c.get('chain',[x[2] for x in c.get('trace',[])]),
+            'bend_ids':[[s['id'] for s in e['source']] for e in c['hinges']],
+            'rotations_deg':[float(a) for a in c.get('angles',c.get('rotations',[]))],
+            'max_strip_error_mm':c['error']}
+
+
+def map_details(faces,outer,edges,profiles,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k',selections=None):
+    selections=selections or {}
+    reports=map_normal_sections(faces,outer,edges,profiles,t,r,bd,strip_tolerance,angle_tolerance,bend_model)
     pending=[]
     for p,row in zip(profiles,reports):
-        if row['status']=='PASS':continue
+        if row['status']=='PASS' and not selections.get(p['name']):continue
         repeated=repeated_candidates(p,edges)
         if repeated:
             instances=[]
@@ -132,24 +159,57 @@ def map_details(faces,outer,edges,profiles,t,r,bd):
                     cut_direction=c['direction'],cut_coordinate=c['c'],
                     name=p['name']+'_F'+str(c['trace'][c['main']][2]),mapping='repeated transverse detail')
                 instances.append((instance,c))
-            if all(not any('angle' in e and abs(e['angle']-a)>1e-5 for e,a in zip(c['hinges'],c['rotations'])) for _,c in instances):
-                for instance,c in instances:commit(instance,c['hinges'],c['rotations'],'continuous flank axes / repeated plate rows')
+            if not selections.get(p['name']) and all(not any('angle' in e and abs(e['angle']-a)>max(angle_tolerance,1e-5) for e,a in zip(c['hinges'],c['rotations'])) for _,c in instances):
+                for instance,c in instances:commit(instance,c['hinges'],c['rotations'],'continuous flank axes / repeated plate rows',angle_tolerance)
                 p['instances']=[x for x,_ in instances]
                 row.update(status='PASS',method='repeated_transverse_detail',reason='Continuous flank axes and matching strip chains establish repeated plate rows.',
                            matched_faces=[c['trace'][c['main']][2] for c in repeated],max_strip_error_mm=max(c['error'] for c in repeated))
                 row.pop('reason_code',None)
                 continue
-        candidates=local_candidates(p,faces,edges,t,r,bd)
-        signatures={c['signature'] for c in candidates}
+        measured=local_candidates(p,faces,edges,t,r,bd,strip_tolerance,angle_tolerance,bend_model,diagnostic=True)
+        candidates=[c for c in measured if c['error']<=strip_tolerance]
+        if measured:
+            nearest=min(measured,key=lambda c:c['error'])
+            row['nearest_local_candidate']={**candidate_summary(nearest,'local'),
+                'segment_errors_mm':(nearest['flat_lengths']-nearest['expected']).tolist()}
+            if not candidates and nearest['error']<=max(1.,2*strip_tolerance):
+                row.update(reason_code='LOCAL_DIMENSION_MISMATCH',
+                    reason=f"The closest local edge detail differs by {nearest['error']:.3f} mm, exceeding the {strip_tolerance:g} mm limit. Review the reported segment dimensions or use bend values measured from the approved model.")
+        options={}
+        for kind,items in [('normal',p.get('_normal_candidates',[])),('local',candidates)]:
+            for c in items:
+                key=candidate_id(c,kind)
+                if key not in options or c['error']<options[key][1]['error']:options[key]=(kind,c)
+        row['review_candidates']=[candidate_summary(c,kind) for kind,c in options.values()]
+        row['angle_adjustments']=p.get('angle_adjustments',[])
+        selected=selections.get(p['name'])
+        if selected:
+            if selected not in options:
+                row.update(status='NEEDS_REVIEW',reason_code='STALE_SECTION_CHOICE',reason='The selected chain no longer fits the current values. Choose a current candidate or return to automatic matching.')
+                continue
+            kind,c=options[selected]
+            accepted=apply_normal(p,row,c,angle_tolerance) if kind=='normal' else commit(p,c['hinges'],c['angles'],'user selected local edge chain',angle_tolerance)
+            if accepted:
+                if kind=='local':p['local_chain']=c
+                row.update(status='PASS',method='user_selected_'+kind+'_chain',reason='Chain correspondence explicitly confirmed in drawing review.',selected_candidate=selected,max_strip_error_mm=c['error'])
+                row.pop('reason_code',None)
+            else:row.update(status='NEEDS_REVIEW',reason_code='ANGLE_CONFLICT',reason='Selected chain conflicts with another section or a manual bend rotation.')
+            continue
+        signatures=[]
+        for c in candidates:
+            if not any(signatures_agree(c['signature'],s,angle_tolerance) for s in signatures):signatures.append(c['signature'])
+        if candidates:
+            row['normal_reason']=row.get('reason')
+            row.update(reason_code='LOCAL_CONFIRMATION',reason=f"Local edge candidates fit within {strip_tolerance:g} mm, but their chain or orientation needs confirmation. Select a candidate or supply confirmed bend values.",local_max_strip_error_mm=min(c['error'] for c in candidates))
         if len(signatures)==1:
             candidate=min(candidates,key=lambda c:(c['error'],c['chain'],c['boundary']))
             pending.append((p,row,candidate))
     # A second independently painted opposite-side drawing must corroborate
     # every local rotation. One apparent view never supplies an unverified sign.
     for p,row,c in pending:
-        peers=[other for other in pending if other[0]['paint_handle']!=p['paint_handle'] and other[2]['signature']==c['signature']]
+        peers=[other for other in pending if other[0]['paint_handle']!=p['paint_handle'] and signatures_agree(other[2]['signature'],c['signature'],angle_tolerance)]
         if not peers:continue
-        if not commit(p,c['hinges'],c['angles'],'corroborated local edge profile'):continue
+        if not commit(p,c['hinges'],c['angles'],'corroborated local edge profile',angle_tolerance):continue
         p['local_chain']=c
         row.update(status='PASS',method='corroborated_local_edge_profile',reason='Opposite painted profiles agree on the same hinge chain and rotations.',
                    matched_faces=c['chain'],max_strip_error_mm=c['error'],corroborating_profiles=[x[0]['name'] for x in peers])
@@ -158,10 +218,10 @@ def map_details(faces,outer,edges,profiles,t,r,bd):
 
 
 def normal_instances(profiles):
-    return [q for p in profiles if 'local_chain' not in p for q in p.get('instances',[p])]
+    return [q for p in profiles if 'local_chain' not in p for q in p.get('instances',[p]) if 'trace' in q]
 
 
-def check_local_profiles(profiles,edges,tf,t,r,bd):
+def check_local_profiles(profiles,edges,tf,t,r,bd,strip_tolerance=.5,angle_tolerance=.1,bend_model='constant_k'):
     """Check signed relative rotations and local edge lengths, not plane cuts.
 
     Normal BREP cuts and actual fused-solid unfolding run independently. These
@@ -175,11 +235,11 @@ def check_local_profiles(profiles,edges,tf,t,r,bd):
             observed=tf[e['parent']][0].T@tf[e['child']][0]
             target=g.rotation(g.lift(g.support(e)[0]),math.radians(a))
             errors.append(math.degrees(math.acos(float(np.clip((np.trace(target.T@observed)-1)/2,-1,1)))))
-        angles,_=profile_values(p,t,r,bd)
-        gains=np.array([(r+t/2)*math.tan(math.radians(abs(a))/2)-g.bend_allowance(t,r,bd,a)/2 for a in angles])
+        angles,_=profile_values(p,t,r,bd,angle_tolerance,bend_model,c['hinges'])
+        gains=g.section_gains(angles,t,r,bd,c['hinges'],bend_model)
         actual=c['flat_lengths']+np.r_[0,gains]+np.r_[gains,0]
         error=float(max(abs(actual-np.linalg.norm(np.diff(p['points'],axis=0),axis=1))))
-        rows.append({'profile':p['name'],'validation_scope':'local_edge_profile','chain_status':'PASS' if error<=.5 and max(errors)<=1 else 'FAIL',
+        rows.append({'profile':p['name'],'validation_scope':'local_edge_profile','chain_status':'PASS' if error<=strip_tolerance and max(errors)<=max(angle_tolerance,1e-5) else 'FAIL',
                      'full_plane_status':'NOT_APPLICABLE','max_length_error_mm':error,'max_turn_error_deg':max(errors),
                      'source_boundary':c['boundary'],'faces':c['chain'],
                      'method':'Local edge dimensions and fold-tree relative rotations; not a full BREP plane section'})
