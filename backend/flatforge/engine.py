@@ -77,12 +77,12 @@ def annotate_section_svg(svg,outer,sections):
             if segment.geom_type!='LineString' or segment.length<.1:continue
             coords=list(segment.coords)
             d='M '+' L '.join(f'{x:.3f},{outer.bounds[3]-y:.3f}' for x,y in coords)
-            overlays.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="2.4" stroke-dasharray="8 5"><title>{html.escape(row.get("profile","Section"))}: {html.escape(row.get("reason","Matched section cut"))}</title></path>')
+            overlays.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="2.4" stroke-dasharray="8 5"><title>{html.escape(str(row.get("profile") or "Section"))}: {html.escape(str(row.get("reason") or "Matched section cut"))}</title></path>')
         if parts:
             point=next((q for q in parts if q.geom_type=='LineString' and q.length>=.1),None)
             if point is not None:
                 x,y=point.coords[0]
-                overlays.append(f'<text x="{x+4:.3f}" y="{outer.bounds[3]-y-5:.3f}" font-family="monospace" font-size="{max(2.,max(outer.bounds[2:])/80):.2f}" fill="{color}">{html.escape(row.get("profile","SECTION"))}</text>')
+                overlays.append(f'<text x="{x+4:.3f}" y="{outer.bounds[3]-y-5:.3f}" font-family="monospace" font-size="{max(2.,max(outer.bounds[2:])/80):.2f}" fill="{color}">{html.escape(str(row.get("profile") or "SECTION"))}</text>')
     return svg.replace('</svg>',''.join(overlays)+'</svg>')
 
 
