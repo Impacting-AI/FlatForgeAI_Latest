@@ -142,3 +142,10 @@
 .asm-target-pick{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;padding:8px;border:1px solid #d9e7df;border-radius:5px;background:#f7faf8}
 .asm-target-pick strong{font-size:10px;color:#3c6555}
 .asm-target-pick button{font-size:10px;height:29px;white-space:nowrap}
+
+.asm-offset-details{margin-top:8px;border-top:1px solid #edf1ee;padding-top:7px}
+.asm-offset-details summary{cursor:pointer;font-size:9px;color:#688478;list-style:none}
+.asm-offset-details summary::-webkit-details-marker{display:none}
+.asm-offset-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:7px}
+.asm-offset-grid label{font-size:8px;color:#789087;display:grid;gap:3px}
+.asm-offset-grid input{min-width:0;width:100%;border:1px solid #d3e0d9;border-radius:4px;padding:4px;font-size:9px;color:#446b5a;background:#fff}
