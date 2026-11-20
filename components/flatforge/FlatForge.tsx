@@ -58,12 +58,13 @@ export default function FlatForge(){
  useEffect(()=>{if(dialog!=='logs'||!panel||panel.sample)return;let cancelled=false;const id=setInterval(async()=>{try{const r=await api<{jobs:{revision:number;log:string;status:string}[]}>(`/panels/${panel.id}/log`,undefined,'GET');if(!cancelled)setLogs(r.jobs)}catch{/* Initial errors are shown by showLogs. */}},2000);return()=>{cancelled=true;clearInterval(id)}},[dialog,panel?.id]);
  const chooseProject=(id:string)=>{setProjectId(id);setPanelId(data?.panels.find(p=>p.project_id===id)?.id||'');setCompare([]);setAssembly(false);setAsmEntries([]);setTab('panels');setScreen('workspace')};
  const goHome=()=>{setScreen('home')};
- function asmAddEntry(){if(!addPanelId)return;if(asmEntries.some(e=>e.panelId===addPanelId)){toast.error('This panel is already in the assembly.');return}const isRoot=asmEntries.length===0;if(!isRoot&&!addTargetId){toast.error('Choose the panel this connection attaches to.');return}setAsmEntries(prev=>[...prev,{id:crypto.randomUUID(),panelId:addPanelId,myFace:addMyFace,targetId:isRoot?null:addTargetId,targetFace:isRoot?null:addTargetFace,gap:addGap}]);setDialog(null);setAddPanelId('');setPickTargetMode(false);}
+ function asmAddEntry(){if(!addPanelId)return;if(asmEntries.some(e=>e.panelId===addPanelId)){toast.error('This panel is already in the assembly.');return}const isRoot=asmEntries.length===0;if(!isRoot&&!addTargetId){toast.error('Choose the panel this connection attaches to.');return}setAsmEntries(prev=>[...prev,{id:crypto.randomUUID(),panelId:addPanelId,myFace:addMyFace,targetId:isRoot?null:addTargetId,targetFace:isRoot?null:addTargetFace,gap:addGap,offset:{x:0,y:0,z:0}}]);setDialog(null);setAddPanelId('');setPickTargetMode(false);}
  function asmRemove(id:string){setAsmEntries(prev=>prev.filter(e=>e.id!==id&&e.targetId!==id));}
  function asmSetMyFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,myFace:f}:e));}
  function asmSetTargetFace(id:string,f:Face){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,targetFace:f}:e));}
  function asmSetTarget(id:string,targetId:string){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,targetId}:e));}
  function asmSetGap(id:string,g:number){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,gap:Math.max(0,g)}:e));}
+ function asmSetOffset(id:string,axis:'x'|'y'|'z',value:number){setAsmEntries(prev=>prev.map(e=>e.id===id?{...e,offset:{x:e.offset?.x||0,y:e.offset?.y||0,z:e.offset?.z||0,[axis]:value}}:e));}
  function onAssemblyFacePick(id:string,face:Face){setAddTargetId(id);setAddTargetFace(face);setPickTargetMode(false);setDialog('assembly_add');const index=asmEntries.findIndex(e=>e.id===id);toast.success(`Selected Panel ${String.fromCharCode(65+index)} · ${face} face`);}
  // Clear clash results whenever the assembly configuration changes
  useEffect(()=>{setClashResults(null);asmViewRef.current?.clearClash();},[asmEntries]);
@@ -246,6 +247,7 @@ export default function FlatForge(){
         </select>
        </div>}
       {entry.targetId!==null&&<div className="asm-gap-row">Gap <input type="number" min={0} step={1} value={entry.gap} onChange={e=>asmSetGap(entry.id,Number(e.target.value))}/> mm</div>}
+      {entry.targetId!==null&&<details className="asm-offset-details"><summary>Position offset · X/Y/Z</summary><div className="asm-offset-grid">{(['x','y','z'] as const).map(axis=><label key={axis}>{axis.toUpperCase()}<input type="number" step={1} value={entry.offset?.[axis]??0} onChange={e=>asmSetOffset(entry.id,axis,Number(e.target.value)||0)}/> mm</label>)}</div></details>}
      </div>
     );
    })}
