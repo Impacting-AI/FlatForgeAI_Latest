@@ -315,11 +315,11 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       let node:THREE.Object3D|null=hit.object;let belongs=false;
       while(node){if(node===item.group){belongs=true;break;}node=node.parent;}
       if(!belongs)continue;
-      const local=item.group.worldToLocal(hit.point.clone()).sub(item.localCenter);
-      const dx=Math.abs(item.halfSize.x-Math.abs(local.x));
-      const dy=Math.abs(item.halfSize.y-Math.abs(local.y));
-      const dz=Math.abs(item.halfSize.z-Math.abs(local.z));
-      const face:Face=dx<=dy&&dx<=dz?(local.x>=0?'+X':'-X'):dy<=dz?(local.y>=0?'+Y':'-Y'):(local.z>=0?'+Z':'-Z');
+      const worldNormal=hit.face?.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
+      const localNormal=worldNormal?.applyQuaternion(item.group.quaternion.clone().invert());
+      if(!localNormal)continue;
+      const ax=Math.abs(localNormal.x),ay=Math.abs(localNormal.y),az=Math.abs(localNormal.z);
+      const face:Face=ax>=ay&&ax>=az?(localNormal.x>=0?'+X':'-X'):ay>=az?(localNormal.y>=0?'+Y':'-Y'):(localNormal.z>=0?'+Z':'-Z');
       onPickFaceLatest.current(entry.id,face);break;
      }
     }
