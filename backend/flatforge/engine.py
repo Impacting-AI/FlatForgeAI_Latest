@@ -54,6 +54,38 @@ def extract_svg(outer,blank,lines,doc,origin):
   q=g.vec(e.get_points()[0])-origin
   parts.append(f'<text x="{q[0]}" y="{maxy-q[1]}" font-family="sans-serif" font-size="{max(maxx,maxy)/65}">PAINT</text>')
  parts.append('</svg>');return ''.join(parts)
+def annotate_section_svg(svg,outer,sections):
+    """Overlay the actual/nearest section-cut lanes on the flat-pattern drawing."""
+    overlays=[]
+    radius=max(np.linalg.norm(q) for q in outer.exterior.coords)+10
+    for row in sections:
+        candidate=row.get('nearest_candidate') or row.get('nearest_local_candidate') or {}
+        direction=row.get('cut_direction') or candidate.get('cut_direction')
+        coordinate=row.get('cut_coordinate')
+        if coordinate is None:coordinate=candidate.get('cut_coordinate')
+        if not direction or coordinate is None:continue
+        vector=np.asarray(direction,dtype=float)
+        length=float(np.linalg.norm(vector))
+        if length<1e-9:continue
+        vector/=length
+        normal=np.array([-vector[1],vector[0]])
+        origin=normal*float(coordinate)
+        lane=LineString([origin-vector*radius,origin+vector*radius]).intersection(outer)
+        parts=getattr(lane,'geoms',[lane])
+        color='#c43d36' if row.get('status')!='PASS' else '#367e9b'
+        for segment in parts:
+            if segment.geom_type!='LineString' or segment.length<.1:continue
+            coords=list(segment.coords)
+            d='M '+' L '.join(f'{x:.3f},{outer.bounds[3]-y:.3f}' for x,y in coords)
+            overlays.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="2.4" stroke-dasharray="8 5"><title>{html.escape(row.get("profile","Section"))}: {html.escape(row.get("reason","Matched section cut"))}</title></path>')
+        if parts:
+            point=next((q for q in parts if q.geom_type=='LineString' and q.length>=.1),None)
+            if point is not None:
+                x,y=point.coords[0]
+                overlays.append(f'<text x="{x+4:.3f}" y="{outer.bounds[3]-y-5:.3f}" font-family="monospace" font-size="{max(2.,max(outer.bounds[2:])/80):.2f}" fill="{color}">{html.escape(row.get("profile","SECTION"))}</text>')
+    return svg.replace('</svg>',''.join(overlays)+'</svg>')
+
+
 def map_review(edges,overrides,bend_parameters=None):
  unknown=[]
  for e in edges:
@@ -252,8 +284,11 @@ def run(config):
    except ValueError as exc:
     if str(exc)!='Unmapped hinge; no default direction is allowed':
      issue('SECTION_CORRESPONDENCE',str(exc)+'. Adjust the matching tolerance or supply confirmed values.')
-   mapped=[{'profile':p['name'],'status':'PASS' if 'trace' in p else 'NEEDS_REVIEW','cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'method':p.get('mapping'),'reason':'Section needs review.' if 'trace' not in p else ''} for p in profs]
+   mapped=[{'profile':p['name'],'status':'PASS' if 'trace' in p else 'NEEDS_REVIEW','cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'cut_direction':p.get('cut_direction').tolist() if p.get('cut_direction') is not None else None,'cut_coordinate':p.get('cut_coordinate'),'method':p.get('mapping'),'reason':'Section needs review.' if 'trace' not in p else ''} for p in profs]
  report['section_mapping']=mapped
+ if (out/'extraction.svg').exists():
+  drawing_svg=(out/'extraction.svg').read_text()
+  (out/'extraction.svg').write_text(annotate_section_svg(drawing_svg,outer,mapped))
  propagate_continuous_bends(faces,edges,angle_tol)
  # Do not overwrite selected values after mapping; they participated in conflict
  # checks above. Keep every unresolved hinge visible even when a section fails.
