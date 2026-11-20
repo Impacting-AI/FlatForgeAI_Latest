@@ -284,7 +284,7 @@ def run(config):
    except ValueError as exc:
     if str(exc)!='Unmapped hinge; no default direction is allowed':
      issue('SECTION_CORRESPONDENCE',str(exc)+'. Adjust the matching tolerance or supply confirmed values.')
-   mapped=[{'profile':p['name'],'status':'PASS' if 'trace' in p else 'NEEDS_REVIEW','cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'cut_direction':p.get('cut_direction').tolist() if p.get('cut_direction') is not None else None,'cut_coordinate':p.get('cut_coordinate'),'method':p.get('mapping'),'reason':'Section needs review.' if 'trace' not in p else ''} for p in profs]
+   mapped=[{'profile':p['name'],'status':'PASS' if 'trace' in p else 'NEEDS_REVIEW','cut_axis':'Y' if p['main_dim']==0 else 'X','coordinate':p.get('cut_coordinate'),'cut_direction':np.asarray(p.get('cut_direction'),dtype=float).tolist() if p.get('cut_direction') is not None else None,'cut_coordinate':p.get('cut_coordinate'),'method':p.get('mapping'),'reason':'Section needs review.' if 'trace' not in p else ''} for p in profs]
  report['section_mapping']=mapped
  if (out/'extraction.svg').exists():
   drawing_svg=(out/'extraction.svg').read_text()
