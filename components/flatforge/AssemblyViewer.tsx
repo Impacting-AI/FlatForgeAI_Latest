@@ -148,7 +148,8 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       const childRotation=new THREE.Quaternion().setFromUnitVectors(NORMALS[entry.myFace],normal.clone().negate());
       item.group.quaternion.copy(childRotation);
       const rotatedMyOffset=myOff.applyQuaternion(childRotation);
-      const wc=tFacePos.clone().addScaledVector(normal,entry.gap/1000).sub(rotatedMyOffset);
+      const offset=new THREE.Vector3(entry.offset?.x||0,entry.offset?.y||0,entry.offset?.z||0).multiplyScalar(.001);
+      const wc=tFacePos.clone().addScaledVector(normal,entry.gap/1000).sub(rotatedMyOffset).add(offset);
       worldCenter.set(entry.id,wc);
      }
     }
