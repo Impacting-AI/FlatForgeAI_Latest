@@ -141,7 +141,7 @@ def create_project(p:ProjectInput):
  return result
 @app.post('/projects/{project_id}/upload',dependencies=[Depends(auth)],status_code=202)
 async def upload(project_id:str,files:list[UploadFile]=File(...)):
- if not 1<=len(files)<=20:raise HTTPException(422,'Upload between 1 and 20 files at a time')
+ if not 1<=len(files)<=20:raise HTTPException(422,'Upload between 1 and 20 files per request; the application can queue larger batches automatically')
  with Session() as s:
   get_project(s,project_id)
   defaults=s.get(Setting,'defaults').value
