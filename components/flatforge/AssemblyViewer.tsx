@@ -316,7 +316,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       while(node){if(node===item.group){belongs=true;break;}node=node.parent;}
       if(!belongs)continue;
       const worldNormal=hit.face?.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
-      const localNormal=worldNormal?.applyQuaternion(item.group.quaternion.clone().invert());
+      const localNormal=worldNormal?.applyMatrix3(new THREE.Matrix3().getNormalMatrix(item.group.matrixWorld).invert()).normalize();
       if(!localNormal)continue;
       const ax=Math.abs(localNormal.x),ay=Math.abs(localNormal.y),az=Math.abs(localNormal.z);
       const face:Face=ax>=ay&&ax>=az?(localNormal.x>=0?'+X':'-X'):ay>=az?(localNormal.y>=0?'+Y':'-Y'):(localNormal.z>=0?'+Z':'-Z');
