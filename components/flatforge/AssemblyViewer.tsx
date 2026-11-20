@@ -142,8 +142,8 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       const tItem=items.get(entry.targetId);
       const tWC=worldCenter.get(entry.targetId);
       if(!tItem||!tWC||!entry.targetFace) continue;
-      const tFacePos=tWC.clone().add(faceOff(entry.targetFace,tItem.halfSize));
-      const normal=NORMALS[entry.targetFace].clone();
+      const tFacePos=tWC.clone().add(faceOff(entry.targetFace,tItem.halfSize).applyQuaternion(tItem.group.quaternion));
+      const normal=NORMALS[entry.targetFace].clone().applyQuaternion(tItem.group.quaternion);
       const myOff=faceOff(entry.myFace,item.halfSize);
       const childRotation=new THREE.Quaternion().setFromUnitVectors(NORMALS[entry.myFace],normal.clone().negate());
       item.group.quaternion.copy(childRotation);
