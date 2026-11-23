@@ -358,3 +358,4 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .review-next-hint>svg{flex-shrink:0;margin-top:2px}
 .review-next-hint strong{display:block;font-size:11px;font-weight:600;margin-bottom:6px;color:#7a5a28}
 .review-next-hint button{font-size:11px!important;height:28px!important;padding:0 10px!important}
+.wizard-nav-right{display:flex;align-items:center;gap:8px}
