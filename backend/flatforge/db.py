@@ -27,6 +27,13 @@ class ProjectAssembly(Base):
  revision:Mapped[int]=mapped_column(Integer,default=1)
  config:Mapped[str]=mapped_column(Text)
  updated:Mapped[float]=mapped_column(Float,default=time.time)
+class Batch(Base):
+ __tablename__='batches'
+ id:Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid.uuid4()))
+ project_id:Mapped[str]=mapped_column(ForeignKey('projects.id'),index=True)
+ name:Mapped[str]=mapped_column(String(240),default='')
+ created:Mapped[float]=mapped_column(Float,default=time.time)
+ total:Mapped[int]=mapped_column(Integer,default=0)
 class Panel(Base):
  __tablename__='panels'
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid.uuid4()))
@@ -39,6 +46,7 @@ class Panel(Base):
  manual_axis:Mapped[str]=mapped_column(String(20),default='flat_width');revision:Mapped[int]=mapped_column(Integer,default=1)
  created:Mapped[float]=mapped_column(Float,default=time.time);updated:Mapped[float]=mapped_column(Float,default=time.time)
  deleted_at:Mapped[float|None]=mapped_column(Float,nullable=True,default=None)
+ batch_id:Mapped[str|None]=mapped_column(String(36),nullable=True,default=None,index=True)
 class Job(Base):
  __tablename__='jobs'
  id:Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid.uuid4()))
@@ -51,7 +59,7 @@ class Job(Base):
 def init():
  Base.metadata.create_all(engine)
  inspector=inspect(engine)
- for table,column in [('projects','deleted_at'),('panels','deleted_at')]:
+ for table,column,coltype in [('projects','deleted_at',None),('panels','deleted_at',None),('panels','batch_id','TEXT')]:
   if column not in {c['name'] for c in inspector.get_columns(table)}:
-   coltype='DOUBLE PRECISION' if engine.dialect.name=='postgresql' else 'REAL'
-   with engine.begin() as conn:conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {coltype}'))
+   t=coltype or ('DOUBLE PRECISION' if engine.dialect.name=='postgresql' else 'REAL')
+   with engine.begin() as conn:conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {t}'))

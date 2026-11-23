@@ -13,8 +13,8 @@ import styles from './FlatPatternViewer.module.css';
 const number = (value: number | null, unit: string, signed = false) => value == null || !Number.isFinite(value)
   ? 'Not established' : `${signed && value > 0 ? '+' : ''}${value.toFixed(unit === '°' ? 3 : 2).replace(/\.000$/, '')}${unit === '°' ? '' : ' '}${unit}`;
 
-export default function FlatPatternViewer({ panel, settings, review, zoom, onBendChange }: {
-  panel: Panel; settings: Settings; review: ReviewValues; zoom: number; onBendChange: BendChange;
+export default function FlatPatternViewer({ panel, settings, review, zoom, onBendChange, problemBends, problemLines, focusBend }: {
+  panel: Panel; settings: Settings; review: ReviewValues; zoom: number; onBendChange: BendChange; problemBends?: ReadonlySet<string>; problemLines?: ReadonlySet<string>; focusBend?: string | null;
 }) {
   const [geometry, setGeometry] = useState<FlatExtraction | null>(null);
   const [error, setError] = useState('');
@@ -63,6 +63,8 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
     node.scrollLeft = Math.max(0, (node.scrollWidth - node.clientWidth) / 2);
     node.scrollTop = Math.max(0, (node.scrollHeight - node.clientHeight) / 2);
   }, [geometry, width, zoom, allValues]);
+
+  useEffect(() => { if (focusBend != null) setSelected(focusBend); }, [focusBend]);
 
   if (!geometry) return <div className={styles.fallback}>
     {panel.artifacts.includes('extraction.svg') && <img src={fileUrl(panel, 'extraction.svg')} alt="Extracted flat panel; bend-location annotations are not yet available"/>}
@@ -122,7 +124,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
         <path className={styles.outline} d={polygonPath(geometry.outline, project)} fillRule="evenodd"/>
         {geometry.faces.filter(face => face.id === active?.parent || face.id === active?.child).map(face => <path key={face.id} className={face.id === active?.parent ? styles.parent : styles.child} d={polygonPath(face.polygons, project)} fillRule="evenodd"/>)}
         {geometry.corner_reliefs.map((relief, i) => <path key={i} d={path(relief.outline) + ' Z'} fill="#ed8a36" stroke="#a94313"><title>Proposed corner relief: {relief.area_mm2.toFixed(4)} mm²</title></path>)}
-        {geometry.lines.map(line => <path key={line.handle} d={path([line.start, line.end])} className={styles.axis}><title>{line.id} · original DXF bend axis</title></path>)}
+        {geometry.lines.map(line => <path key={line.handle} d={path([line.start, line.end])} className={`${styles.axis}${problemLines?.has(line.id) ? ' '+styles.problemAxis : ''}`}><title>{line.id} · original DXF bend axis{problemLines?.has(line.id) ? ' · not assigned to any hinge — check endpoint gaps' : ''}</title></path>)}
         {geometry.paint_labels.map((point, i) => <text key={i} x={project(point)[0]} y={project(point)[1]} className={styles.paint}>PAINT</text>)}
         {cards.map(({ hinge, anchor, x, y, left }) => <g key={hinge.key}>
           <path className={`${styles.leader} ${hinge.key === active?.key ? styles.activeLeader : ''}`} d={`M ${left ? x + 220 : x} ${y + cardHeight / 2} L ${left ? x + 232 : x - 12} ${y + cardHeight / 2} L ${anchor[0]} ${anchor[1]}`}/>
@@ -130,7 +132,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
         </g>)}
         {linked.map(hinge => <g key={hinge.key} tabIndex={-1} onClick={event => openEditor(hinge.key, event.currentTarget)}>
           {hinge.segments.map((segment, i) => <g key={i}>
-            <path d={path(segment)} className={`${styles.hinge} ${hinge.key === active?.key ? styles.activeHinge : ''}`}/>
+            <path d={path(segment)} className={`${styles.hinge} ${problemBends?.has(hinge.key) ? styles.problemHinge : ''} ${hinge.key === active?.key ? styles.activeHinge : ''}`}/>
             <path d={path(segment)} className={styles.hit}><title>{hinge.bend_ids.join(' / ')} · {faceName(hinge.parent)} → {faceName(hinge.child)}</title></path>
           </g>)}
         </g>)}

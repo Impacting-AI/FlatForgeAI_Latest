@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field, ConfigDict, field_validator, ValidationError
 from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
-from .db import init, Session, Project, Panel, Job, Setting
+from .db import init, Session, Project, Panel, Job, Setting, Batch
 from .storage import store
 from .dwg import available as dwg_available
 from .parameters import Parameters, ParameterOverrides, BendOverride, DEFAULTS
@@ -75,7 +75,7 @@ def pack_panel(p):
  configured={**DEFAULTS,**json.loads(p.settings)};report=json.loads(p.report)
  # A queued revision must not display the preceding revision's measurements.
  effective=report.get('settings',configured) if p.status not in ['QUEUED','CONVERTING','EXTRACTING','BUILDING'] else configured
- return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':effective,'configured_settings':configured,'overrides':json.loads(p.overrides),'report':report,'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated}
+ return {'id':p.id,'project_id':p.project_id,'filename':p.filename,'status':p.status,'settings':effective,'configured_settings':configured,'overrides':json.loads(p.overrides),'report':report,'artifacts':list(json.loads(p.artifacts)),'error':p.error,'manual_value':p.manual_value,'manual_axis':p.manual_axis,'revision':p.revision,'created':p.created,'updated':p.updated,'batch_id':p.batch_id}
 class ProjectInput(BaseModel):
  name:str=Field(min_length=1,max_length=160);client:str=Field(default='',max_length=160)
 class ReviewInput(BaseModel):
@@ -182,7 +182,7 @@ def create_project(p:ProjectInput):
  return result
 @app.post('/projects/{project_id}/upload',dependencies=[Depends(auth)],status_code=202)
 async def upload(project_id:str,files:list[UploadFile]=File(...)):
- if not 1<=len(files)<=20:raise HTTPException(422,'Upload between 1 and 20 files per request; the application queues larger batches automatically')
+ if not 1<=len(files)<=10:raise HTTPException(422,'Upload 1 to 10 files per batch. Create a new batch for additional drawings.')
  with Session() as s:
   get_project(s,project_id)
   defaults=s.get(Setting,'defaults').value
@@ -203,12 +203,23 @@ async def upload(project_id:str,files:list[UploadFile]=File(...)):
    if ext=='.dwg' and not head.startswith(b'AC10'):raise HTTPException(422,f'{filename}: invalid DWG header')
    if ext=='.dxf' and b'SECTION' not in head and not head.startswith(b'AutoCAD Binary DXF'):raise HTTPException(422,f'{filename}: invalid DXF header')
    key=store.put(p,f'panels/{id}/source{ext}');staged.append((id,filename,key))
+  batch_name=Path(staged[0][1]).stem+(' + '+str(len(staged)-1)+' more' if len(staged)>1 else '')
   with Session.begin() as s:
    get_project(s,project_id,True)
+   batch=Batch(project_id=project_id,name=batch_name,total=len(staged));s.add(batch);s.flush()
    result=[]
    for id,filename,key in staged:
-    panel=Panel(id=id,project_id=project_id,filename=filename,source_key=key,settings=defaults);s.add(panel);s.flush();s.add(Job(panel_id=id,revision=1));result.append(pack_panel(panel))
- return {'panels':result}
+    panel=Panel(id=id,project_id=project_id,filename=filename,source_key=key,settings=defaults,batch_id=batch.id);s.add(panel);s.flush();s.add(Job(panel_id=id,revision=1));result.append(pack_panel(panel))
+  batch_info={'id':batch.id,'project_id':project_id,'name':batch_name,'created':batch.created,'total':len(staged)}
+ return {'panels':result,'batch':batch_info}
+@app.post('/panels/{id}/retry',dependencies=[Depends(auth)],status_code=202)
+def retry_panel(id:str):
+ with Session.begin() as s:
+  p=lock_panel(s,id)
+  if p.status!='FAILED':raise HTTPException(409,'Only failed panels can be retried without replacing the source drawing.')
+  p.revision+=1;p.status='QUEUED';p.report='{}';p.artifacts='{}';p.error='';p.updated=time.time()
+  s.add(Job(panel_id=p.id,revision=p.revision,log='Retry queued.\n'))
+  return pack_panel(p)
 @app.get('/panels/{id}',dependencies=[Depends(auth)])
 def panel(id:str):
  with Session() as s:return pack_panel(get_panel(s,id))

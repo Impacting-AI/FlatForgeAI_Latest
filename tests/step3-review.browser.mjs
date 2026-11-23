@@ -77,7 +77,7 @@ try {
   async function apply() { await editor.getByRole('button', { name: 'Apply', exact: true }).click(); }
   async function save() {
     await page.getByRole('button', { name: 'Save & rebuild panel', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('[data-state="active"][role="tab"]')?.textContent.includes('Conversion'));
+    await page.waitForFunction(() => document.querySelector('[data-state="active"][role="tab"]')?.textContent.includes('3D'));
   }
   await page.goto(url, { waitUntil: 'networkidle' }); await reviewPage();
   for (const panel of sample.panels) {

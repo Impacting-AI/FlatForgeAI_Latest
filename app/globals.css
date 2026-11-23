@@ -240,6 +240,23 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .asm-context footer{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-top:12px}
 .asm-context footer button{font-size:11px;padding:7px 8px}
 .asm-context .asm-text-action{border:0;background:none;padding:10px 0 0;font-size:10px;text-decoration:underline}
+.asm-hint{font-size:10px;color:#7b8b94;margin:2px 0 10px}
+.asm-mate-progress{display:flex;gap:4px;margin:4px 0 10px;list-style:none;padding:0}
+.asm-mate-progress li{display:flex;align-items:center;gap:5px;flex:1;min-width:0}
+.asm-step-num{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#e3ebef;color:#5c7381;font-weight:700;font-size:10px;flex:none}
+.asm-step-label{font-size:9px;color:#93a3ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.asm-mate-progress li[data-current=true] .asm-step-num{background:#146a7a;color:#fff}
+.asm-mate-progress li[data-done=true] .asm-step-num{background:#2e92cb;color:#fff}
+.asm-mate-progress li[data-current=true] .asm-step-label{color:#213d50;font-weight:600}
+.asm-swatch{display:inline-block;width:9px;height:9px;border-radius:50%}
+.asm-swatch-reference{background:#2788ee}
+.asm-swatch-moving{background:#ffa336}
+.asm-advanced{margin:12px 0 0;border-top:1px solid #e2e8ed;padding-top:10px}
+.asm-advanced summary{cursor:pointer;font-size:11px;color:#50708a;font-weight:600;list-style:none}
+.asm-advanced summary::-webkit-details-marker{display:none}
+.asm-advanced summary::before{content:'▸ ';color:#9ab0bd}
+.asm-advanced[open] summary::before{content:'▾ '}
+.asm-advanced>.asm-field,.asm-advanced>.asm-inline-values{margin-top:10px}
 .asm-add-picker .asm-available-panels{display:flex;flex-direction:column;gap:7px;max-height:40vh;overflow:auto;margin:12px 0}
 .asm-available-panels>button{display:block;text-align:left;line-height:1.5;padding:10px;overflow-wrap:anywhere}
 .asm-available-panels small{display:block;font-size:10px;color:#7b8b94;margin-top:4px}
@@ -289,3 +306,55 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .assembly-workspace[data-connect-mode=true] .asm-side-label[data-connection-role='']{outline:1px solid #8fcce9;outline-offset:1px}
 
 .assembly-workspace .asm-selection-toolbar,.assembly-workspace .asm-context{top:var(--assembly-toolbar-bottom,68px)}
+/* ── Batch dashboard ── */
+.batch-dashboard{margin:0 0 20px;border:1px solid #d0e4d8;border-radius:8px;background:#f5faf7;overflow:hidden}
+.batch-header{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;border-bottom:1px solid #d8e8df;gap:12px}
+.batch-info{display:flex;align-items:center;gap:10px;min-width:0}
+.batch-info strong{font-size:13px;font-weight:600;color:#2a4d3c;overflow-wrap:anywhere}
+.batch-count{font-size:11px;color:#5e8070;white-space:nowrap}
+.batch-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.batch-status{display:flex;align-items:center;gap:5px;font-size:11px;color:#5e8070}
+.batch-dismiss{background:none;border:0;color:#8fa898;padding:2px;line-height:0}
+.batch-dismiss:hover{color:#b52c36}
+.batch-file-list{padding:4px 0}
+.batch-file-row{display:flex;align-items:center;gap:10px;padding:10px 18px;border-top:1px solid #e5ede8;font-size:12px;color:#3d5c4a}
+.batch-file-row:first-child{border-top:0}
+.batch-file-row>svg{flex-shrink:0;color:#7a9a86}
+.batch-file-name{flex:1;overflow-wrap:anywhere;min-width:0}
+.batch-file-name small{display:block;font-size:10px;color:#8aaa96;margin-top:3px}
+.batch-file-actions{display:flex;gap:6px;flex-shrink:0}
+.batch-file-actions button{font-size:11px;height:28px;padding:0 10px}
+.batch-count-line{font-size:11px;color:#587060;margin:0 0 10px;font-weight:500}
+.project-drawings .batch-dashboard{margin:0 0 20px}
+/* ── Validation issues panel ── */
+.issues-summary{display:flex;gap:10px;align-items:center;padding:10px 14px;background:#fafcfb;border:1px solid #e0e8e3;border-radius:5px;margin:10px 0 4px}
+.issues-count{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500}
+.issues-count.errors{color:#a53d3d}
+.issues-count.warnings{color:#a07430}
+.issue-body{display:flex;flex-direction:column;flex:1;gap:0;min-width:0}
+.issue-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+.issue-title{font-size:12px;font-weight:600}
+.issue-message{margin:4px 0 0;font-size:11px;line-height:1.6}
+.issue-hint{margin:5px 0 0;font-size:10px;line-height:1.6;font-style:italic;opacity:.8}
+.issue-locate{color:inherit;opacity:.75;font-size:10px!important;padding:2px 6px!important;height:auto!important}
+.issue-badge{display:inline-flex;align-items:center;border-radius:3px;padding:2px 6px;font-size:9px;font-weight:600;letter-spacing:.3px;white-space:nowrap}
+.issue-badge.blocking{background:#fce8e9;color:#a73838}
+.issue-card.severity-error{background:#fff0ef;border-color:#f0d0ce;color:#a53d3d;align-items:flex-start}
+.issue-card.severity-error .issue-message,.issue-card.severity-error .issue-hint{color:#8c3030}
+.issue-card.severity-error>svg{color:#c04444;flex-shrink:0;margin-top:1px}
+.issue-card.severity-info{background:#eff6ff;border-color:#c3daf9;color:#2d6faa;align-items:flex-start}
+.issue-card.severity-info .issue-message,.issue-card.severity-info .issue-hint{color:#3a6080}
+.issue-card.severity-info>svg{color:#3b82f6;flex-shrink:0;margin-top:1px}
+.issue-card.severity-warning{align-items:flex-start}
+.issue-card.severity-warning>svg{flex-shrink:0;margin-top:1px}
+.issue-card.blocking{border-width:1.5px}
+.issue-details{margin-top:8px;font-size:10px;color:inherit;opacity:.8}
+.issue-details summary{cursor:pointer}
+.issue-details pre{margin:6px 0 0;padding:8px;background:#1a0505;color:#f0b0b0;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:4px;font-size:9px;line-height:1.5}
+.section-actions{display:flex;align-items:center;gap:8px}
+.params-toggle{display:flex;align-items:center;gap:4px;background:none;border:1px solid #d0dbd4;border-radius:4px;padding:4px 8px;font-size:11px;color:#647d6e;cursor:pointer;white-space:nowrap}
+.params-toggle:hover{background:#f0f6f2;border-color:#b0c8bd}
+.review-next-hint{margin:12px 0 4px;padding:11px 12px;background:#fff8ed;border:1px solid #f0d6a0;border-radius:6px;display:flex;align-items:flex-start;gap:9px;font-size:11px;color:#8a6830}
+.review-next-hint>svg{flex-shrink:0;margin-top:2px}
+.review-next-hint strong{display:block;font-size:11px;font-weight:600;margin-bottom:6px;color:#7a5a28}
+.review-next-hint button{font-size:11px!important;height:28px!important;padding:0 10px!important}

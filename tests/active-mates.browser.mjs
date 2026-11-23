@@ -111,6 +111,7 @@ try {
 
   const mate=page.getByRole('region',{name:'Planar mate controls'});
   const position=page.getByRole('region',{name:'Panel position controls'});
+  const openAdvanced=async()=>{const details=mate.locator('details.asm-advanced');if(!(await details.evaluate(el=>el.open)))await mate.getByText('Advanced options',{exact:true}).click();};
   async function choose(label){
     await page.getByRole('button',{name:'Panels',exact:true}).click();
     await page.getByRole('complementary',{name:'Assembly panels'}).locator('div').filter({has:page.locator('b',{hasText:new RegExp('^'+label+'$')})}).locator('button').first().click();
@@ -136,7 +137,7 @@ try {
   const initial=structuredClone(placements.at(-1));
   await page.getByRole('button',{name:'Connect / Mate',exact:true}).click();
   if(process.env.FLATFORGE_TEST_EDGE){
-    await mate.getByLabel('Mate geometry').selectOption('edge');
+    await openAdvanced();await mate.getByLabel('Mate geometry').selectOption('edge');
     await page.getByRole('combobox',{name:'Assembly camera view'}).selectOption('top');
     const pickEdge=async label=>{
       await page.waitForTimeout(350);
@@ -192,7 +193,7 @@ try {
     const prior=initial.entries.find(e=>e.id===row.id);
     row.matrix.slice(0,12).forEach((value,i)=>near(value,prior.matrix[i],1e-7));
   }
-  await mate.getByRole('spinbutton',{name:'Local V offset',exact:true}).fill('50');
+  await openAdvanced();await mate.getByRole('spinbutton',{name:'Local V offset',exact:true}).fill('50');
   await mate.getByRole('spinbutton',{name:'In-plane rotation',exact:true}).fill('13');await loaded();
   const restoredPreview=page.waitForResponse(response=>response.url().endsWith('/assembly/place')&&response.ok());
   await mate.getByRole('button',{name:/^Moving: Panel B/}).click();await restoredPreview;await loaded();
@@ -212,14 +213,14 @@ try {
   await pickFace('B');await pickFace('C');
   // This subsequent mate no longer implicitly rolls C into A.
   await mate.getByRole('spinbutton',{name:'Plane gap',exact:true}).fill('9');
-  await mate.getByRole('spinbutton',{name:'Local U offset',exact:true}).fill('3200');await loaded();
+  await openAdvanced();await mate.getByRole('spinbutton',{name:'Local U offset',exact:true}).fill('3200');await loaded();
   await mate.getByRole('button',{name:'Apply Mate',exact:true}).click();await loaded();
   const c=placements.at(-1).entries.find(e=>e.targetId===b).id;
   const chainBefore=structuredClone(placements.at(-1));
   await page.getByRole('button',{name:'Save Assembly',exact:true}).click();await page.getByText('Assembly saved to this project.',{exact:true}).waitFor();
   await page.reload({waitUntil:'networkidle'});await loaded();assert.deepEqual(placements.at(-1).entries,chainBefore.entries);
   await choose('B');await page.getByRole('button',{name:'Edit mate',exact:true}).click();
-  await mate.getByRole('spinbutton',{name:'Local U offset',exact:true}).fill('-35.125');await loaded();
+  await openAdvanced();await mate.getByRole('spinbutton',{name:'Local U offset',exact:true}).fill('-35.125');await loaded();
   assert.notDeepEqual(placements.at(-1).entries.find(e=>e.id===c).matrix,chainBefore.entries.find(e=>e.id===c).matrix);
   near(placements.at(-1).mates.find(m=>m.entryId===c).actual,9,1e-5);
   await mate.getByRole('button',{name:'Apply Mate',exact:true}).click();await loaded();

@@ -40,7 +40,7 @@ try {
   const heading = name => page.getByRole('heading', { name, exact: true }).first();
   const backToDrawings = () => page.getByRole('button', { name: 'Project Drawings', exact: true }).click();
   const openDrawing = panel => page.getByRole('button', { name: 'Open drawing ' + panel.filename, exact: true }).click();
-  const step = number => page.getByRole('tab', { name: new RegExp(['Source', 'Conversion', 'Extract & review', 'Calculate', '3D studio'][number - 1]) }).click();
+  const step = number => page.getByRole('tab', { name: new RegExp(['Source', 'Extract & review', '3D studio'][number - 1]) }).click();
   let heldLog, holdLog = false, bootstrapCount = 0, holdReview = false, releaseReview, reviewStarted;
   await page.route('**/api/bootstrap', route => { bootstrapCount++; return route.fulfill({ json: sample }); });
   await page.route('**/api/engine/**', async route => {
@@ -76,9 +76,10 @@ try {
     }
     if (parts[0] === 'projects' && parts[2] === 'assembly' && method === 'GET') return route.fulfill({json:{id:parts[1],projectId:parts[1],revision:0,units:'mm',entries:[],updated:null}});
     if (parts[0] === 'projects' && parts[2] === 'upload') {
-      const created = { ...structuredClone(a), id: 'uploaded-drawing', project_id: parts[1], filename: 'uploaded.dxf', status: 'QUEUED', artifacts: [], report: {}, overrides: {}, revision: 1 };
-      sample.panels.push(created); return route.fulfill({ status: 202, json: { panels: [created] } });
+      const created = { ...structuredClone(a), id: 'uploaded-drawing', project_id: parts[1], filename: 'uploaded.dxf', status: 'QUEUED', artifacts: [], report: {}, overrides: {}, revision: 1, batch_id: 'test-batch-1' };
+      sample.panels.push(created); return route.fulfill({ status: 202, json: { panels: [created], batch: { id: 'test-batch-1', name: 'uploaded', total: 1, project_id: parts[1], created: Date.now() / 1000 } } });
     }
+    if (parts[0] === 'panels' && parts[2] === 'retry') { const p = sample.panels.find(p => p.id === parts[1]); if (p) { p.status = 'QUEUED'; p.revision++; } return route.fulfill({ status: 202, json: p }); }
     if (parts[0] === 'projects' && method === 'POST') { const created = { id: 'created-project', ...request.postDataJSON(), created: Date.now() }; sample.projects.push(created); return route.fulfill({ json: created }); }
     if (parts[0] === 'projects' && method === 'PUT') { const target = sample.projects.find(p => p.id === parts[1]); Object.assign(target, request.postDataJSON()); return route.fulfill({ json: target }); }
     if (parts[0] === 'projects' && method === 'DELETE') { sample.projects = sample.projects.filter(p => p.id !== parts[1]); return route.fulfill({ json: { ok: true } }); }
@@ -94,9 +95,9 @@ try {
   assert.equal(await page.locator('.panel-card').count(), 0); await heading(b.filename).waitFor();
   assert.ok((await page.locator('.drawing-source-card').textContent()).includes(b.filename));
   assert.equal(await page.getByRole('button', { name: 'Upload drawings', exact: true }).count(), 0);
-  await step(2); assert.equal(await page.locator('.conversion-card').count(), 1);
+  await page.goto(drawingURL(b, 2), { waitUntil: 'networkidle' }); assert.equal(await page.locator('.conversion-card').count(), 1);
   assert.ok((await page.locator('.conversion-card').textContent()).includes(b.filename));
-  await step(4); await page.waitForURL(drawingURL(b, 4));
+  await page.goto(drawingURL(b, 4), { waitUntil: 'networkidle' }); await page.waitForURL(drawingURL(b, 4));
   assert.equal(await page.locator('.calculation-table tbody tr').count(), 1);
   assert.equal(await page.getByLabel('Manual measurement for ' + a.filename, { exact: true }).count(), 0);
   await page.getByLabel('Manual measurement for ' + b.filename, { exact: true }).fill('123.45');
@@ -110,7 +111,7 @@ try {
   await page.goBack(); await page.waitForURL(drawingURL(b, 2));
   await page.goForward(); await page.waitForURL(drawingURL(b, 4));
   // Fresh history segment: management -> source -> review. Dirty drafts survive steps.
-  await backToDrawings(); await openDrawing(b); await step(3);
+  await backToDrawings(); await openDrawing(b); await step(2);
   await page.getByLabel('Inside bend radius', { exact: true }).fill('3.25');
   await page.getByText('Unsaved drawing changes · Save & rebuild to store them.', { exact: true }).waitFor();
   const changedURL = page.url(); await backToDrawings(); assert.equal(page.url(), changedURL);
@@ -123,10 +124,10 @@ try {
   const unloadBlocked = await page.evaluate(() => { const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
   assert.equal(unloadBlocked, true);
   await page.getByRole('button', { name: 'Save & rebuild panel', exact: true }).click();
-  await page.waitForURL(drawingURL(b, 2));
+  await page.waitForURL(drawingURL(b, 5));
   assert.equal(writes.at(-1).panelId, b.id); assert.equal(writes.at(-1).body.parameter_overrides.radius, 3.25, JSON.stringify(writes.at(-1)));
   assert.deepEqual(a, originalA); assert.deepEqual(c, originalC);
-  await step(3); await page.getByLabel('Inside bend radius', { exact: true }).fill('4');
+  await step(2); await page.getByLabel('Inside bend radius', { exact: true }).fill('4');
   // Changes made during a pending save must not be falsely marked as saved.
   holdReview = true;
   const submitted = new Promise(resolve => { reviewStarted = resolve; });
@@ -134,21 +135,21 @@ try {
   await submitted;
   await page.getByLabel('Inside bend radius', { exact: true }).fill('4.5');
   releaseReview(); holdReview = false;
-  await page.waitForURL(drawingURL(b, 2)); await step(3);
+  await page.waitForURL(drawingURL(b, 5)); await step(2);
   assert.equal(writes.at(-1).body.parameter_overrides.radius, 4);
   assert.equal(await page.getByLabel('Inside bend radius', { exact: true }).inputValue(), '4.5');
   await page.locator('.review-conflict').waitFor();
   assert.equal(await page.getByRole('button', { name: 'Save & rebuild panel', exact: true }).isDisabled(), true);
   acceptLeave = true; await backToDrawings(); acceptLeave = false;
-  await openDrawing(a); await step(3); assert.equal(await page.getByLabel('Inside bend radius', { exact: true }).inputValue(), String(a.settings.radius));
+  await openDrawing(a); await step(2); assert.equal(await page.getByLabel('Inside bend radius', { exact: true }).inputValue(), String(a.settings.radius));
   // A pending inline bend draft is also guarded even before Apply.
   await page.locator('svg[aria-label="Flat pattern with geometry-linked bend values"] g[role="button"]').first().click();
   const editor = page.getByRole('dialog', { name: /^Bend / });
   await editor.getByRole('spinbutton').nth(0).fill('63');
-  const beforePrompt = confirmations.length; await step(4);
+  const beforePrompt = confirmations.length; await step(3);
   assert.equal(confirmations.length, beforePrompt + 1); assert.equal(page.url(), drawingURL(a, 3));
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await step(5); assert.equal(await page.locator('.studio-panel').count(), 1);
+  await step(3); assert.equal(await page.locator('.studio-panel').count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Compare', exact: true }).count(), 0);
   await backToDrawings(); await page.getByRole('button', { name: 'Compare panels', exact: true }).click();
   assert.equal(page.url(), url + `/projects/${project.id}/compare`);
@@ -183,7 +184,7 @@ try {
   await page.getByRole('button', { name: 'Edit / replace drawing', exact: true }).click();
   await page.getByLabel('Replace source (optional)', { exact: true }).setInputFiles({ name: 'replaced.dxf', mimeType: 'application/dxf', buffer: Buffer.from('0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n') });
   await page.getByRole('button', { name: 'Save drawing', exact: true }).click();
-  await page.waitForURL(drawingURL(uploaded, 2)); assert.equal(writes.at(-1).panelId, uploaded.id);
+  await page.waitForURL(drawingURL(uploaded, 1)); assert.equal(writes.at(-1).panelId, uploaded.id);
   await page.getByRole('button', { name: 'Manage ' + uploaded.filename, exact: true }).first().click();
   await page.getByRole('menuitem', { name: 'Delete drawing', exact: true }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
@@ -199,13 +200,13 @@ try {
   await page.waitForTimeout(100); assert.equal(await page.getByText('STALE OTHER DRAWING', { exact: true }).count(), 0);
   await page.getByRole('dialog').press('Escape'); holdLog = false;
   // Polling cannot erase dirty review edits when a different revision arrives.
-  await openDrawing(a); await step(3); await page.getByLabel('Inside bend radius', { exact: true }).fill('3.5');
+  await openDrawing(a); await step(2); await page.getByLabel('Inside bend radius', { exact: true }).fill('3.5');
   const oldBootstrapCount = bootstrapCount; a.revision++;
   await page.waitForFunction(() => !!document.querySelector('.review-conflict'), undefined, { timeout: 20000 });
   assert.ok(bootstrapCount > oldBootstrapCount); assert.equal(await page.getByLabel('Inside bend radius', { exact: true }).inputValue(), '3.5');
   assert.equal(await page.getByRole('button', { name: 'Save & rebuild panel', exact: true }).isDisabled(), true);
   acceptLeave = true; await backToDrawings(); acceptLeave = false;
-  await page.setViewportSize({ width: 390, height: 844 }); await openDrawing(c); await step(4);
+  await page.setViewportSize({ width: 390, height: 844 }); await openDrawing(c); await page.goto(drawingURL(c, 4), { waitUntil: 'networkidle' });
   assert.equal(await page.locator('.calculation-table tbody tr').count(), 1);
   await page.screenshot({ path: path.join(output, 'drawing-mobile.png'), fullPage: true });
   // Project CRUD still works from the project index.
@@ -224,7 +225,7 @@ try {
   await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
   await page.waitForURL(url + '/');
   assert.deepEqual(errors, []);
-  console.log('PASS: project/drawing routes, single-drawing Steps 1–5, scoped review/measurement/CRUD requests, refresh/direct URLs/back/forward, unsaved guards, stale logs/revisions, multi-panel project views, desktop/mobile and project CRUD.');
+  console.log('PASS: project/drawing routes, single-drawing Steps 1–3 (Conversion/Calculate accessible via URL/menu), scoped review/measurement/CRUD requests, refresh/direct URLs/back/forward, unsaved guards, stale logs/revisions, multi-panel project views, desktop/mobile and project CRUD.');
   console.log('Artifacts: ' + output);
 } catch (error) {
   console.error(error); console.error(logs.slice(-2500));

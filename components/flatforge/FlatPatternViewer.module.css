@@ -8,7 +8,9 @@
 .drawing { display: block; margin: 0 auto; }
 .outline { fill: #e3ede8; stroke: #718d80; stroke-width: 1.2; }
 .axis { stroke: #049a83; stroke-width: 1.2; stroke-dasharray: 6 4; }
+.problemAxis { stroke: #c43d36; stroke-width: 2; stroke-dasharray: 6 4; }
 .hinge { stroke: #007e6c; stroke-width: 2; fill: none; }
+.problemHinge { stroke: #c43d36; stroke-width: 2.5; fill: none; }
 .activeHinge { stroke: #b55b15; stroke-width: 4; }
 .hit { stroke: transparent; stroke-width: 16; fill: none; cursor: pointer; }
 .parent { fill: #c1ddd3; fill-opacity: .85; stroke: #548f7b; stroke-width: 1; }
