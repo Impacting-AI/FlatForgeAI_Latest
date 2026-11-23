@@ -359,3 +359,21 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .review-next-hint strong{display:block;font-size:11px;font-weight:600;margin-bottom:6px;color:#7a5a28}
 .review-next-hint button{font-size:11px!important;height:28px!important;padding:0 10px!important}
 .wizard-nav-right{display:flex;align-items:center;gap:8px}
+.wizard-stepper{display:flex;align-items:center;gap:0;width:100%}
+.stepper-track{flex:1;display:flex;align-items:flex-start;justify-content:center;padding:10px 24px}
+.stepper-item{display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:0;min-width:90px;transition:opacity .15s}
+.stepper-item:disabled{cursor:default;opacity:.5}
+.stepper-circle{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;border:2px solid #d0dbd4;background:#fff;color:#9aada4;transition:all .2s;flex-shrink:0}
+.stepper-active .stepper-circle{background:#0a7e63;border-color:#0a7e63;color:#fff;box-shadow:0 0 0 3px #cdf0e3}
+.stepper-done .stepper-circle{background:#e6f7f1;border-color:#0a7e63;color:#0a7e63}
+.stepper-label{font-size:11px;color:#9aada4;white-space:nowrap;font-weight:500;margin-top:1px}
+.stepper-active .stepper-label{color:#0a7e63;font-weight:600}
+.stepper-done .stepper-label{color:#4a8068}
+.stepper-line{flex:1;height:2px;background:#d0dbd4;min-width:28px;max-width:68px;margin-top:13px;align-self:flex-start;flex-shrink:0;transition:background .2s}
+.stepper-line.done{background:#0a7e63}
+.stepper-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.stepper-nav-btn{color:#506b62!important;white-space:nowrap;font-size:12px!important;height:34px!important;padding:0 10px!important}
+.stepper-continue{color:#0a7e63!important;font-weight:600!important}
+.stepper-asm-active{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:500;color:#0a7e63;padding:0 8px;white-space:nowrap}
+.wizard-navigation{display:flex;align-items:center;justify-content:space-between;padding:16px 0 10px;border-top:2px solid #e2ece6;margin-top:16px;gap:12px}
+.wizard-navigation>span{font-size:12px;color:#8a9b8c;font-weight:500;text-align:center;flex:1}
