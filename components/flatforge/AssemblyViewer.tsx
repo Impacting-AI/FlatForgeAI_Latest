@@ -38,7 +38,7 @@ type Props = {
  previewOnly?:boolean;
  onFacePicked?:(role:FaceRole,face:CadFaceReference,entryId:string)=>void;
  onFaceMessage?:(message:string)=>void;
- onValidation?:(result:{key:string;valid:boolean;token:string|null})=>void;
+ onValidation?:(result:{key:string;valid:boolean;token:string|null;checking:boolean;message:string})=>void;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced,onSideSelected,sideTargets,sideSelectionMode};void pickerRef.current?.update(selection);displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced,onSideSelected,sideTargets,sideSelectionMode]);
   // Parent selection/highlight updates must not restart CAD placement.
   useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey).entries;insertion.current={mateCheckId,insertId,insertBranchId};layoutRef.current?.();},[entriesKey,mateCheckId,insertId,insertBranchId]);
-  useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid,token:cad.result?.token??null});},[cad,ready,onValidation]);
+  useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid,token:cad.result?.token??null,checking:cad.checking,message:cad.checking?'':cad.error||cad.result?.issues.join(' ')||''});},[cad,ready,onValidation]);
   useEffect(()=>{onReadyChange(ready);},[ready,onReadyChange]);
 
   // Keep latest-value refs up to date without triggering re-mount
@@ -108,7 +108,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    const camera=new THREE.PerspectiveCamera(32,1,.001,1000);
    camera.up.set(0,0,1);
    const controls=new OrbitControls(camera,renderer.domElement);
-   controls.enableDamping=true; controls.dampingFactor=.1;
+   controls.enableDamping=true;controls.dampingFactor=.06;controls.rotateSpeed=0.75;controls.zoomSpeed=1.1;controls.panSpeed=0.9;controls.screenSpacePanning=true;controls.minPolarAngle=0.02;controls.maxPolarAngle=Math.PI-0.02;controls.mouseButtons={LEFT:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.DOLLY,RIGHT:THREE.MOUSE.PAN};controls.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
    inspectionLighting(scene);
    const grid=new THREE.GridHelper(20,100,0xc1d1d1,0xd8e2e2);
    prepareInspectionGrid(grid);grid.rotation.x=Math.PI/2; grid.position.z=-.012; scene.add(grid);
@@ -228,7 +228,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
      const direction=view==='top'?new THREE.Vector3(0,0,1):view==='front'?new THREE.Vector3(0,-1,0):view==='side'?new THREE.Vector3(1,0,0):new THREE.Vector3(1,-1.25,1.15);
      camera.position.copy(c).addScaledVector(direction.normalize(),dist);
      controls.target.copy(c);
-     camera.near=.001; camera.far=Math.max(100,dist*20);
+     const minDist=Math.max(.01,size.length()*.015);const maxDist=dist*7;controls.minDistance=minDist;controls.maxDistance=maxDist;camera.near=Math.max(.0005,minDist*.015);camera.far=Math.max(100,maxDist*3);
      camera.updateProjectionMatrix(); controls.update();
     }
     viewApi.current={

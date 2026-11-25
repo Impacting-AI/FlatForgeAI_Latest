@@ -29,9 +29,23 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const [draft,setDraft]=useState<FaceDraft|null>(null),[base,setBase]=useState<AssemblyEntry[]>([]),[isNew,setIsNew]=useState(false);
  const [move,setMove]=useState<MoveDraft|null>(null),[collapsed,setCollapsed]=useState(false);
  const [catalogs,setCatalogs]=useState<Record<string,CadFaceCatalog>>({}),[placement,setPlacement]=useState<CadPlacement|null>(null);
- const [validation,setValidation]=useState({key:'',valid:false,token:null as string|null}),[ready,setReady]=useState(false),[dragging,setDragging]=useState(false);
+ const [validation,setValidation]=useState({key:'',valid:false,token:null as string|null,checking:false,message:''}),[ready,setReady]=useState(false),[dragging,setDragging]=useState(false);
  const [hidden,setHidden]=useState<string[]>([]),[wire,setWire]=useState(false),[paint,setPaint]=useState(false),[notice,setNotice]=useState('');
  const [history,setHistory]=useState<AssemblyHistory>({past:[],future:[]});
+ // Default mates that hit folded returns raise the gap on their own until the CAD check passes.
+ // Any manual edit hands control back to the user.
+ const auto=useRef({on:false,bumped:0}),latest=useRef<{key:string;gap:number;ids:string[];bounds?:CadPlacement['bounds']}|null>(null);
+ const onValidation=useCallback((r:{key:string;valid:boolean;token:string|null;checking:boolean;message:string})=>{
+  setValidation(r);const now=latest.current;
+  if(!auto.current.on||!now||r.key!==now.key||r.checking)return;
+  if(r.valid){if(auto.current.bumped){setNotice(`Plane gap set to ${now.gap} mm automatically so the panels' folded returns clear each other. Edit Plane gap to change it.`);}auto.current.on=false;return;}
+  if(!/intersect/i.test(r.message)){auto.current.on=false;return;}
+  const extent=(id:string)=>{const b=now.bounds?.[id];return b?Math.max(...b.max.map((v,i)=>v-b.min[i])):0};
+  const safe=Math.ceil(now.ids.reduce((sum,id)=>sum+extent(id),0))+1;
+  const next=[5,10,25,50,100,250,500,1000,safe].filter(g=>g<=safe&&g>now.gap).sort((a,b)=>a-b)[0];
+  if(next===undefined){auto.current.on=false;setNotice('No collision-free gap was found automatically. Pick different faces or change the in-plane rotation.');return;}
+  auto.current.bumped++;setDraft(old=>old?updateFaceDraft(old,{fields:{...old.fields,gap:String(next)}}):old);
+ },[]);
  const editing=!!draft||!!move||!!connectMode||!!mateSelection;
  const effective=mateSelection?.pick&&base.length?base:draft?(isNew?[...base,draft.preview??draft.original]:base.map(e=>e.id===draft.movingEntryId?(draft.preview??draft.original):e)):move?.preview??entries;
  const mateCheckId=draft?.mate&&!mateSelection?.pick&&previewFaceDraft(draft)?draft.movingEntryId:undefined;
@@ -41,6 +55,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const moving=!!move&&!move.rotate&&!moveError&&!store.saving;
  const selection:FaceSelection|null=mateSelection?{...mateSelection,...(draft?{reference:draft.reference,moving:draft.moving}:{}),anyPanel:true}:draft;
  const title=(id:string)=>`Panel ${effective.find(e=>e.id===id)?.label??'?'}`;
+ useEffect(()=>{latest.current=draft?.mate&&mateSelection&&!mateSelection.pick?{key,gap:Number(draft.fields.gap),ids:[draft.referenceEntryId,draft.movingEntryId],bounds:placement?.bounds}:null;});
  const filename=(e:AssemblyEntry)=>panels.find(p=>p.id===e.panelId)?.filename??'Unavailable drawing';
  const available=panels.filter(p=>p.status==='PASS'&&p.artifacts.includes('panel.glb')&&p.artifacts.includes('panel.step'));
  function commit(next:AssemblyEntry[]){setHistory(h=>recordAction(h,entries));store.setEntries(next);}
@@ -53,6 +68,14 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function clearEdit(){setMateSelection(null);setConnectMode(null);setDraft(null);setMove(null);setIsNew(false);setAddOpen(false);setNotice('');setCollapsed(false);}
  function cancel(){if(isNew)setActive(entries.at(-1)?.id??null);clearEdit();}
  function select(id:string|null){if(connectMode){setActive(id);return;}if(editing){if(id!==active)setNotice('Apply or cancel the current preview before selecting another panel.');return;}setActive(id);setAddOpen(false);setNotice('');}
+ function disconnect(id:string){
+  if(!placement||!ready||store.saving)return;
+  try{
+   const row=freezePlacements(entries,placement,true).find(e=>e.id===id)!,{connection:_c,mateState:_m,sides:_s,...rest}=row;void _c;void _m;void _s;
+   if(!row.pose)throw new Error('Current CAD placement is not available. Reload the assembly.');
+   commit(entries.map(e=>e.id===id?{...rest,matrix:undefined}:e));setNotice(`${title(id)} disconnected. It stays where it is; use Connect / Mate to connect it again.`);
+  }catch(error){setNotice((error as Error).message);}
+ }
  function startMove(group=false,rotate=false){
   if(!selected||!placement||!ready||store.saving)return;
   try{const frozen=freezePlacements(entries,placement,true),row=frozen.find(e=>e.id===selected.id)!,p=positionValues(row);
@@ -79,7 +102,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const receiveCatalog=useCallback((catalog:CadFaceCatalog)=>setCatalogs(old=>({...old,[catalog.entryId]:catalog})),[]);
  const mateStart=useRef(new Map<string,number[]>());
  function startMate(edit=false){
-  if(!placement||!ready)return;
+  if(!placement||!ready)return;auto.current.on=false;
   mateStart.current=new Map(placement.entries.map(e=>[e.id,e.matrix]));
   setBase(freezePlacements(entries,placement));setAddOpen(false);setHidden([]);setNotice('');
   if(edit&&selected?.connection){const next={...beginFaceDraft(selected),mate:true};next.preview=previewFaceDraft(next);setDraft(next);setMateSelection({...next,anyPanel:true,pick:null});}
@@ -103,12 +126,12 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    const reuse=draft?.startPose&&draft.referenceEntryId===next.referenceEntryId&&draft.movingEntryId===next.movingEntryId&&draft.original.mateState!=='suspended';
    const startPose=reuse?draft.startPose:new Matrix4().fromArray(from).invert().multiply(new Matrix4().fromArray(to)).toArray();
    const d:FaceDraft={...next,original,startPose,matchFootprints:next.geometry!=='edge',mate:true,pick:null,message:'',fields:draft?.fields??{gap:String(original.connection?original.gap:0),u:'0',v:'0',normal:'0',twist:'0'}};
-   d.preview=previewFaceDraft(d);setDraft(d);setActive(next.movingEntryId);next.pick=null;
+   d.preview=previewFaceDraft(d);auto.current={on:!draft,bumped:0};setDraft(d);setActive(next.movingEntryId);next.pick=null;
   }
   if(!next.reference||!next.moving)setDraft(old=>old?{...old,...next,preview:undefined}:null);
   setMateSelection(next);setNotice(selectionNotice);
  }
- function repickMate(role:FaceRole){if(!mateSelection)return;setDraft(old=>old?{...old,[role]:undefined,preview:undefined}:null);setMateSelection({...mateSelection,[role]:undefined,pick:role});}
+ function repickMate(role:FaceRole){if(!mateSelection)return;auto.current.on=false;setDraft(old=>old?{...old,[role]:undefined,preview:undefined}:null);setMateSelection({...mateSelection,[role]:undefined,pick:role});}
 
  const faceMessage=useCallback((message:string)=>setNotice(message),[]);
  function withSide(current:FaceDraft,role:FaceRole,side:AssemblySide){
@@ -147,18 +170,19 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function apply(){
   if(!valid||store.saving)return;
   if(move&&!moveError){commit(move.preview);clearEdit();}
-  else if(draft&&previewFaceDraft(draft)&&placement){const labels=new Map(effective.map(e=>[e.id,e.label]));commit(freezePlacements(placement.entries,placement).map(e=>({...e,label:labels.get(e.id)})));clearEdit();}
+  else if(draft&&previewFaceDraft(draft)&&placement){const labels=new Map(effective.map(e=>[e.id,e.label])),done=draft.mate?`Mate applied: ${title(draft.movingEntryId)} is connected to ${title(draft.referenceEntryId)}.`:'';commit(freezePlacements(placement.entries,placement).map(e=>({...e,label:labels.get(e.id)})));clearEdit();if(done)setNotice(done);}
  }
  async function save(){
   if(editing||store.saving||!store.loaded||entries.length&&!valid)return;
   // Labels are UI metadata. The API binds every engineering field to this exact
   // checked matrix snapshot; saving does not run placement again.
+  setNotice('');
   await store.save(placement,validation.token);
  }
  return <section ref={workspace} className="assembly-workspace" aria-label="Interactive assembly workspace" data-connect-mode={!!connectMode} data-unsaved-assembly={store.dirty||editing?'true':undefined} aria-busy={store.saving}>
    {(notice||store.error||store.message||!store.loaded)&&<div className="asm-workspace-notice" role={store.error?'alert':'status'}>{store.error||notice||store.message||'Loading saved assembly…'}{store.error&&<button onClick={()=>{if((store.dirty||editing)&&!window.confirm('Discard current edits and reload the saved project assembly?'))return;clearEdit();setHistory({past:[],future:[]});store.reload();}}>Reload saved assembly</button>}</div>}
   <AssemblyViewer ref={view} projectId={projectId} live={live} entries={effective} panels={available} paint={paint} wire={wire} onReadyChange={setReady}
-   mateCheckId={mateCheckId} insertId={draft&&!draft.mate&&previewFaceDraft(draft)?draft.movingEntryId:undefined} insertBranchId={draft?.insertBranchId} onSideSelected={clickSide} sideSelectionMode={!!connectMode} sideTargets={connectMode?[connectMode.from&&{...connectMode.from,role:'from' as const},connectMode.to&&{...connectMode.to,role:'to' as const}].filter((v):v is {id:string;side:AssemblySide;role:'from'|'to'}=>!!v):[]} selection={selection} previewOnly={editing||addOpen} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={setValidation}
+   mateCheckId={mateCheckId} insertId={draft&&!draft.mate&&previewFaceDraft(draft)?draft.movingEntryId:undefined} insertBranchId={draft?.insertBranchId} onSideSelected={clickSide} sideSelectionMode={!!connectMode} sideTargets={connectMode?[connectMode.from&&{...connectMode.from,role:'from' as const},connectMode.to&&{...connectMode.to,role:'to' as const}].filter((v):v is {id:string;side:AssemblySide;role:'from'|'to'}=>!!v):[]} selection={selection} previewOnly={editing||addOpen} onFacePicked={facePicked} onFaceMessage={faceMessage} onValidation={onValidation}
    activeId={active} hiddenIds={hidden} moving={moving} moveGroup={move?.group??false} onSelect={select} onMove={onMove} onDrag={setDragging} onCatalog={receiveCatalog} onPlaced={setPlacement}>
    <div className="asm-workspace-toolbar">
     <button className="primary" aria-label="Connect / Mate" title="Recommended: click two matching surfaces to connect panels precisely" disabled={!live||!ready||store.saving||editing||entries.length<2} onClick={()=>startMate()}><Link2 size={15}/>Connect / Mate</button>
@@ -188,7 +212,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
     {selected.connection&&<button disabled={!live||!ready||store.saving} onClick={()=>startMove(false,true)}><RotateCw size={15}/>Rotate</button>}
     <button disabled={!live||!ready||store.saving} onClick={()=>{if(!selected.targetId){setAddOpen(true);return;}const panel=available.find(p=>p.id===selected.panelId);if(panel)beginConnection(panel,selected.id,false);}}><Link2 size={15}/>{selected.targetId?'Reconnect':'Connect'}</button>
     <button disabled={store.saving} title="Remove panel and its connection branch" aria-label="Remove selected panel" onClick={()=>{if(window.confirm(`Remove ${title(selected.id)} and its connection branch?`)){commit(removeAssemblyBranch(entries,selected.id));setActive(null);}}}><Trash2 size={15}/></button>
-    {selected.mateState&&<><button disabled={!ready||store.saving} onClick={()=>startMate(true)}>Edit mate</button><small>{selected.connection?.type==='straight-edge'?'Edge':'Planar'} mate: {selected.mateState==='active'?'Active — dependent panels follow mate edits':'Suspended by Free Move — Edit mate to resume'}</small></>}
+    {selected.connection&&<button disabled={!live||!ready||store.saving} title="Remove this connection but keep the panel where it is" onClick={()=>{if(window.confirm(`Disconnect ${title(selected.id)} from ${title(selected.targetId!)}? The panel keeps its current position.`))disconnect(selected.id);}}>Disconnect</button>}{selected.mateState&&<><button disabled={!ready||store.saving} onClick={()=>startMate(true)}>Edit mate</button><small>{selected.connection?.type==='straight-edge'?'Edge':'Planar'} mate: {selected.mateState==='active'?'Active — dependent panels follow mate edits':'Suspended by Free Move — Edit mate to resume'}</small></>}
     {selected.sides&&<small>{selected.sides.reference} → {selected.sides.moving} · Initial gap {selected.gap.toFixed(2)} mm · independent positioning</small>}
    </div>}
    {connectMode&&!needsChoices&&<section className="asm-context" aria-label="Interactive connection"><header><strong>Connect panel sides</strong></header>
@@ -201,7 +225,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    {draft&&!draft.mate&&(!connectMode||needsChoices)&&<AssemblyConnectionEditor draft={draft} entries={effective} catalogs={catalogs} valid={valid} connecting={isNew} insertion={placement?.insertion} onBranch={id=>setDraft(old=>old?{...old,insertBranchId:id}:null)} onSide={chooseSide}
     onReference={id=>setDraft(updateFaceDraft(draft,{referenceEntryId:id,reference:undefined,insertBranchId:undefined,sides:{moving:draft.sides?.moving},sideNames:{moving:draft.sides?.moving},allowed:{moving:draft.allowed?.moving},pick:null,message:''}))}
     onGap={gap=>setDraft(updateFaceDraft(draft,{fields:{...draft.fields,gap}}))} onApply={apply} onCancel={cancel}/>}
-   {mateSelection&&<AssemblyMateEditor selection={mateSelection} draft={draft?.mate?draft:null} entries={effective} placement={placement} valid={valid} onPick={repickMate} onMode={geometry=>{setDraft(null);setMateSelection({anyPanel:true,geometry,alignment:'top',referenceEntryId:'',movingEntryId:'',pick:'reference'});setNotice('');}} onOptions={patch=>{setMateSelection({...mateSelection,...patch});setDraft(old=>old?updateFaceDraft(old,patch):null);}} onChange={fields=>setDraft(old=>old?updateFaceDraft(old,{fields}):null)} onApply={apply} onCancel={cancel}/>}
+   {mateSelection&&<AssemblyMateEditor selection={mateSelection} draft={draft?.mate?draft:null} entries={effective} placement={placement} valid={valid} status={{checking:validation.key!==key||validation.checking,message:validation.key===key?validation.message:''}} fileNames={Object.fromEntries(effective.map(e=>[e.id,filename(e)]))} onPick={repickMate} onMode={geometry=>{auto.current.on=false;setDraft(null);setMateSelection({anyPanel:true,geometry,alignment:'top',referenceEntryId:'',movingEntryId:'',pick:'reference'});setNotice('');}} onOptions={patch=>{auto.current.on=false;setMateSelection({...mateSelection,...patch});setDraft(old=>old?updateFaceDraft(old,patch):null);}} onChange={fields=>{auto.current.on=false;setDraft(old=>old?updateFaceDraft(old,{fields}):null);}} onApply={apply} onCancel={cancel}/>}
    {move&&<section className="asm-context asm-position-card" data-position-popup="true" data-unsaved-assembly="true" aria-label="Panel position controls"><header><strong>{title(move.id)} · {move.rotate?'Rotate':move.group?'Move branch':'Move panel'}</strong><button aria-label={collapsed?'Expand position controls':'Collapse position controls'} onClick={()=>setCollapsed(!collapsed)}>{collapsed?'+':'−'}</button></header>
     {collapsed?<p>X {move.fields.u} · Y {move.fields.v} · Z {move.fields.normal} mm</p>:<>
     <div className="asm-inline-values">{(move.rotate?[['turn','Rotation','°']]:[['u','X offset — right','mm'],['v','Y offset — up','mm'],['normal','Z offset — forward','mm']]).map(([axis,label,unit])=><label key={axis}><span>{label}</span><span><input type="number" step="any" aria-label={label} value={move.fields[axis as keyof MoveDraft['fields']]} disabled={dragging} onChange={e=>updateMove({...move.fields,[axis]:e.target.value})}/><small>{unit}</small></span></label>)}</div>

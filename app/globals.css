@@ -163,7 +163,7 @@
 @media(max-width:1200px){.project-grid{margin-left:23px;margin-right:23px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}}
 @media(max-width:850px){.project-grid{grid-template-columns:1fr 1fr;margin-left:16px;margin-right:16px}.back-to-projects span,.ws-project-item{display:none}}
 @media(max-width:600px){.project-grid{grid-template-columns:1fr}}
-.webgl-host{position:absolute;inset:0}.viewport-actions{position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:7px}.viewport-actions button{width:31px;height:31px;background:#ffffffdd;border-color:#d2dfd8;color:#678575}.viewport-actions svg{width:14px;height:14px}.axis-key{position:absolute;right:15px;bottom:18px;display:flex;gap:8px;font:10px monospace}.axis-key .x{color:#b66e68}.axis-key .y{color:#559575}.axis-key .z{color:#7297b0}.axis-key small{color:#99ada0}.viewport-help{position:absolute;left:14px;bottom:18px;font-size:8px;color:#90a69a;pointer-events:none}.viewport-help span{padding:0 5px}
+.webgl-host{position:absolute;inset:0}.viewport-actions{position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:7px}.viewport-actions button{width:31px;height:31px;background:#ffffffdd;border-color:#d2dfd8;color:#678575}.viewport-actions svg{width:14px;height:14px}.axis-key{position:absolute;right:15px;bottom:18px;display:flex;gap:8px;font:10px monospace}.axis-key .x{color:#b66e68}.axis-key .y{color:#559575}.axis-key .z{color:#7297b0}.axis-key small{color:#99ada0}.viewport-help{position:absolute;left:12px;bottom:12px;font-size:9px;color:#4a6b5c;pointer-events:none;background:#ffffffd4;border:1px solid #ccdbd3;border-radius:6px;padding:7px 10px;display:flex;flex-direction:column;gap:4px;backdrop-filter:blur(6px);line-height:1}.vh-row{display:flex;align-items:center;gap:7px}.vh-key{font-size:8px;font-weight:600;color:#638070;background:#e6f0ea;border:1px solid #c5d7cb;border-radius:3px;padding:2px 5px;white-space:nowrap;min-width:60px;text-align:center}
 
 /* STEP 5 inspection appearance; project comparison and assembly retain their styles. */
 .inspection-studio .viewer-bottom i{background:#aeb6c1;border:1px solid #7c8693}
@@ -377,3 +377,75 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .stepper-asm-active{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:500;color:#0a7e63;padding:0 8px;white-space:nowrap}
 .wizard-navigation{display:flex;align-items:center;justify-content:space-between;padding:16px 0 10px;border-top:2px solid #e2ece6;margin-top:16px;gap:12px}
 .wizard-navigation>span{font-size:12px;color:#8a9b8c;font-weight:500;text-align:center;flex:1}
+
+/* ── Viewer mode: compact chrome, maximised 3D studio ── */
+.viewer-mode{flex:1;min-height:0;height:100vh;max-height:100vh;overflow:hidden;display:flex;flex-direction:column}
+/* compact topbar */
+.viewer-mode .topbar{flex-shrink:0;height:44px!important;padding:0 24px}
+/* compact page-heading: single inline row, hide eyebrow label */
+.viewer-mode .page-heading{flex-shrink:0;padding-top:7px!important;padding-bottom:7px!important;align-items:center;gap:12px}
+.viewer-mode .page-heading>div:first-child{display:flex;align-items:baseline;gap:8px;flex-wrap:nowrap;min-width:0;overflow:hidden}
+.viewer-mode .page-heading .eyebrow{display:none}
+.viewer-mode .page-heading h1{font-size:14px!important;font-weight:600;letter-spacing:-.3px;margin:0!important;white-space:nowrap}
+.viewer-mode .page-heading>div:first-child>p:not(.eyebrow){font-size:11px;color:#8a9b8c;margin:0!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.viewer-mode .page-heading .heading-actions{flex-shrink:0}
+/* compact stepper */
+.viewer-mode .workflow{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.viewer-mode .workflow-bar{flex-shrink:0;padding-bottom:3px;margin-bottom:3px}
+.viewer-mode .stepper-track{padding:3px 16px}
+.viewer-mode .stepper-circle{width:20px;height:20px;font-size:10px;border-width:1.5px}
+.viewer-mode .stepper-active .stepper-circle{box-shadow:0 0 0 2px #cdf0e3}
+.viewer-mode .stepper-label{font-size:9px}
+.viewer-mode .stepper-line{margin-top:8px;min-width:14px;max-width:40px}
+.viewer-mode .stepper-nav-btn{height:24px!important;font-size:10px!important;padding:0 6px!important}
+/* studio fills remaining height — force the grid row to fill the flex height */
+.viewer-mode .studio,.viewer-mode .inspection-studio{flex:1;min-height:0!important;border-radius:6px;overflow:hidden;grid-template-rows:minmax(0,1fr)}
+.viewer-mode .studio-panels{padding:8px 7px;overflow-y:auto}
+/* studio-main is a grid cell, not a flex item — no flex:1 here */
+.viewer-mode .studio-main{min-height:0;overflow:hidden}
+.viewer-mode .viewer-wrapper{min-height:0!important;flex:1}
+.viewer-mode .viewer-stage{min-height:0!important}
+/* keep fold slider always visible — prevent flex shrink */
+.viewer-mode .fold-timeline{flex-shrink:0}
+.viewer-mode .viewer-bottom{flex-shrink:0}
+/* model inspector scrolls when taller than viewport */
+.viewer-mode .model-inspector{overflow-y:auto}
+/* compact bottom nav */
+.viewer-mode .wizard-navigation{flex-shrink:0;padding:5px 0 4px;margin-top:3px;border-top-width:1px}
+/* hide footer — saves ~40px */
+.viewer-mode .workspace-footer{display:none}
+/* compact sample banner if visible */
+.viewer-mode .sample-banner{margin-bottom:4px;padding:6px 14px;font-size:11px}
+/* ── Extra compression pass: hide page-heading, collapse stepper labels ── */
+/* page-heading is redundant — breadcrumb already shows file name */
+.viewer-mode .page-heading{display:none!important}
+/* stepper without text labels: circles + lines only */
+.viewer-mode .stepper-label{display:none}
+.viewer-mode .stepper-circle{width:18px;height:18px;font-size:9px}
+.viewer-mode .stepper-line{margin-top:7px;min-width:12px;max-width:36px}
+.viewer-mode .stepper-track{padding:4px 20px}
+.viewer-mode .workflow-bar{padding-bottom:4px;margin-bottom:2px}
+/* ── Bend editor overlay ── */
+.bend-editor{position:absolute;top:12px;left:12px;background:#ffffffef;border:1px solid #c5d9d0;border-radius:9px;padding:12px 14px;min-width:210px;max-width:260px;display:flex;flex-direction:column;gap:9px;backdrop-filter:blur(8px);z-index:20;pointer-events:all;box-shadow:0 2px 12px #0000001a}
+.be-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.be-name{font-size:12px;font-weight:600;color:#1a3028;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.be-x{background:none;border:none;cursor:pointer;color:#8a9b8c;font-size:14px;line-height:1;padding:0 2px;flex-shrink:0}
+.be-x:hover{color:#1a3028}
+.be-row{display:flex;align-items:center;gap:8px}
+.be-label{font-size:11px;color:#5a7a6c;min-width:38px;flex-shrink:0}
+.be-input-wrap{display:flex;align-items:center;gap:4px;flex:1}
+.be-input{flex:1;min-width:0;border:1px solid #c5d9d0;border-radius:5px;padding:4px 7px;font-size:12px;background:#fff;color:#1a3028;outline:none}
+.be-input:focus{border-color:#39a88e;box-shadow:0 0 0 2px #39a88e22}
+.be-unit{font-size:11px;color:#5a7a6c;flex-shrink:0}
+.be-error{font-size:10px;color:#c0392b;margin:0}
+.be-actions{display:flex;gap:7px}
+.be-cancel{flex:1;background:none;border:1px solid #c5d9d0;border-radius:5px;padding:5px 0;font-size:11px;color:#5a7a6c;cursor:pointer}
+.be-cancel:hover{background:#f0f7f4;color:#1a3028}
+.be-apply{flex:1;background:#39a88e;border:1px solid #39a88e;border-radius:5px;padding:5px 0;font-size:11px;color:#fff;cursor:pointer;font-weight:600}
+.be-apply:hover{background:#2f9a81}
+.be-save{width:100%;background:#1a3028;border:1px solid #1a3028;border-radius:5px;padding:6px 0;font-size:11px;color:#cdf0e3;cursor:pointer;font-weight:600}
+.be-save:hover:not(:disabled){background:#0f1f1a}
+.be-save:disabled{opacity:.45;cursor:not-allowed}
+.asm-context footer{position:sticky;bottom:-15px;background:#fffffff5;padding:10px 0 2px;border-top:1px solid #e3ebf0}
+.asm-context [data-mate-status=error]{color:#9a4b1d}
+.asm-context [data-mate-status=ok]{color:#1d7a54}
