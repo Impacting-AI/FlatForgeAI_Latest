@@ -92,6 +92,27 @@ class FaceConnection(StrictModel):
         return self
 
 
+class PlaneMate(StrictModel):
+    """One face pair of a multi-mate placement; offset is signed along the target normal."""
+    id: str = Field(min_length=1, max_length=160)
+    targetId: str = Field(min_length=1, max_length=160)
+    type: Literal['coincident', 'distance']
+    offset: float = Field(default=0, ge=-1e6, le=1e6)
+    aligned: bool = False
+    # Preference only: centre the two faces on each other in directions no mate constrains.
+    lineUp: bool = False
+    reference: FaceReference
+    moving: FaceReference
+
+    @model_validator(mode='after')
+    def planar(self):
+        if self.reference.edgeId or self.moving.edgeId:
+            raise ValueError('Face mates use planar faces, not edges')
+        if self.type == 'coincident' and self.offset:
+            raise ValueError('A coincident mate has no distance; use a distance mate')
+        return self
+
+
 class SourceReference(StrictModel):
     id: str = Field(min_length=1, max_length=160)
     panelId: str = Field(min_length=1, max_length=160)
@@ -138,9 +159,19 @@ class Entry(SourceReference):
     pose: PanelPose | None = None
     sides: ConnectionSides | None = None
     mateState: Literal['active', 'suspended'] | None = None
+    planeMates: list[PlaneMate] | None = Field(default=None, min_length=1, max_length=24)
 
     @model_validator(mode="after")
     def valid_connection(self):
+        if self.planeMates:
+            if self.targetId is None:
+                raise ValueError('The base panel is fixed and cannot receive mates')
+            if self.connection or self.mateState or not self.pose:
+                raise ValueError('Face mates need a starting pose and replace any single connection')
+            if len({m.id for m in self.planeMates}) != len(self.planeMates):
+                raise ValueError('Mate IDs must be unique')
+            if any(m.targetId == self.id for m in self.planeMates):
+                raise ValueError('A panel cannot be mated to itself')
         if self.rootOffset is not None and self.targetId is not None:
             raise ValueError('Only the root can have an assembly-origin offset')
         if self.connection and self.targetId is None:
@@ -199,6 +230,10 @@ class AssemblyInput(StrictModel):
             elif entry.targetId not in seen or entry.targetFace is None:
                 raise ValueError('Each panel must connect to an earlier assembly entry')
             seen.add(entry.id)
+        if any(e.planeMates for e in self.entries):
+            if any(m.targetId not in seen for e in self.entries for m in e.planeMates or []):
+                raise ValueError('A mate refers to a panel that is not in this assembly')
+            connections.dependency_order(self.entries)
         return self
 
 
@@ -332,7 +367,9 @@ def check_placement(entries, sources, policy='constrained'):
             if not np.allclose(entry.matrix, solved['matrix'], atol=LINEAR_EPS_MM, rtol=0):
                 raise HTTPException(422, 'Panel placement does not match its current saved positioning data')
         shapes = {e.id: sources[e.id]['shape'].moved(location(e.matrix)) for e in entries}
-        return {'valid': True, 'clearances': [], 'collisions': [], 'contacts': [], 'issues': [], 'bounds': expected['bounds']}, shapes
+        issues = [f"{sources[key]['name']}: a mate conflicts with the others. {m['message']}"
+                  for key, row in expected['constraints'].items() for m in row['mates'] if m['state'] == 'conflict']
+        return {'valid': not issues, 'clearances': [], 'collisions': [], 'contacts': [], 'issues': issues, 'bounds': expected['bounds']}, shapes
     shapes = {e.id: sources[e.id]['shape'].moved(location(e.matrix)) for e in entries}
     boxes = {key: bounds(shape) for key, shape in shapes.items()}
     clearances, collisions, contacts, issues = [], [], [], []
@@ -407,7 +444,16 @@ def validate(project_id, body):
         sources = load_sources(project_id, body.entries)
         try:
             result, shapes = check_placement(body.entries, sources, body.policy)
-            if body.mateCheckId:
+            checked = next((e for e in body.entries if e.id == body.mateCheckId), None)
+            if checked and checked.planeMates:
+                from .assembly_seams import joint_conflicts
+                # Overlap is reported, not blocked: intermediate mates often overlap.
+                moved = connections.dependents(body.entries, checked.id)
+                # Below 1 mm³ is contact round-off, not a clash worth reporting.
+                for a, b, volume in joint_conflicts(body.entries, moved, shapes, result['bounds'], 1.):
+                    result.setdefault('warnings', []).append(
+                        f"{sources[a]['name']} and {sources[b]['name']} overlap by {volume:.6g} mm³.")
+            elif body.mateCheckId:
                 from .assembly_seams import active_branch, joint_conflicts
                 branch = active_branch(body.entries, body.mateCheckId)
                 matrices = {e.id: connections.matrix(e.matrix) for e in body.entries}

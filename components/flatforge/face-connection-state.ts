@@ -30,7 +30,7 @@ export function faceDraftError(draft:FaceDraft) {
 
 export function previewFaceDraft(draft:FaceDraft):AssemblyEntry|undefined {
   if(faceDraftError(draft)||!draft.reference||!draft.moving)return;
-  const original={...draft.original};delete original.pose;delete original.matrix;delete original.rootOffset;
+  const original={...draft.original};delete original.planeMates;delete original.pose;delete original.matrix;delete original.rootOffset;
   if(draft.mate){delete original.sides;original.mateState='active';}else delete original.mateState;
   if(draft.sides?.reference&&draft.sides?.moving)original.sides={reference:draft.sides.reference,moving:draft.sides.moving};
   return {...original,targetId:draft.referenceEntryId,gap:Number(draft.fields.gap),connection:{type:draft.geometry==='edge'?'straight-edge':'planar',...(draft.mate&&draft.geometry!=='edge'&&draft.startPose?{startPose:draft.startPose,...(draft.matchFootprints?{matchFootprints:true}:{})}:{}),...(draft.mate?{alignment:draft.alignment??'top',flip:!!draft.flip}:{}),

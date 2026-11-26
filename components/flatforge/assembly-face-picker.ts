@@ -10,7 +10,7 @@ export function createAssemblyFacePicker(options:{
   entries:()=>CadEntry[];groups:Map<string,{group:THREE.Group}>;
   onPick:(role:FaceRole,reference:CadFaceReference,entryId:string)=>void;onMessage:(message:string)=>void;
   onSelect:(id:string|null)=>void;onPanelHover:(id:string|null)=>void;
-  onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;
+  onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;label?:(id:string)=>string;
 }) {
   let sideHover:{id:string;side:AssemblySide}|null=null;
   let selection:FaceSelection|null=null,alive=true,sequence=0,pickRevision=0;
@@ -67,7 +67,7 @@ export function createAssemblyFacePicker(options:{
     const key=id+':'+face.id+':'+(candidate?.edge.id??'');
     if(key!==hoverKey){clearHover();hoverKey=key;hover=candidate?edgeLine(candidate.edge,options.groups.get(id)!.group,0x008dd2):new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0x70bde0:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
     const side=selection?.sideNames?.[role];
-    tooltip.hidden=false;tooltip.textContent=candidate?face.id+' / '+candidate.edge.id+' · Click to mate':selection?.anyPanel?`${face.id} · ${face.type} · ${face.supported?'Click to select':'Planar mates only'}`:(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
+    tooltip.hidden=false;tooltip.textContent=candidate?face.id+' / '+candidate.edge.id+' · Click to mate':selection?.anyPanel?`${options.label?.(id)??''}${face.id} · ${face.type} · ${face.supported?'Click to select':'Planar mates only'}`:(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
     const rect=options.canvas.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(rect.width-220,event.clientX-rect.left+14))+'px';tooltip.style.top=Math.max(55,event.clientY-rect.top-35)+'px';
   };
   function clearVisuals(){

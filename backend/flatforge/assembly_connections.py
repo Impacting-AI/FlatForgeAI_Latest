@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from OCP.gp import gp_Trsf
 
 from .assembly_face_orientation import preserve_pose
+from .assembly_mates import solve_mates
 from .assembly_seams import PICK_EPS_MM, straight_edges, seam_reference
 
 
@@ -106,22 +107,78 @@ def connection_frame(entry, sources, parent_matrix):
     return result, (face_a, face_b, point_b, basis, anchor, separation)
 
 
+def dependencies(entry):
+    """Panels that must be placed before this one."""
+    mates = getattr(entry, 'planeMates', None)
+    if mates:
+        return {m.targetId for m in mates}
+    if entry.pose or not entry.targetId:
+        return set()
+    return {entry.targetId}
+
+
+def dependency_order(entries):
+    remaining, ready, ordered = list(entries), set(), []
+    while remaining:
+        batch = [e for e in remaining if dependencies(e) <= ready]
+        if not batch:
+            raise ValueError('These mates form a circular dependency between panels')
+        ordered.extend(batch)
+        ready.update(e.id for e in batch)
+        remaining = [e for e in remaining if e.id not in ready]
+    return ordered
+
+
+def dependents(entries, id):
+    """The panel plus every panel whose placement follows it."""
+    moved = {id}
+    while True:
+        more = {e.id for e in entries if dependencies(e) & moved} - moved
+        if not more:
+            return moved
+        moved |= more
+
+
+def posed(entry, sources):
+    pose = entry.pose
+    if pose.sourceSha != sources[entry.id]['sha256']:
+        raise HTTPException(409, 'A positioned panel was rebuilt. Reconnect it using the current drawing before saving or exporting.')
+    transform = matrix(pose.matrix).copy()
+    axis = np.array(pose.axis)
+    angle = math.radians(pose.turn % 360)
+    cross = np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
+    turn = np.eye(3)*math.cos(angle)+(1-math.cos(angle))*np.outer(axis,axis)+math.sin(angle)*cross
+    pivot = np.array(pose.pivot)
+    transform[:3,3] = pivot + turn @ (transform[:3,3]-pivot) + np.array(pose.offset)
+    transform[:3,:3] = turn @ transform[:3,:3]
+    return transform
+
+
+def mate_rows(entry, sources, matrices):
+    rows = []
+    for mate in entry.planeMates:
+        target_face, target_point, target_basis = resolve(sources[mate.targetId], mate.reference)
+        face, point, basis = resolve(sources[entry.id], mate.moving)
+        parent = matrices[mate.targetId]
+        plane_normal = parent[:3,:3] @ target_basis[:,2]
+        rows.append({'id': mate.id, 'normal': basis[:,2], 'point': point, 'plane_normal': plane_normal,
+                     'plane_point': parent[:3,:3] @ target_point + parent[:3,3],
+                     'direction': plane_normal if mate.aligned else -plane_normal, 'offset': mate.offset,
+                     'centers': (np.array(face.Center().toTuple()),
+                                 parent[:3,:3] @ np.array(target_face.Center().toTuple()) + parent[:3,3]) if mate.lineUp else None})
+    return rows
+
+
 def solve(entries, sources, rotation_matrix, bounds):
     """Authoritative live placements for both saved envelope and face connections."""
-    matrices, boxes, result, frames = {}, {}, [], {}
-    for entry in entries:
-        if entry.pose:
-            pose = entry.pose
-            if pose.sourceSha != sources[entry.id]['sha256']:
-                raise HTTPException(409, 'A positioned panel was rebuilt. Reconnect it using the current drawing before saving or exporting.')
-            transform = matrix(pose.matrix).copy()
-            axis = np.array(pose.axis)
-            angle = math.radians(pose.turn % 360)
-            cross = np.array([[0,-axis[2],axis[1]],[axis[2],0,-axis[0]],[-axis[1],axis[0],0]])
-            turn = np.eye(3)*math.cos(angle)+(1-math.cos(angle))*np.outer(axis,axis)+math.sin(angle)*cross
-            pivot = np.array(pose.pivot)
-            transform[:3,3] = pivot + turn @ (transform[:3,3]-pivot) + np.array(pose.offset)
-            transform[:3,:3] = turn @ transform[:3,:3]
+    matrices, boxes, placed, frames, constraints = {}, {}, {}, {}, {}
+    for entry in dependency_order(entries):
+        if getattr(entry, 'planeMates', None):
+            box = bounds(sources[entry.id]['shape'])
+            center = (np.array(box['max']) + np.array(box['min'])) / 2
+            transform, constraints[entry.id] = solve_mates(mate_rows(entry, sources, matrices), posed(entry, sources), center)
+        elif entry.pose:
+            transform = posed(entry, sources)
         elif entry.connection:
             transform, details = connection_frame(entry, sources, matrices[entry.targetId])
             _, _, point_b, basis, _, _ = details
@@ -167,7 +224,7 @@ def solve(entries, sources, rotation_matrix, bounds):
         if entry.pose or not entry.connection:
             frames[entry.id] = {'kind': 'root', 'origin': ((np.array(boxes[entry.id]['min']) + np.array(boxes[entry.id]['max']))/2).tolist(),
                                 'u': [1,0,0], 'v': [0,0,1], 'n': [0,-1,0]}
-        result.append({**entry.model_dump(), 'matrix': values(transform)})
+        placed[entry.id] = {**entry.model_dump(), 'matrix': values(transform)}
     mates = []
     for entry in entries:
         if entry.mateState == 'active':
@@ -178,7 +235,8 @@ def solve(entries, sources, rotation_matrix, bounds):
             mates.append(row)
         elif entry.mateState == 'suspended':
             mates.append({'entryId': entry.id, 'targetId': entry.targetId, 'state': 'suspended', 'satisfied': False})
-    return {'units': 'mm', 'mates': mates, 'entries': result, 'bounds': boxes, 'frames': frames,
+    return {'units': 'mm', 'mates': mates, 'entries': [placed[e.id] for e in entries], 'bounds': boxes, 'frames': frames,
+            'constraints': constraints,
             'sourceHashes': {entry.id: sources[entry.id]['sha256'] for entry in entries}}
 
 

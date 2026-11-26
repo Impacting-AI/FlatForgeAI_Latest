@@ -464,3 +464,48 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .face-chip strong{display:block;font-size:12px;color:#1a3028;overflow-wrap:anywhere}
 .face-chip small{display:block;font-size:10px;color:#6b7f76;margin-top:2px;overflow-wrap:anywhere}
 .face-chip button{background:none;border:0;cursor:pointer;color:#8a9b8c;font-size:13px;line-height:1;padding:0}
+/* ── Face-pair mates: guided card, panel tree and status ── */
+.asm-more{position:relative;pointer-events:auto}
+.asm-more>summary{list-style:none;cursor:pointer;font-size:11px;padding:8px 10px;border:1px solid #cdd7df;border-radius:6px;background:#fff;color:#344d5c}
+.asm-more>div{position:absolute;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:4px;padding:6px;background:#fff;border:1px solid #cdd7df;border-radius:7px;box-shadow:0 6px 18px #1e39431f;z-index:9;min-width:160px}
+.asm-more>div button{justify-content:flex-start;white-space:nowrap}
+.assembly-workspace .asm-panel-list{top:calc(var(--assembly-toolbar-bottom,68px) + 4px);max-height:calc(100% - var(--assembly-toolbar-bottom,68px) - 140px);width:256px}
+.assembly-workspace[data-tree-open=true] .asm-selection-toolbar{left:278px;max-width:calc(100% - 340px)}
+.asm-panel-list>details{margin-top:10px;font-size:11px;color:#52697a}
+.asm-panel-list>details label{display:flex;gap:6px;margin-top:8px}
+.asm-panel-list>details button{margin-top:8px}
+.assembly-workspace .asm-tree,.assembly-workspace .asm-tree ul{list-style:none;margin:0;padding:0}
+.asm-tree>li{border:1px solid #e2e9ee;border-radius:6px;padding:3px 5px;margin-bottom:5px}
+.asm-tree>li.selected{border-color:#7fb4cf;background:#eef7fb}
+.asm-tree-row{display:flex;align-items:center;gap:2px}
+.assembly-workspace .asm-tree button{border:0;background:transparent;padding:5px 4px;min-width:0}
+.assembly-workspace .asm-tree .asm-tree-name{flex:1;justify-content:flex-start;text-align:left;gap:7px;overflow:hidden}
+.asm-tree small{display:block;font-size:10px;color:#71838d}
+.asm-tree p{margin:2px 0 4px 34px!important;font-size:10px!important}
+.asm-tree ul li{display:flex;align-items:center;gap:2px;margin:0 0 2px 28px;border-left:2px solid #2f9c78;padding-left:6px}
+.asm-tree ul li[data-state=conflict]{border-color:#c0492b}
+.asm-tree ul li[data-state=redundant]{border-color:#c79a2e}
+.asm-tree ul li>span{flex:1;min-width:0;font-size:10.5px}
+.asm-tree small[data-tone=defined],.asm-selection-toolbar span[data-tone=defined]{color:#1d7a54;font-weight:600}
+.asm-tree small[data-tone=under],.asm-selection-toolbar span[data-tone=under]{color:#3d6f8c;font-weight:600}
+.asm-tree small[data-tone=conflict],.asm-selection-toolbar span[data-tone=conflict]{color:#b03a1f;font-weight:600}
+.asm-tree small[data-tone=base]{color:#26607c;font-weight:600}
+.assembly-workspace .asm-mate-card .asm-slot{display:flex;align-items:center;justify-content:flex-start;gap:9px;width:100%;text-align:left;margin-bottom:6px;padding:7px 9px}
+.assembly-workspace .asm-mate-card .asm-slot[aria-pressed=true]{border-color:#2788ee;box-shadow:0 0 0 2px #2788ee33}
+.asm-slot strong{display:block;font-size:11.5px}
+.asm-slot small{display:block;font-size:10px;color:#6c808d;overflow-wrap:anywhere}
+.asm-segment{display:grid;grid-template-columns:1fr 1fr;gap:0;margin:8px 0}
+.assembly-workspace .asm-segment button{justify-content:center;border-radius:0}
+.assembly-workspace .asm-segment button:first-child{border-radius:6px 0 0 6px}
+.assembly-workspace .asm-segment button:last-child{border-radius:0 6px 6px 0}
+.assembly-workspace .asm-segment button[aria-pressed=true]{background:#146a7a;border-color:#146a7a;color:#fff}
+.asm-mate-card>label.asm-check{display:flex;align-items:center;gap:6px;margin-top:9px;font-size:11px}
+.asm-mate-card>label.asm-check input{width:auto;margin:0}
+.assembly-workspace .asm-inline-values label.asm-check{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;font-size:11px}
+.assembly-workspace .asm-inline-values label.asm-check input{width:auto;margin:0;flex:0 0 auto}
+.asm-mate-options{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.assembly-workspace .asm-mate-options button{font-size:10.5px;padding:5px 8px}
+.asm-mate-card .asm-mate-note{background:#eef6fa;border-radius:5px;padding:7px 9px}
+.asm-context [data-mate-status=warn]{color:#8a6212}
+@media(max-width:900px){.assembly-workspace .asm-panel-list{width:200px}.assembly-workspace[data-tree-open=true] .asm-selection-toolbar{left:222px}}
+

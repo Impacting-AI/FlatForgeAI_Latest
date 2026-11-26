@@ -19,7 +19,7 @@ import { positionValues, type PositionValues } from './assembly-workspace-state'
 import { prepareInspectionModel, applyInspectionAppearance, configureInspectionRenderer, prepareInspectionGrid, inspectionLighting } from './inspection-presentation';
 
 // ── Public types ──────────────────────────────────────────────────────────────
-export type AssemblyViewerHandle = {fit:(view?:string)=>void};
+export type AssemblyViewerHandle = {fit:(view?:string,entryId?:string)=>void};
 
 type Props = {
  sideSelectionMode?:boolean;sideTargets?:{id:string;side:AssemblySide;role:'from'|'to'}[];
@@ -38,14 +38,14 @@ type Props = {
  previewOnly?:boolean;
  onFacePicked?:(role:FaceRole,face:CadFaceReference,entryId:string)=>void;
  onFaceMessage?:(message:string)=>void;
- onValidation?:(result:{key:string;valid:boolean;token:string|null;checking:boolean;message:string})=>void;
+ onValidation?:(result:{key:string;valid:boolean;token:string|null;checking:boolean;message:string;warning:string})=>void;
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
  function AssemblyViewer({projectId,live,entries,panels,paint,wire,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,hiddenIds=[],moving=false,moveGroup=false,onSelect,onMove,onDrag,onCatalog,onPlaced,mateCheckId,insertId,insertBranchId,onSideSelected,sideTargets=[],sideSelectionMode=false},ref){
   const host = useRef<HTMLDivElement>(null);
-  const viewApi = useRef<{fit:(view?:string)=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
+  const viewApi = useRef<{fit:(view?:string,entryId?:string)=>void;screenshot:()=>void;exportGLB:()=>Promise<void>}|null>(null);
   const applyRef = useRef<((p:boolean,w:boolean)=>void)|null>(null);
   // Track latest paint/wire for use inside async closures
   const paintLatest = useRef(paint);
@@ -68,7 +68,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced,onSideSelected,sideTargets,sideSelectionMode};void pickerRef.current?.update(selection);displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,hiddenIds,moving,moveGroup,onSelect,onMove,onDrag,onCatalog,onPlaced,onSideSelected,sideTargets,sideSelectionMode]);
   // Parent selection/highlight updates must not restart CAD placement.
   useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey).entries;insertion.current={mateCheckId,insertId,insertBranchId};layoutRef.current?.();},[entriesKey,mateCheckId,insertId,insertBranchId]);
-  useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid,token:cad.result?.token??null,checking:cad.checking,message:cad.checking?'':cad.error||cad.result?.issues.join(' ')||''});},[cad,ready,onValidation]);
+  useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid,token:cad.result?.token??null,checking:cad.checking,message:cad.checking?'':cad.error||cad.result?.issues.join(' ')||'',warning:cad.checking?'':cad.result?.warnings?.join(' ')||''});},[cad,ready,onValidation]);
   useEffect(()=>{onReadyChange(ready);},[ready,onReadyChange]);
 
   // Keep latest-value refs up to date without triggering re-mount
@@ -76,7 +76,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
 
   // Expose imperative handle
   useImperativeHandle(ref,()=>({
-   fit:(view)=>viewApi.current?.fit(view),
+   fit:(view,entryId)=>viewApi.current?.fit(view,entryId),
   }),[]);
 
   // Reload models only when panel artifacts change. Spacing/connections preserve the camera.
@@ -154,6 +154,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       onPick:(role,face,id)=>interaction.current.onFacePicked?.(role,face,id),onMessage:message=>interaction.current.onFaceMessage?.(message),
       onSelect:id=>interaction.current.onSelect?.(id),onCatalog:catalog=>{labels?.setCatalog(catalog);interaction.current.onCatalog?.(catalog);},
       blocked:()=>!!gizmoRef.current?.intercepting,
+      label:id=>{const name=entriesLatest.current.find(e=>e.id===id)?.label;return name?`Panel ${name} · `:'';},
       onPanelHover:id=>{if(hoveredId!==id){hoveredId=id;applyRef.current?.(paintLatest.current,wireLatest.current);}}});
      void pickerRef.current.loadAll();void pickerRef.current.update(interaction.current.selection);
     }
@@ -216,10 +217,10 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
     applyRef.current=doApply;doApply(paintLatest.current,wireLatest.current);
 
     // ── Fit camera ────────────────────────────────────────────────────────
-    function fit(view="iso"){
+    function fit(view="iso",entryId?:string){
      if(!items.size) return;
      const box=new THREE.Box3();
-     for(const item of items.values()){if(!item.group.visible)continue;item.group.updateMatrixWorld(true);box.union(new THREE.Box3().setFromObject(item.group));}
+     for(const [id,item] of items){if(!item.group.visible||entryId&&id!==entryId)continue;item.group.updateMatrixWorld(true);box.union(new THREE.Box3().setFromObject(item.group));}
      if(box.isEmpty())return;
      const size=box.getSize(new THREE.Vector3()),c=box.getCenter(new THREE.Vector3());
      const vFov=THREE.MathUtils.degToRad(camera.fov),hFov=2*Math.atan(Math.tan(vFov/2)*camera.aspect);
@@ -275,7 +276,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    <div className="viewer-stage" data-assembly-ready={ready}>
    <div className="asm-cad-controls" data-cad-valid={cad.key===entriesKey&&live&&ready&&entries.length>0&&!!cad.result?.valid&&!cad.checking}>
     <Button variant="outline" disabled={previewOnly||cad.key!==entriesKey||!live||!entries.length||!ready||cad.checking||!cad.result?.valid||exporting} onClick={async()=>{const token=cadLatest.current?.token;if(!token)return;setExporting(true);setStepError('');try{await downloadAssemblyStep(projectId,token);}catch(error){setStepError((error as Error).message);}finally{setExporting(false);}}}><Download size={15}/>{exporting?'Exporting…':'Export assembly as STEP (.step)'}</Button>
-    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for assembly saving and STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking panel positions…':cad.error||cad.result?.issues.join(' ')||(cad.result?.valid?'Positions ready · millimeters':'Waiting for panel positions.')}</p>}
+    {!live?<p>Sample preview uses mesh bounds. Connect the CAD service for assembly saving and STEP export.</p>:entries.length>0&&<p role="status">{cad.checking?'Checking panel positions…':cad.error||cad.result?.issues.join(' ')||cad.result?.warnings?.join(' ')||(cad.result?.valid?'Positions ready · millimeters':'Waiting for panel positions.')}</p>}
     {stepError&&<p role="alert">{stepError}</p>}
    </div>
     <div ref={host} className="webgl-host"/>
