@@ -27,6 +27,8 @@ export function useDrawingReview(panel: Panel | undefined, defaults: Settings) {
     setRelief: (value: boolean) => update('relief', value),
     // This closure belongs to the submitted snapshot. Edits made while the
     // request is in flight must remain dirty rather than being marked saved.
-    markSaved: () => setState(previous => ({ ...previous, baseline: JSON.stringify(state.values) })),
+    // A caller that submits review values it has only just staged passes them here.
+    markSaved: (submitted?: ReviewValues) => setState(previous => ({ ...previous,
+      baseline: JSON.stringify(submitted ? { ...state.values, review: submitted } : state.values) })),
   };
 }

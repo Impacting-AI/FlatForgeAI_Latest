@@ -61,6 +61,7 @@ try {
     await page.getByRole('button', { name: 'Open drawing ' + panel.filename, exact: true }).click();
     await page.getByRole('tab', { name: /Extract/ }).click();
     await drawing.waitFor();
+    await page.getByRole('button', { name: 'Extend', exact: true }).click();
     await page.waitForFunction(count => document.querySelectorAll('svg[aria-label="Flat pattern with geometry-linked bend values"] g[role="button"]').length === count, expectedBends);
   }
   async function reviewPage(expectedBends = target.report.bends.length) {
@@ -108,7 +109,7 @@ try {
   await open(first);
   assert.ok((await editor.textContent()).includes(`${originalSource[0].profile} / vertex ${originalSource[0].vertex}`));
   await input(0).fill('61.25'); await cancel();
-  assert.ok((await card(first).textContent()).includes('Rotation: ' + first.angle + '°'));
+  assert.ok((await card(first).textContent()).includes('Angle: ' + first.angle + '°'));
   await open(first); await input(0).fill('62'); await input(0).press('Escape');
   assert.equal(await editor.count(), 0);
   assert.equal(await card(first).evaluate(element => element === document.activeElement), true);
@@ -117,7 +118,7 @@ try {
   for (const [field, value] of [[0, ''], [0, '0'], [0, '180'], [1, '0'], [1, '-1'], [1, '101'], [2, '-1'], [2, '101']]) {
     await open(first); await input(field).fill(value); await apply();
     assert.ok(await editor.getByRole('alert').textContent());
-    assert.ok((await card(first).textContent()).includes('Rotation: ' + first.angle + '°')); await cancel();
+    assert.ok((await card(first).textContent()).includes('Angle: ' + first.angle + '°')); await cancel();
   }
   // Panel changes still refresh automatic values and discard stale editor drafts.
   await open(first); await input(1).fill('9');
@@ -131,7 +132,7 @@ try {
   await editor.getByRole('button', { name: 'Use automatic', exact: true }).click();
   await open(first); assert.equal(await input(1).inputValue(), '2'); await cancel();
   await open(first); await input(0).fill('60.123456789'); await input(1).fill('3.25'); await input(2).fill('5'); await apply();
-  assert.match(await card(first).textContent(), /Rotation: \+60.123°/);
+  assert.match(await card(first).textContent(), /Angle: \+60.123°/);
   assert.match(await card(first).textContent(), /Inside radius: 3.25 mm/);
   const repeated = target.report.bends.filter(bend => bend.bend_ids.join('/') === 'C04');
   assert.ok(repeated.length > 1);
@@ -171,9 +172,6 @@ try {
   assert.ok((await editor.textContent()).includes('Source section / vertex not established'));
   for (let field = 0; field < 3; field++) assert.equal(await input(field).inputValue(), '');
   await input(0).fill('60'); await input(1).fill('2'); await input(2).fill('4'); await apply();
-  await open(first); await input(0).fill('120');
-  await page.getByLabel('Signed angle for ' + first.bend_ids.join('/'), { exact: true }).fill('75');
-  assert.equal(await input(0).inputValue(), '75'); await cancel();
   await save(); assert.equal(saved.manual_bends, true); assert.equal(saved.settings.use_material_defaults, false);
   assert.deepEqual(saved.relief_radii, hiddenReliefs); assert.equal(saved.review_note, reviewNote);
   // A saved reviewed panel with an empty historical note must rebuild without a hidden field.

@@ -52,7 +52,7 @@ export function bendInputValue(bend: Bend, settings: Settings, review: ReviewVal
 }
 
 export function bendValueError(values: BendValues, required = false): string | null {
-  if (required && bendFields.some(field => values[field] == null)) return 'Enter signed rotation, inside radius and bend deduction. Empty fields are not zero.';
+  if (required && bendFields.some(field => values[field] == null)) return 'Enter angle, inside radius and bend deduction. Empty fields are not zero.';
   if (values.angle != null && (!Number.isFinite(values.angle) || values.angle === 0 || Math.abs(values.angle) >= 180)) return 'Signed bend angles must be greater than −180°, less than 180°, and nonzero.';
   if (values.radius != null && (!Number.isFinite(values.radius) || values.radius <= 0 || values.radius > 100)) return 'Each bend radius must be above 0 and at most 100 mm.';
   if (values.deduction != null && (!Number.isFinite(values.deduction) || values.deduction < 0 || values.deduction > 100)) return 'Each bend deduction must be from 0 to 100 mm.';
@@ -77,4 +77,30 @@ export function reviewError(value:ReviewValues,settings:Settings):string|null {
  for(const bend of Object.values(value.bend_parameters)){const error=bendValueError(bend);if(error)return error;}
  for(const radius of Object.values(value.relief_radii))if(radius!=null&&(!Number.isFinite(radius)||radius<=0))return 'Corner-relief radii must be positive numbers.';
  return null;
+}
+
+/** One shared angle for the listed bends only; every other bend is untouched. */
+export function fillMissingAngles(review: ReviewValues, keys: string[], angle: number): ReviewValues {
+  return keys.reduce((next, key) => updateBendParameters(next, key, { angle }), review);
+}
+
+export function bendsChanged(a: ReviewValues['bend_parameters'], b: ReviewValues['bend_parameters']) {
+  const stable = (rows: ReviewValues['bend_parameters']) => JSON.stringify(Object.keys(rows).sort()
+    .map(key => [key, bendFields.map(field => rows[key][field] === undefined ? 'unset' : rows[key][field])]));
+  return stable(a) !== stable(b);
+}
+
+/** Sending any bend value makes the engine drop every angle that was not sent, so a
+ * rebuild after an edit carries the full current set in reviewed (manual) mode.
+ * A deliberately cleared angle stays missing; "Use automatic" restores the drawing's.
+ */
+export function completeBendReview(review: ReviewValues, bends: Bend[]): ReviewValues {
+  const all = { ...review.bend_parameters };
+  for (const bend of bends) {
+    const edit = review.bend_parameters[bend.key];
+    if (edit && edit.angle !== undefined) continue;
+    const angle = edit && !Object.keys(edit).length ? automaticBendAngle(bend) : bend.angle;
+    if (angle != null) all[bend.key] = { ...edit, angle };
+  }
+  return { ...review, manual_bends: true, bend_parameters: all };
 }

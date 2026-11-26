@@ -1,25 +1,29 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { CircleAlert } from 'lucide-react';
 import type { Panel, Settings } from './types';
 import { fileUrl } from './types';
 import type { ReviewValues } from './review-state';
-import { bendSourceReferences, calloutLayout, editableHinge, flatProjection, hingeAnchor, matchesHinge, polygonPath, reviewedBend } from './flat-pattern';
+import { bendSourceReferences, calloutLayout, editableHinge, flatProjection, hingeAnchor, matchesHinge, missingAngleBends, polygonPath, reviewedBend } from './flat-pattern';
 import type { FlatExtraction, Point2 } from './flat-pattern';
-import { bendFields, bendInputValue, requiresReviewedSections, type BendChange } from './bend-review';
+import { bendFields, bendInputValue, bendValueError, requiresReviewedSections, type BendChange } from './bend-review';
 import BendEditor from './BendEditor';
 import styles from './FlatPatternViewer.module.css';
 
 const number = (value: number | null, unit: string, signed = false) => value == null || !Number.isFinite(value)
-  ? 'Not established' : `${signed && value > 0 ? '+' : ''}${value.toFixed(unit === '°' ? 3 : 2).replace(/\.000$/, '')}${unit === '°' ? '' : ' '}${unit}`;
+  ? unit === '°' ? 'Angle missing' : 'Not established' : `${signed && value > 0 ? '+' : ''}${value.toFixed(unit === '°' ? 3 : 2).replace(/\.000$/, '')}${unit === '°' ? '' : ' '}${unit}`;
 
-export default function FlatPatternViewer({ panel, settings, review, zoom, onBendChange, problemBends, problemLines, focusBend }: {
+export default function FlatPatternViewer({ panel, settings, review, zoom, onBendChange, problemBends, problemLines, focusBend, onVerifyAngles, verifyDisabled }: {
   panel: Panel; settings: Settings; review: ReviewValues; zoom: number; onBendChange: BendChange; problemBends?: ReadonlySet<string>; problemLines?: ReadonlySet<string>; focusBend?: string | null;
+  onVerifyAngles?: (angle: number) => void; verifyDisabled?: boolean;
 }) {
   const [geometry, setGeometry] = useState<FlatExtraction | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
-  const [allValues, setAllValues] = useState(true);
+  const [allValues, setAllValues] = useState(false);
+  const [bulkAngle, setBulkAngle] = useState(() => String(settings.default_angle ?? 90));
+  const [bulkError, setBulkError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [width, setWidth] = useState(820);
   const [viewportHeight, setViewportHeight] = useState(560);
@@ -93,6 +97,14 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
   const editTop = editAnchor ? Math.max(8, Math.min(viewportHeight - 500, editAnchor[1] * displayScale - scroll.y - 24)) : 8;
   const editLeft = editAnchor && editAnchor[0] * displayScale - scroll.x > width / 2
     ? Math.max(8, width - 288) : 8;
+  const missing = missingAngleBends(bends, settings, review);
+  const missingKeys = new Set(missing.map(bend => bend.key));
+  function verify() {
+    const angle = bulkAngle.trim() === '' ? null : Number(bulkAngle);
+    const message = angle == null ? 'Enter the angle for the missing bends.' : bendValueError({ angle });
+    setBulkError(message ?? '');
+    if (!message) onVerifyAngles?.(angle!);
+  }
   function openEditor(key: string, trigger: SVGElement) {
     setSelected(key);
     if (!editableHinge(geometry!, bends, key)) {
@@ -115,8 +127,20 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
 
   return <div className={styles.viewer}>
     <div className={styles.options}>
-      <label><input type="checkbox" checked={allValues} onChange={event => setAllValues(event.target.checked)}/>All bend values</label>
+      <div className={styles.modes} role="group" aria-label="Bend card detail">
+        <button type="button" aria-pressed={!allValues} onClick={() => setAllValues(false)}>Quick Review</button>
+        <button type="button" aria-pressed={allValues} onClick={() => setAllValues(true)}>Extend</button>
+      </div>
       <p>Select a line or label to edit its bend values and read full source references. Scroll to inspect; use zoom above.</p>
+      {onVerifyAngles && <form className={styles.bulk} noValidate onSubmit={event => { event.preventDefault(); verify(); }}>
+        <span className={missing.length ? styles.bulkMissing : styles.bulkDone}>{missing.length
+          ? <><CircleAlert size={13}/>{missing.length} angle{missing.length === 1 ? '' : 's'} missing</> : 'No angles missing'}</span>
+        <label>Missing angle (°)<input type="number" step="any" value={bulkAngle} aria-invalid={!!bulkError}
+          onChange={event => { setBulkAngle(event.target.value); setBulkError(''); }}/></label>
+        <button type="submit" disabled={verifyDisabled || (!missing.length && !draft)}
+          title={missing.length ? 'Fill the missing angles and rebuild the 3D model' : draft ? 'Rebuild the 3D model with your edits' : 'No angles are missing'}>Verify</button>
+        {bulkError && <small role="alert">{bulkError}</small>}
+      </form>}
     </div>
     <div className={styles.canvasShell}>
     <div className={styles.canvas} ref={viewport} onScroll={event => setScroll({ x: event.currentTarget.scrollLeft, y: event.currentTarget.scrollTop })}>
@@ -132,7 +156,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
         </g>)}
         {linked.map(hinge => <g key={hinge.key} tabIndex={-1} onClick={event => openEditor(hinge.key, event.currentTarget)}>
           {hinge.segments.map((segment, i) => <g key={i}>
-            <path d={path(segment)} className={`${styles.hinge} ${problemBends?.has(hinge.key) ? styles.problemHinge : ''} ${hinge.key === active?.key ? styles.activeHinge : ''}`}/>
+            <path d={path(segment)} className={`${styles.hinge} ${problemBends?.has(hinge.key) || missingKeys.has(hinge.key) ? styles.problemHinge : ''} ${hinge.key === active?.key ? styles.activeHinge : ''}`}/>
             <path d={path(segment)} className={styles.hit}><title>{hinge.bend_ids.join(' / ')} · {faceName(hinge.parent)} → {faceName(hinge.child)}</title></path>
           </g>)}
         </g>)}
@@ -147,16 +171,19 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
           const deduction = number(values.deduction, 'mm');
           const sources = bendSourceReferences(bend).join('; ');
           const showDerived = values.calibrated && values.angle != null && Math.abs(values.angle) !== 90;
-          return <g key={hinge.key} className={`${styles.card} ${hinge.key === active?.key ? styles.selected : ''}`}
+          const noAngle = values.angle == null;
+          return <g key={hinge.key} className={`${styles.card} ${hinge.key === active?.key ? styles.selected : ''} ${noAngle ? styles.missing : ''}`}
             role="button" tabIndex={0} aria-pressed={hinge.key === active?.key}
-            aria-label={`${title}, ${relation}, rotation ${rotation}, inside radius ${radius}, deduction ${deduction}${values.calibrated ? ' at 90 degrees' : ''}, source section / vertex: ${sources}`}
+            aria-label={`${title}, ${relation}, angle ${rotation}, inside radius ${radius}, deduction ${deduction}${values.calibrated ? ' at 90 degrees' : ''}, source section / vertex: ${sources}`}
             onClick={event => openEditor(hinge.key, event.currentTarget)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openEditor(hinge.key, event.currentTarget); } }}>
             <title>{title} · {relation} · Source section / vertex: {sources}</title>
             <rect x={x} y={y} width={220} height={cardHeight} rx={6}/>
             <text className={styles.title} x={x + 10} y={y + 18}>{title}</text>
             <text className={styles.relationship} x={x + 10} y={y + 33}>{relation}</text>
+            {noAngle && <CircleAlert x={x + 194} y={y + 6} width={16} height={16} className={styles.missingIcon} aria-hidden="true"/>}
+            {noAngle && !allValues && <text x={x + 210} y={y + 34} textAnchor="end" className={styles.pending}>Angle missing</text>}
             {allValues && <>
-              <text x={x + 10} y={y + 53} className={values.angle == null ? styles.pending : ''}>Rotation: {rotation}</text>
+              <text x={x + 10} y={y + 53} className={noAngle ? styles.pending : ''}>{noAngle ? 'Angle missing' : `Angle: ${rotation}`}</text>
               <text x={x + 10} y={y + 73}>Inside radius: {radius}{required('radius', hinge.key) ? ' *' : ''}</text>
               <text x={x + 10} y={y + 93}>Deduction{values.calibrated ? ' (90°)' : ''}: {deduction}{required('deduction', hinge.key) ? ' *' : ''}</text>
               {showDerived && <text x={x + 10} y={y + 113} className={styles.relationship}>At this rotation: {number(values.atAngle, 'mm')}</text>}
@@ -190,7 +217,7 @@ export default function FlatPatternViewer({ panel, settings, review, zoom, onBen
     </div>
     <div className={styles.note} aria-live="polite">
       {editorNotice && <p>{editorNotice}</p>}
-      {active && detail && <p><strong>{active.bend_ids.join(' / ')} · {faceName(active.parent)} → {faceName(active.child)}</strong> — rotation {number(detail.angle, '°', true)} · inside radius {number(detail.radius, 'mm')} · deduction{detail.calibrated ? ' at 90°' : ''} {number(detail.deduction, 'mm')}. Parent is green; child is amber.</p>}
+      {active && detail && <p><strong>{active.bend_ids.join(' / ')} · {faceName(active.parent)} → {faceName(active.child)}</strong> — {detail.angle == null ? 'Angle missing' : `angle ${number(detail.angle, '°', true)}`} · inside radius {number(detail.radius, 'mm')} · deduction{detail.calibrated ? ' at 90°' : ''} {number(detail.deduction, 'mm')}. Parent is green; child is amber.</p>}
       {activeBend && <p className={styles.sourceDetails}><strong>Source section / vertex:</strong> {bendSourceReferences(activeBend).join('; ')}.</p>}
       <p>{draft ? 'Showing current review edits. Save & rebuild applies them to the 3D model.' : 'Values follow the current panel and individual bend settings.'} {linked.some(b => required('radius', b.key) || required('deduction', b.key)) && '* This panel value still needs review.'}</p>
       {bends.length !== linked.length && <p>Some bend locations do not match this extraction. Rebuild the panel to refresh the geometry; unmatched bends are not placed by guesswork.</p>}

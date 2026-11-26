@@ -326,7 +326,7 @@ def run(config):
  if unresolved:
   reasons='; '.join(f"{m['profile']}: {m.get('reason','Review required')}" for m in unresolved)
   issue('SECTION_CORRESPONDENCE',f'{len(unresolved)} section profiles need review. {reasons}',profiles=[m['profile'] for m in unresolved])
- if unknown:issue('DIRECTIONS',f'{len(unknown)} bend rotations are missing. Choose their signed angles in drawing review; the default angle alone does not establish direction.')
+ if unknown:issue('DIRECTIONS',f'{len(unknown)} bend angles are missing. Choose their signed angles in drawing review; the default angle alone does not establish direction.')
  for e in edges:
   if 'angle' not in e:continue
   try:

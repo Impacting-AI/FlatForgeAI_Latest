@@ -508,4 +508,35 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .asm-mate-card .asm-mate-note{background:#eef6fa;border-radius:5px;padding:7px 9px}
 .asm-context [data-mate-status=warn]{color:#8a6212}
 @media(max-width:900px){.assembly-workspace .asm-panel-list{width:200px}.assembly-workspace[data-tree-open=true] .asm-selection-toolbar{left:222px}}
-
+/* ── Project Drawings: files can be dropped anywhere on the page ── */
+.project-drawings.drag-active{outline:2px dashed #39a88e;outline-offset:8px;border-radius:8px;background:#f1f7f4}
+/* ── Extract & Review: full-width flat pattern, drawing evidence below ── */
+.review-layout{grid-template-columns:minmax(0,1fr)}
+.review-inspector{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;margin-top:22px;border:1px solid #dce5df;border-radius:8px;background:#fff;padding:23px 24px}
+.review-inspector section{min-width:0}
+.evidence-empty{font-size:11px;color:#8a9b8c;margin:0}
+.review-inspector h3:not(:first-child){margin-top:0}
+.review-inspector section>button{margin-top:16px;font-size:10px}
+@media(max-width:850px){.review-inspector{grid-template-columns:1fr;gap:18px}}
+/* ── 3D Studio: bend lines, full screen, collapsible details ── */
+.bend-labels{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.bend-labels svg{position:absolute;inset:0;width:100%;height:100%}
+.bend-labels line{stroke:#6f9c8d;stroke-width:1}
+.bend-labels line[data-selected=true]{stroke:#d96a00;stroke-width:2}
+.bend-labels button{position:absolute;left:0;top:0;pointer-events:auto;cursor:pointer;white-space:nowrap;font-size:10px;font-weight:600;line-height:1.3;padding:3px 7px;border-radius:4px;border:1px solid #9fc6b9;background:#fffffff2;color:#145c48;box-shadow:0 1px 4px #12332226}
+.bend-labels button[hidden]{display:none}
+.bend-labels button:hover{border-color:#0f8f74}
+.bend-labels button[data-changed=true]{border-color:#d97706;background:#fff7e8;color:#8a4b00}
+.bend-labels button[aria-pressed=true]{border-color:#d96a00;background:#ff7a00;color:#fff}
+.studio-main.is-fullscreen{position:fixed;inset:0;z-index:45}
+.studio-main.is-fullscreen .viewer-wrapper,.studio-main.is-fullscreen .viewer-stage{min-height:0}
+.viewport-actions button.viewer-close{background:#1a3028;border-color:#1a3028;color:#fff}
+.inspector-toggle{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid #d2dfd8;border-radius:5px;background:#fff;color:#4a6b5c;cursor:pointer;flex-shrink:0}
+.inspector-toggle:hover{background:#f0f7f4}
+.studio.inspection-studio.details-closed{grid-template-columns:minmax(0,1fr) 42px}
+.inspection-studio.details-closed .model-inspector{padding:10px 7px;overflow:hidden}
+.inspection-studio.details-closed .model-inspector>:not(.inspector-title){display:none}
+.inspection-studio.details-closed .inspector-title{flex-direction:column-reverse;justify-content:flex-end;gap:12px;margin:0}
+.inspection-studio.details-closed .inspector-title h3{writing-mode:vertical-rl;white-space:nowrap}
+@media(max-width:1000px){.studio.inspection-studio.details-closed{grid-template-columns:minmax(0,1fr)}.inspection-studio.details-closed .model-inspector{display:block}.inspection-studio.details-closed .inspector-title{flex-direction:row;justify-content:space-between}.inspection-studio.details-closed .inspector-title h3{writing-mode:horizontal-tb}}
+.unsaved-note{font-size:11px;font-weight:600;color:#9a5b0a;white-space:nowrap}

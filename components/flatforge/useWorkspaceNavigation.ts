@@ -4,7 +4,8 @@ import { usePathname } from 'next/navigation';
 import { parseWorkspaceRoute, type WorkspaceRoute } from './workflow-route';
 
 export type Navigate = (path: string, options?: { replace?: boolean; afterSave?: boolean }) => boolean;
-export type NavigationGuard = (next: WorkspaceRoute | null) => boolean;
+/** `path` is the destination, so a guard that opens its own popup can continue there. */
+export type NavigationGuard = (next: WorkspaceRoute | null, path: string) => boolean;
 const historyKey = 'flatforgeNavigationIndex';
 
 /** URLs are authoritative; the index lets a cancelled Back/Forward restore its exact entry. */
@@ -26,7 +27,7 @@ export function useWorkspaceNavigation(initialPath: string) {
       if (restoring.current) { restoring.current = false; return; }
       const next = location.pathname;
       const nextIndex = event.state?.[historyKey];
-      if (!guard.current(parseWorkspaceRoute(next))) {
+      if (!guard.current(parseWorkspaceRoute(next), next)) {
         if (Number.isInteger(nextIndex) && nextIndex !== current.current.index) {
           restoring.current = true;
           history.go(current.current.index - nextIndex);
@@ -38,7 +39,7 @@ export function useWorkspaceNavigation(initialPath: string) {
     };
     const unload = (event: BeforeUnloadEvent) => {
       // null means leaving/reloading the application; the guard reports dirty state only.
-      if (!guard.current(null)) { event.preventDefault(); event.returnValue = ''; }
+      if (!guard.current(null, '')) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('popstate', pop);
     window.addEventListener('beforeunload', unload);
@@ -47,7 +48,7 @@ export function useWorkspaceNavigation(initialPath: string) {
   const navigate: Navigate = useCallback((next, options = {}) => {
     if (restoring.current) return false;
     if (next === current.current.path) return true;
-    if (!options.afterSave && !guard.current(parseWorkspaceRoute(next))) return false;
+    if (!options.afterSave && !guard.current(parseWorkspaceRoute(next), next)) return false;
     const index = current.current.index + (options.replace ? 0 : 1);
     history[options.replace ? 'replaceState' : 'pushState']({ ...history.state, [historyKey]: index }, '', next);
     current.current = { path: next, index };

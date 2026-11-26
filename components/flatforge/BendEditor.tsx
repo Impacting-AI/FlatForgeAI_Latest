@@ -31,7 +31,7 @@ export default function BendEditor({ bend, names, settings, review, resolution, 
       && resolution?.[field]?.needs_review;
   const source = (field: BendField) => {
     if (draft[field]?.base === current(field) && input(field) !== current(field)) return 'Pending edit';
-    if (current(field) === '') return 'Missing · enter a value, or use automatic and rebuild';
+    if (current(field) === '') return `${field === 'angle' ? 'Angle missing' : 'Missing'} · enter a value, or use automatic and rebuild`;
     if (review.bend_parameters[bend.key]?.[field] != null) return 'Manual correction';
     if (needsConfirmation(field)) return field === 'angle'
       ? 'Section needs review · Apply uses reviewed bends for reconstruction'
@@ -60,7 +60,7 @@ export default function BendEditor({ bend, names, settings, review, resolution, 
     <div className={styles.editorSource}><strong>Source section / vertex</strong>{bendSourceReferences(bend).map(source => <p key={source}>{source}</p>)}</div>
     <p className={styles.editorHelp}>Edit this bend’s review values.</p>
     {bendFields.map(field => <label key={field} className={styles.editorField}>
-      <span>{field === 'angle' ? 'Signed rotation (°)' : field === 'radius' ? 'Inside radius (mm)' : settings.bend_model === 'fixed_deduction' ? 'Bend deduction (mm)' : 'Bend deduction at 90° (mm)'}</span>
+      <span>{field === 'angle' ? 'Angle (°)' : field === 'radius' ? 'Inside radius (mm)' : settings.bend_model === 'fixed_deduction' ? 'Bend deduction (mm)' : 'Bend deduction at 90° (mm)'}</span>
       <input ref={field === 'angle' ? first : undefined} type="number" step="any" value={input(field)} placeholder="Enter value"
         aria-describedby={`${id}-${field}-source${error ? ' ' + id + '-error' : ''}`}
         onChange={event => { setDraft(previous => ({ ...previous, [field]: { text: event.target.value, base: current(field) } })); setError(null); }}/>

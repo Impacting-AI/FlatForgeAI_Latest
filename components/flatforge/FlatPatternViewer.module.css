@@ -1,9 +1,19 @@
 .viewer { min-width: 0; }
 .canvasShell { position: relative; }
 .options { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 11px 16px; border-bottom: 1px solid #dce7e2; color: #506b62; font-size: 11px; }
-.options label { display: flex; align-items: center; gap: 7px; cursor: pointer; white-space: nowrap; }
-.options input { accent-color: #007d6b; }
-.options p { margin: 0; flex: 1; }
+.options p { margin: 0; flex: 1 1 260px; }
+.modes { display: inline-flex; background: #edf2ef; border-radius: 6px; padding: 3px; gap: 2px; }
+.modes button { border: 0; background: none; border-radius: 4px; padding: 6px 12px; font-size: 11px; font-weight: 600; color: #6b7f74; cursor: pointer; white-space: nowrap; }
+.modes button[aria-pressed=true] { background: #fff; color: #0a7e63; box-shadow: 0 1px 4px #12332226; }
+.bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.bulk label { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.bulk input { width: 76px; border: 1px solid #b9cfc2; border-radius: 5px; padding: 6px 8px; font-size: 12px; background: #fff; color: #254f40; }
+.bulk input[aria-invalid=true] { border-color: #c43d36; }
+.bulk button { border: 1px solid #087863; background: #087863; color: #fff; border-radius: 5px; padding: 7px 18px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.bulk button:disabled { opacity: .45; cursor: not-allowed; }
+.bulk small { color: #a3352b; flex-basis: 100%; text-align: right; }
+.bulkMissing { display: inline-flex; align-items: center; gap: 5px; background: #fff0ed; color: #a3352b; border-radius: 4px; padding: 5px 8px; font-weight: 600; white-space: nowrap; }
+.bulkDone { color: #5e8070; white-space: nowrap; }
 .canvas { height: 560px; overflow: auto; background-color: #f4f7f5; background-image: radial-gradient(#cadbd0 .7px, transparent .7px); background-size: 14px 14px; }
 .drawing { display: block; margin: 0 auto; }
 .outline { fill: #e3ede8; stroke: #718d80; stroke-width: 1.2; }
@@ -25,7 +35,9 @@
 .card text { fill: #395d4d; font: 12px sans-serif; pointer-events: none; }
 .card .title { fill: #1e5342; font-size: 13px; font-weight: 600; }
 .card .relationship { fill: #6b7f74; font-size: 11px; }
-.card .pending { fill: #956023; }
+.card .pending { fill: #b4271d; font-weight: 600; }
+.card.missing rect { stroke: #c43d36; stroke-width: 2; fill: #fff6f5; }
+.card .missingIcon { color: #c43d36; pointer-events: none; }
 .sourcePreview { color: #395d4d; font: 11px/17px sans-serif; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .sourceDetails, .editorSource { overflow-wrap: anywhere; }
 .editorSource { font-size: 10px; line-height: 1.5; margin-top: 8px; }

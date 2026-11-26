@@ -121,3 +121,17 @@ export function calloutLayout(hinges: FlatHinge[], project: (p: Point2) => Point
     return side.map((item, i) => ({ ...item, x: index ? width - 232 : 12, y: positions[i], left: index === 0 }));
   });
 }
+
+export function missingAngleBends(bends: Bend[], settings: Settings, review: ReviewValues) {
+  return bends.filter(bend => reviewedBend(bend, settings, review).angle == null);
+}
+
+/** Angles that differ from the built solid, keyed by hinge id, for the 3D preview. */
+export function pendingAngles(bends: Bend[], settings: Settings, review: ReviewValues) {
+  const changed: Record<number, number> = {};
+  for (const bend of bends) {
+    const angle = reviewedBend(bend, settings, review).angle;
+    if (angle != null && Number.isFinite(angle) && angle !== 0 && Math.abs(angle) < 180 && angle !== bend.angle) changed[bend.id] = angle;
+  }
+  return changed;
+}
