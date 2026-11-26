@@ -18,7 +18,7 @@ export function surfaceLabelAnchors(group:THREE.Group){
 }
 
 export function createAssemblyLabels(options:{host:HTMLElement;camera:THREE.Camera;groups:Map<string,{group:THREE.Group;localBounds:THREE.Box3}>;
- selecting?:()=>boolean;targets?:()=>{id:string;side:AssemblySide;role:'from'|'to'}[];entries:()=>AssemblyEntry[];active:()=>string|null;onSelect:(id:string)=>void;onSide:(id:string,side:AssemblySide)=>void;onSideHover:(id:string|null,side:AssemblySide|null)=>void}){
+ selecting?:()=>boolean;sidesOnly?:boolean;targets?:()=>{id:string;side:AssemblySide;role:'from'|'to'}[];entries:()=>AssemblyEntry[];active:()=>string|null;onSelect:(id:string)=>void;onSide:(id:string,side:AssemblySide)=>void;onSideHover:(id:string|null,side:AssemblySide|null)=>void}){
  const layer=document.createElement('div');layer.className='asm-model-labels';options.host.appendChild(layer);
  let selectedSide:{id:string;side:AssemblySide}|null=null;
  const restoreHighlight=()=>options.onSideHover(selectedSide?.id??null,selectedSide?.side??null);
@@ -31,7 +31,7 @@ export function createAssemblyLabels(options:{host:HTMLElement;camera:THREE.Came
   if(side){node.onpointerenter=()=>options.onSideHover(id,side);node.onpointerleave=restoreHighlight;node.onfocus=()=>options.onSideHover(id,side);node.onblur=restoreHighlight;}
   node.hidden=true;layer.appendChild(node);labels.set(key,{button:node,id,side});
  }
- for(const e of options.entries()){button(e.id);const item=options.groups.get(e.id);if(item)anchors.set(e.id,surfaceLabelAnchors(item.group));}
+ for(const e of options.entries()){if(!options.sidesOnly)button(e.id);const item=options.groups.get(e.id);if(item)anchors.set(e.id,surfaceLabelAnchors(item.group));}
  const ray=new THREE.Raycaster(),cameraPoint=new THREE.Vector3(),world=new THREE.Vector3();
 
  let lastSignature='',catalogVersion=0;
@@ -53,9 +53,9 @@ export function createAssemblyLabels(options:{host:HTMLElement;camera:THREE.Came
    const region=side?catalogs.get(id)?.sides?.[side]:null;
    const fullSide=side?side[0].toUpperCase()+side.slice(1):'';
    const text=side?side[0].toUpperCase():label;
-   if(node.textContent!==text)node.textContent=text;node.setAttribute('aria-label',side?`${label} ${fullSide} side`:`Select ${label}`);node.dataset.activePanel=String(id===active);node.setAttribute('aria-pressed',String(side?selectedSide?.id===id&&selectedSide.side===side:id===active));
+   if(node.textContent!==text)node.textContent=text;node.setAttribute('aria-label',side?`${options.sidesOnly?'':label+' '}${fullSide} side`:`Select ${label}`);node.dataset.activePanel=String(id===active);node.setAttribute('aria-pressed',String(side?selectedSide?.id===id&&selectedSide.side===side:id===active));
    node.dataset.connectionRole=targets.find(t=>t.id===id&&t.side===side)?.role??'';
-   node.title=side&&region&&!region.automatic?`${fullSide}: choose one of ${region.candidates.length} connection regions`:label+(side?' · '+fullSide:'');
+   node.title=side&&region&&!region.automatic?`${fullSide}: choose one of ${region.candidates.length} connection regions`:options.sidesOnly?`${fullSide} side`:label+(side?' · '+fullSide:'');
    let points=side?(region?.candidates??[]).flatMap(c=>(c.labelPoints?.length?c.labelPoints:[c.point]).map(point=>new THREE.Vector3(...point).multiplyScalar(.001))):anchors.get(id)??[];
    const labelKey=id+':'+(side??'panel'),previous=chosenPoints.get(labelKey);
    if(previous)points=[previous,...points.filter(p=>p.distanceToSquared(previous)>1e-18)];

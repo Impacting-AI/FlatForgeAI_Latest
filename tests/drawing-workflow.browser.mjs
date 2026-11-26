@@ -149,7 +149,7 @@ try {
   const beforePrompt = confirmations.length; await step(3);
   assert.equal(confirmations.length, beforePrompt + 1); assert.equal(page.url(), drawingURL(a, 3));
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await step(3); assert.equal(await page.locator('.studio-panel').count(), 1);
+  await step(3); assert.equal(await page.locator('.studio-panel').count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Compare', exact: true }).count(), 0);
   await backToDrawings(); await page.getByRole('button', { name: 'Compare panels', exact: true }).click();
   assert.equal(page.url(), url + `/projects/${project.id}/compare`);
