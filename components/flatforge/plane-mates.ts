@@ -30,9 +30,10 @@ export function dependsOn(entries: AssemblyEntry[], id: string, other: string, s
 export function chooseMoving(entries: AssemblyEntry[], first: string, second: string, preferred?: string, defined: string[] = []) {
   if (first === second) return { error: 'Pick the second face on a different panel.' } as const;
   const base = baseId(entries);
-  const can = (moving: string, target: string) => moving !== base && !dependsOn(entries, target, moving);
+  const locked = (id: string) => !!entries.find(e => e.id === id)?.locked;
+  const can = (moving: string, target: string) => moving !== base && !locked(moving) && !dependsOn(entries, target, moving);
   const forward = can(first, second), backward = can(second, first);
-  if (!forward && !backward) return { error: 'These panels already depend on each other through other mates. Remove one of those mates first.' } as const;
+  if (!forward && !backward) return { error: locked(first) || locked(second) ? 'Unlock a panel to connect these two.' : 'These panels already depend on each other through other mates. Remove one of those mates first.' } as const;
   const swapped = !forward || backward && (preferred === second || preferred !== first && defined.includes(first) && !defined.includes(second));
   return { movingId: swapped ? second : first, targetId: swapped ? first : second, swapped } as const;
 }

@@ -548,6 +548,12 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .asm-move-panel [data-axis=Y] b,.asm-move-panel [data-position=Y] b,.asm-move-panel [data-angle=Y] b{color:#1b8a3a}
 .asm-move-panel [data-axis=Z] b,.asm-move-panel [data-position=Z] b,.asm-move-panel [data-angle=Z] b{color:#2455c7}
 .asm-move-panel p{margin:4px 0;color:#637581;line-height:1.5}
+/* Panel lock and the colour switch. */
+.assembly-workspace .asm-tree button.asm-lock[aria-pressed=true]{color:#fff;background:#146a7a;border-radius:5px}
+.assembly-workspace .asm-move-panel header button+button{margin:0}
+.assembly-workspace .asm-move-panel .asm-lock-wide{width:100%;margin-top:9px;font-size:11px;padding:6px 8px}
+.assembly-workspace .asm-move-panel .asm-lock-wide[aria-pressed=true]{background:#146a7a;border-color:#146a7a;color:#fff}
+.assembly-workspace .asm-workspace-toolbar button.asm-colors[aria-pressed=true]{background:#fff;border-color:#146a7a;color:#146a7a;box-shadow:none}
 .asm-move-panel [data-hole-move=X] b{color:#d22f27}.asm-move-panel [data-hole-move=Y] b{color:#1b8a3a}.asm-move-panel [data-hole-move=Z] b{color:#2455c7}
 .asm-move-panel .asm-holes{padding:4px 7px;border-radius:5px;color:#2e4656}
 .asm-move-panel .asm-holes[data-holes=apart]{background:#ffc184}

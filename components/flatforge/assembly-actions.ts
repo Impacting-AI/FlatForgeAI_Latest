@@ -1,5 +1,5 @@
 // What a click or a drag does to the saved assembly. Placement is still solved by the CAD service.
-import { baseId, chooseMoving, convertedMate, currentPose, measureFaces, withMate, type Pick } from './plane-mates';
+import { baseId, chooseMoving, convertedMate, currentPose, dependsOn, measureFaces, withMate, type Pick } from './plane-mates';
 import type { CadFaceCatalog, CadPlacement, MateReport } from './assembly-cad';
 import type { AssemblyEntry, PlaneMate } from './types';
 import { lapPlacement } from './hole-match';
@@ -33,7 +33,9 @@ export function planConnection(entries: AssemblyEntry[], first: Pick, second: Pi
   const isFirst = !entry.planeMates?.length && !convertedMate(entry);
   const mate: PlaneMate = { id: mateId, targetId: target.entryId, type: 'coincident', offset: 0,
     aligned: isFirst ? false : measureFaces(a, b).aligned, lineUp: isFirst, reference: target.face, moving: moving.face };
-  const cleared = entries.map(e => e.id === moving.entryId ? { ...e, planeMates: undefined, connection: undefined } : e);
+  // Locked panels that follow the moving one are released first, so they stay where they are.
+  const held = entries.map(e => e.locked && dependsOn(entries, e.id, moving.entryId) ? released(e, placement) : e);
+  const cleared = held.map(e => e.id === moving.entryId ? { ...e, planeMates: undefined, connection: undefined } : e);
   const source = catalogs[moving.entryId];
   const lap = lapPlacement({ matrix: a.matrix, faces: source.faces }, moving.face.faceId,
     { matrix: b.matrix, faces: catalogs[target.entryId].faces }, target.face.faceId);
@@ -44,7 +46,7 @@ export function planConnection(entries: AssemblyEntry[], first: Pick, second: Pi
       .map(e => e.id === moving.entryId ? { ...e, pose: { ...e.pose!, matrix: lap.matrix } } : e);
     return { movingId: moving.entryId, targetId: target.entryId, mateId, attempts: [placed] };
   }
-  const attempts = [withMate(entries, moving.entryId, mate, placement)];
+  const attempts = [withMate(held, moving.entryId, mate, placement)];
   if (!isFirst) attempts.push(withMate(cleared, moving.entryId, { ...mate, aligned: false, lineUp: true }, placement));
   return { movingId: moving.entryId, targetId: target.entryId, mateId, attempts };
 }
@@ -71,14 +73,25 @@ function detached(entry: AssemblyEntry, id: string, placement: CadPlacement | nu
   return mates.length ? { ...entry, pose: current(entry, placement), planeMates: mates.map(m => ({ ...m, lineUp: false })) } : released(entry, placement);
 }
 
+/** Locks or unlocks one panel. An unlocked entry carries no flag at all. */
+export function setLocked(entries: AssemblyEntry[], id: string, locked: boolean) {
+  return entries.map(entry => {
+    if (entry.id !== id) return entry;
+    const next: AssemblyEntry = { ...entry, locked: true };
+    if (!locked) delete next.locked;
+    return next;
+  });
+}
+
 /** Moving by hand needs current CAD positions only when a connection has to be released. */
 export function canMove(entries: AssemblyEntry[], id: string, positionsReady: boolean) {
   const entry = entries.find(e => e.id === id);
-  return !!entry && (positionsReady || free(entry) && !entries.some(e => follows(e, id)));
+  return !!entry && !entry.locked && (positionsReady || free(entry) && !entries.some(e => follows(e, id)));
 }
 
 /** Translates one panel by world millimetres. Every other panel stays where it is. */
 export function movePanel(entries: AssemblyEntry[], id: string, delta: number[], placement: CadPlacement | null) {
+  if (entries.find(e => e.id === id)?.locked) throw new Error('This panel is locked. Unlock it to move it.');
   return entries.map(entry => {
     if (entry.id !== id) return detached(entry, id, placement);
     const own = free(entry) ? entry : released(entry, placement);
@@ -89,6 +102,7 @@ export function movePanel(entries: AssemblyEntry[], id: string, delta: number[],
 
 /** Removes one panel only. If it was the fixed base, the next panel takes that role. */
 export function removePanel(entries: AssemblyEntry[], id: string, placement: CadPlacement | null): AssemblyEntry[] {
+  if (entries.find(e => e.id === id)?.locked) throw new Error('This panel is locked. Unlock it to remove it.');
   const rest = entries.filter(e => e.id !== id);
   if (!rest.length) return rest;
   if (entries.find(e => e.id === id)?.targetId !== null) {

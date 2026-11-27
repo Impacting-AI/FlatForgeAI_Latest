@@ -9,7 +9,7 @@ const source = fs.readFileSync(new URL('../components/flatforge/assembly-actions
 const compiled = ts.transpile(source, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })
   .replace("'./plane-mates'", JSON.stringify(new URL('../components/flatforge/plane-mates.ts', import.meta.url).href))
   .replace("'./hole-match'", JSON.stringify(new URL('../components/flatforge/hole-match.ts', import.meta.url).href));
-const { canMove, connectionStatus, describeMove, movePanel, planConnection, removePanel } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
+const { canMove, connectionStatus, describeMove, movePanel, planConnection, removePanel, setLocked } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
 
 const identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 const at = x => [...identity.slice(0, 12), x, 0, 0, 1];
@@ -121,6 +121,33 @@ test('a movement is described by its length, heading from above and angle from l
   assert.deepEqual(rounded([3, 0, 4]), [5, 0, 53.1]);
   assert.deepEqual(rounded([0, 0, -7]), [7, null, -90]);
   assert.deepEqual(rounded([0, 0, 0]), [0, null, null]);
+});
+
+test('a locked panel cannot be moved or removed, and unlocking leaves no flag behind', () => {
+  const rows = setLocked(entries, 'b', true);
+  assert.equal(rows[1].locked, true);
+  assert.equal(rows[0], entries[0]);
+  assert.equal(canMove(rows, 'b', true), false);
+  assert.throws(() => movePanel(rows, 'b', [1, 0, 0], placement), /locked/);
+  assert.throws(() => removePanel(rows, 'b', placement), /locked/);
+  assert.deepEqual(setLocked(rows, 'b', false), entries);
+});
+
+test('a locked panel is joined onto, never moved', () => {
+  const rows = setLocked(entries, 'c', true);
+  // Even as the preferred panel it stays; the other one comes to it.
+  assert.equal(connect(rows, pick('c', 2), pick('b', 1), 'c').movingId, 'b');
+  assert.match(connect(rows, pick('c', 2), pick('a', 1)).error, /Unlock/);
+});
+
+test('a locked panel stays when the panel it follows is moved or mated', () => {
+  const chained = setLocked(withMate(entries, 'c', mate('m', 'b'), placement), 'c', true);
+  const moved = movePanel(chained, 'b', [50, 0, 0], placed(chained));
+  assert.equal(moved[2].locked, true);
+  assert.deepEqual([moved[2].planeMates, moved[2].pose.matrix, moved[2].pose.offset], [undefined, at(600), [0, 0, 0]]);
+  const plan = planConnection(chained, pick('b', 2), pick('a', 1), catalogs, placed(chained), 'new', 'b');
+  const after = plan.attempts[0][2];
+  assert.deepEqual([after.locked, after.planeMates, after.pose.matrix], [true, undefined, at(600)]);
 });
 
 test('the list says what each panel is connected to', () => {

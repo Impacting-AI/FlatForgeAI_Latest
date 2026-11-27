@@ -1,12 +1,12 @@
 'use client';
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
-import {Plus,Undo2,Redo2,Link2,Maximize2,Minimize2,Save} from 'lucide-react';
+import {Plus,Undo2,Redo2,Link2,Maximize2,Minimize2,Save,Eye,EyeOff} from 'lucide-react';
 import AssemblyPanelList from './AssemblyPanelList';
 import AssemblyMovePanel from './AssemblyMovePanel';
 import AssemblyViewer,{type AssemblyViewerHandle} from './AssemblyViewer';
 import {useProjectAssembly} from './useProjectAssembly';
 import {baseId,type Pick} from './plane-mates';
-import {canMove,movePanel,planConnection,removePanel,type Connection} from './assembly-actions';
+import {canMove,movePanel,planConnection,removePanel,setLocked,type Connection} from './assembly-actions';
 import type {AssemblyEntry,Panel,CadFaceReference} from './types';
 import type {CadFaceCatalog,CadPlacement} from './assembly-cad';
 import type {HoleReport} from './assembly-face-picker';
@@ -46,6 +46,8 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  // Faces joined this session keep their colour after a move releases the connection.
  const [joined,setJoined]=useState<FacePair[]>([]),[overlapping,setOverlapping]=useState<string[]>([]);
  const [holes,setHoles]=useState<HoleReport|null>(null);
+ const [showColors,setShowColors]=useState(()=>{try{return localStorage.getItem('ffFaceColors')!=='hidden'}catch{return true}});
+ useEffect(()=>{try{localStorage.setItem('ffFaceColors',showColors?'shown':'hidden')}catch{}},[showColors]);
  const catalogs=useRef<Record<string,CadFaceCatalog>>({}),added=useRef<string|null>(null);
  const hold=useRef<Hold|null>(null);
 
@@ -57,7 +59,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const fileNames=Object.fromEntries(effective.map(e=>[e.id,panels.find(p=>p.id===e.panelId)?.filename??'Unavailable drawing']));
  const available=panels.filter(p=>p.status==='PASS'&&p.artifacts.includes('panel.glb')&&p.artifacts.includes('panel.step'));
  const busy=!store.loaded||store.saving||!!pending;
- const movable=live&&!busy&&!mating&&!!selected&&(!!drag||canMove(entries,selected.id,ready));
+ const movable=live&&!busy&&!mating&&!!selected&&!selected.locked&&(!!drag||canMove(entries,selected.id,ready));
  const selection=useMemo<FaceSelection|null>(()=>mating?{anyPanel:true,geometry:'face',alignment:'top',referenceEntryId:'',movingEntryId:mating.first?.entryId??'',moving:mating.first?.face,pick:mating.first?'reference':'moving'}:null,[mating]);
 
  // While joining, the two faces are orange; afterwards the selected panel's joints show how they sit.
@@ -85,7 +87,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function toggleMate(){
   if(!live||busy||!ready||entries.length<2)return;
   setAddOpen(false);setNotice('');
-  setMating(mating?null:{preferred:active&&active!==baseId(entries)?active:undefined});
+  setMating(mating?null:{preferred:active&&active!==baseId(entries)&&!selected?.locked?active:undefined});
  }
  function add(panel:Panel){
   if(busy||drag)return;const id=crypto.randomUUID();
@@ -167,6 +169,10 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   start.delta=start.delta.map((v,i)=>Math.round((v+delta[i])*10)/10);
   view.current!.shift(start.id,delta);setDrag(start.delta);
  }
+ function toggleLock(id:string){
+  if(busy||drag)return;const locked=!entries.find(e=>e.id===id)?.locked;
+  commit(setLocked(entries,id,locked));setMating(null);setNotice(`${title(id)} ${locked?'locked in place':'unlocked'}.`);
+ }
  function remove(id:string){
   if(busy||drag)return;
   try{const name=title(id);commit(removePanel(entries,id,ready?placement:null));setActive(null);setMating(null);setNotice(`${name} removed. Undo (Ctrl+Z) restores it.`);}
@@ -197,6 +203,9 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    if(addOpen)setAddOpen(false);else if(pending)setPending(null);else if(mating){setMating(null);setNotice('');}
    else if(fullscreen)setFullscreen(false);else setActive(null);
   }else if(NUDGES[event.key]&&(movable||hold.current?.keys)){event.preventDefault();nudge(NUDGES[event.key],event.shiftKey?.1:1);}
+  else if(NUDGES[event.key]&&selected?.locked){event.preventDefault();setNotice(`${title(selected.id)} is locked. Press L to unlock it.`);}
+  else if(name==='l'&&selected&&live){event.preventDefault();toggleLock(selected.id);}
+  else if(name==='c')setShowColors(shown=>!shown);
   else if(event.key==='Delete'&&selected){event.preventDefault();remove(selected.id);}
   else if(name==='m')toggleMate();
   else if(name==='f')view.current?.fit();
@@ -220,12 +229,13 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   :mating?(mating.first?'Now click the face it should join, on another panel.':mating.preferred?`Click a face on ${title(mating.preferred)}.`:'Click a face on the panel to move.'):'';
  const hint=!store.loaded?(store.error?'':'Loading saved assembly…'):working||(fullscreen?''
   :!entries.length?'Add Panel to start. The first panel is the fixed base.'
+  :selected?.locked?`${title(selected.id)} is locked in place. Unlock it to move it.`
   :selected&&live?`${title(selected.id)} · drag an arrow, or use arrow keys and Page Up / Down (1 mm, Shift 0.1 mm).`
   :entries.length>1?'Click a panel to move it. Use Mate to connect two faces.':'Add another panel to connect it.');
 
  return <section ref={workspace} className={'assembly-workspace'+(fullscreen?' is-fullscreen':'')} aria-label="Interactive assembly workspace" data-mating={!!mating||undefined} data-unsaved-assembly={store.dirty||pending?'true':undefined} aria-busy={store.saving}>
   <AssemblyViewer ref={view} projectId={projectId} live={live} entries={effective} panels={available} onReadyChange={setReady}
-   mateCheckId={mateCheckId} selection={selection} pairs={pairs} onHoles={setHoles} previewOnly={!!pending} onFacePicked={facePicked} onFaceMessage={setNotice} onValidation={onValidation}
+   mateCheckId={mateCheckId} selection={selection} pairs={pairs} showColors={showColors} onHoles={setHoles} previewOnly={!!pending} onFacePicked={facePicked} onFaceMessage={setNotice} onValidation={onValidation}
    activeId={active} movable={movable} onSelect={select} onMove={finishMove} onDrag={onDrag} onCatalog={onCatalog} onPlaced={onPlaced}>
    <div className="asm-workspace-toolbar">
     {!fullscreen&&<button className="primary" title="Connect two panels: click a face on each (M)" aria-pressed={!!mating} disabled={!live||busy||!ready||entries.length<2} onClick={toggleMate}><Link2 size={15}/>Mate</button>}
@@ -234,6 +244,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
     {!fullscreen&&<>
      <button aria-label="Undo" title="Undo (Ctrl+Z)" disabled={busy||!history.past.length} onClick={()=>travel('undo')}><Undo2 size={15}/></button>
      <button aria-label="Redo" title="Redo (Ctrl+Y)" disabled={busy||!history.future.length} onClick={()=>travel('redo')}><Redo2 size={15}/></button>
+     <button className="asm-colors" aria-pressed={showColors} title={`${showColors?'Hide':'Show'} face colors (C)`} onClick={()=>setShowColors(!showColors)}>{showColors?<Eye size={15}/>:<EyeOff size={15}/>}Colors</button>
      <button onClick={()=>setFullscreen(true)}><Maximize2 size={15}/>Full Screen</button>
     </>}
    </div>
@@ -243,10 +254,11 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
     {!available.length&&<p>No approved panel solids are available.</p>}{!live&&<p>Connect the CAD service to create and save assemblies.</p>}
    </section>}
    {!fullscreen&&!!effective.length&&<aside className="asm-panel-list" aria-label="Assembly panels">
-    <AssemblyPanelList entries={effective} placement={placement} fileNames={fileNames} active={active} busy={busy||!!drag} onSelect={select} onRemove={remove}/>
+    <AssemblyPanelList entries={effective} placement={placement} fileNames={fileNames} active={active} busy={busy||!!drag} onSelect={select} onLock={toggleLock} onRemove={remove}/>
    </aside>}
    {!fullscreen&&!mating&&!pending&&selected&&live&&<AssemblyMovePanel title={title(selected.id)} fileName={fileNames[selected.id]} delta={shownMove} moving={!!drag}
     holes={holes&&holes.entryId===selected.id?{...holes,other:title(holes.otherId)}:null}
+    locked={!!selected.locked} onLock={()=>toggleLock(selected.id)}
     position={position} matrix={placement?.entries.find(e=>e.id===selected.id)?.matrix??null} minimized={valuesMinimized} onMinimize={setValuesMinimized}/>}
    {(message||hint)&&<div className="asm-status">
     {message&&<p role={store.error?'alert':'status'} className="asm-message">{message}{store.error&&<button onClick={()=>{if((store.dirty||pending)&&!window.confirm('Discard current edits and reload the saved project assembly?'))return;setPending(null);setMating(null);setActive(null);setNotice('');setJoined([]);setOverlapping([]);setHistory({past:[],future:[]});store.reload();}}>Reload saved assembly</button>}</p>}

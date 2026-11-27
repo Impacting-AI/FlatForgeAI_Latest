@@ -1,6 +1,6 @@
 'use client';
 import { Euler, MathUtils, Matrix4 } from 'three';
-import { Minus, Move3d } from 'lucide-react';
+import { Lock, LockOpen, Minus, Move3d } from 'lucide-react';
 import { describeMove } from './assembly-actions';
 
 /** Named as seen in the default view. Colours match the arrows on the panel. */
@@ -14,12 +14,13 @@ const signed = (value: number) => (Math.round(value * 10) > 0 ? '+' : '') + numb
 // A half turn reads as 180°, never -180°.
 const degrees = (value: number | null) => value === null ? '—' : `${number(value < -179.95 ? 180 : value)}°`;
 
-export default function AssemblyMovePanel({ title, fileName, delta, moving, holes, position, matrix, minimized, onMinimize }: {
+export default function AssemblyMovePanel({ title, fileName, delta, moving, holes, locked, onLock, position, matrix, minimized, onMinimize }: {
   title: string; fileName: string;
   /** World millimetres of the movement in progress, or of the last one made. */
   delta: number[] | null; moving: boolean;
   /** Screw holes against the nearest panel: how many sit properly, or the movement still needed. */
   holes: { other: string; matched: number; inside: number; move: number[] | null } | null;
+  locked: boolean; onLock: () => void;
   /** Centre of this panel measured from the centre of the base; null for the base itself. */
   position: { base: string; offset: number[] } | null;
   /** Current column-major CAD placement. */
@@ -33,6 +34,7 @@ export default function AssemblyMovePanel({ title, fileName, delta, moving, hole
       <div><strong>{title}</strong><small title={fileName}>{fileName}</small></div>
       <button type="button" aria-label="Minimize movement values" title="Minimize" onClick={() => onMinimize(true)}><Minus size={14} /></button>
     </header>
+    <button type="button" className="asm-lock-wide" aria-pressed={locked} onClick={onLock}>{locked ? <><Lock size={13} />Unlock panel</> : <><LockOpen size={13} />Lock panel here</>}</button>
     <h4>{moving ? 'Moving now' : delta ? 'Last move' : 'Movement'}</h4>
     {delta ? <>
       <dl>{AXES.map(({ axis, positive, negative }, i) => <div key={axis} data-axis={axis}>
@@ -44,7 +46,7 @@ export default function AssemblyMovePanel({ title, fileName, delta, moving, hole
         <div data-value="heading" title="Seen from above: 0° is right (+X), 90° is back (+Y)"><dt>Angle, top view</dt><dd>{degrees(move.heading)}</dd></div>
         <div data-value="tilt" title="Above (+) or below (−) level"><dt>Angle, up / down</dt><dd>{degrees(move.tilt)}</dd></div>
       </dl>
-    </> : <p>Drag an arrow or press an arrow key to see the values.</p>}
+    </> : <p>{locked ? 'Locked in place. Unlock the panel to move it.' : 'Drag an arrow or press an arrow key to see the values.'}</p>}
     {holes && <>
       <h4>Holes with {holes.other}</h4>
       <p className="asm-holes" data-holes={holes.inside ? 'inside' : holes.matched ? 'matched' : 'apart'}>{holes.inside

@@ -12,9 +12,14 @@ from sqlalchemy.exc import IntegrityError
 from .db import Session, Project, ProjectAssembly
 from . import assembly
 
+# Saved with each panel but not part of the CAD placement data.
+WORKSPACE_FIELDS = {'label', 'locked'}
+
 
 class SavedEntry(assembly.Entry):
     label: str = Field(pattern=r'^[A-Z]+$', max_length=8)
+    # Workspace protection against moving a placed panel; it never affects placement.
+    locked: bool = False
 
 
 class SaveInput(assembly.StrictModel):
@@ -27,7 +32,7 @@ class SaveInput(assembly.StrictModel):
         if len({e.label for e in self.entries}) != len(self.entries):
             raise ValueError('Panel labels must be unique')
         if self.entries:
-            assembly.AssemblyInput(entries=[assembly.Entry.model_validate(e.model_dump(exclude={'label'})) for e in self.entries], policy='free')
+            assembly.AssemblyInput(entries=[assembly.Entry.model_validate(e.model_dump(exclude=WORKSPACE_FIELDS)) for e in self.entries], policy='free')
         return self
 
 
@@ -57,7 +62,7 @@ def save(project_id, body):
             payload = assembly.unsign(body.token)
             if payload.get('version') != 1 or payload.get('project') != project_id or payload.get('policy') != 'free':
                 raise HTTPException(422, 'This placement approval belongs to a different assembly or workflow')
-            rows = [assembly.Entry.model_validate(e.model_dump(exclude={'label'})) for e in body.entries]
+            rows = [assembly.Entry.model_validate(e.model_dump(exclude=WORKSPACE_FIELDS)) for e in body.entries]
             assembly.AssemblyInput(entries=rows, policy='free')
             if [e.model_dump(mode='json') for e in rows] != payload.get('entries'):
                 raise HTTPException(409, 'Assembly changed after its positions were checked. Wait for the latest preview and save again.')

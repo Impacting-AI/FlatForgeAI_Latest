@@ -28,7 +28,7 @@ export function useProjectAssembly(projectId:string,live:boolean){
   if(snapshot.length&&(!placement||!token))throw new Error('Wait for the current panel positions before saving.');
   setState(old=>({...old,saving:true,error:'',message:''}));
   try{
-   const rows=snapshot.map(entry=>{const row=placement!.entries.find(r=>r.id===entry.id);if(!row)throw new Error('A panel placement is missing.');return {...row,label:entry.label};});
+   const rows=snapshot.map(entry=>{const row=placement!.entries.find(r=>r.id===entry.id);if(!row)throw new Error('A panel placement is missing.');return {...row,label:entry.label,...(entry.locked?{locked:true}:{})};});
    const result=await api<SavedAssembly>(`/projects/${encodeURIComponent(projectId)}/assembly`,{revision:state.revision,entries:rows,token},'PUT',projectId);
    setState(old=>({...old,saved:JSON.stringify(snapshot),revision:result.revision,saving:false,message:'Assembly saved to this project.'}));
   }catch(error){setState(old=>({...old,saving:false,error:(error as Error).message}));}

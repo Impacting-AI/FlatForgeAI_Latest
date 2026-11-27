@@ -43,6 +43,7 @@ type Props = {
  selection?:FaceSelection|null;
  /** Joined faces to colour by how they sit. */
  pairs?:FacePair[];
+ showColors?:boolean;
  /** Reports how the selected panel's holes sit on a neighbour. */
  onHoles?:(report:HoleReport|null)=>void;
  previewOnly?:boolean;
@@ -53,7 +54,7 @@ type Props = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({projectId,live,entries,panels,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,movable=false,onSelect,onMove,onDrag,onCatalog,onPlaced,mateCheckId,pairs,onHoles},ref){
+ function AssemblyViewer({projectId,live,entries,panels,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,movable=false,onSelect,onMove,onDrag,onCatalog,onPlaced,mateCheckId,pairs,onHoles,showColors=true},ref){
   const host = useRef<HTMLDivElement>(null);
   const viewApi = useRef<(AssemblyViewerHandle&{screenshot:()=>void;exportGLB:()=>Promise<void>})|null>(null);
   const applyRef = useRef<(()=>void)|null>(null);
@@ -76,6 +77,8 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   useEffect(()=>{void pickerRef.current?.update(selection);},[selection]);
   const pairsLatest=useRef(pairs);
   useEffect(()=>{pairsLatest.current=pairs;pickerRef.current?.setPairs(pairs??[]);},[pairs]);
+  const colorsLatest=useRef(showColors);
+  useEffect(()=>{colorsLatest.current=showColors;pickerRef.current?.setColours(showColors);},[showColors]);
   // Holes are compared only for a plain selection, not while faces are being picked or joined.
   const focusId=selection||previewOnly?null:activeId;
   const holesLatest=useRef({focusId,onHoles});
@@ -173,6 +176,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       onPanelHover:id=>{if(hoveredId!==id){hoveredId=id;applyRef.current?.();}},
       onHoles:report=>holesLatest.current.onHoles?.(report)});
      void pickerRef.current.update(interaction.current.selection);
+     pickerRef.current.setColours(colorsLatest.current);
      pickerRef.current.setPairs(pairsLatest.current??[]);
      pickerRef.current.setFocus(holesLatest.current.focusId);
     }

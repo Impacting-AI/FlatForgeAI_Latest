@@ -111,7 +111,7 @@ try {
         await page.mouse.down(); await page.mouse.up(); await page.waitForTimeout(250);
         const now = await status.innerText();
         // A curved surface in the way only raises a message; try the next spot.
-        if (now !== before && /Now click|Connecting| connected to /.test(now)) return face.id;
+        if (now !== before && /Now click|Connecting| connected to |Unlock a panel/.test(now)) return face.id;
       }
     }
     throw new Error(`No clickable face found on ${id}`);
@@ -151,7 +151,7 @@ try {
   await page.goto(`${url}/projects/${project.id}/assembly`, { waitUntil: 'networkidle' });
   await button('Add Panel').waitFor();
   await page.waitForFunction(() => !document.querySelector('.asm-status')?.textContent.includes('Loading saved assembly'));
-  assert.deepEqual((await visibleButtons()).sort(), ['Add Panel', 'Export assembly GLB', 'Export assembly as STEP (.step)', 'Full Screen', 'Mate', 'Redo', 'Save Assembly', 'Screenshot', 'Undo']);
+  assert.deepEqual((await visibleButtons()).sort(), ['Add Panel', 'Colors', 'Export assembly GLB', 'Export assembly as STEP (.step)', 'Full Screen', 'Mate', 'Redo', 'Save Assembly', 'Screenshot', 'Undo']);
   pass('empty workspace shows only Mate, Add Panel, Save, Undo, Redo, Full Screen and the export controls');
 
   async function add(drawing) {
@@ -598,6 +598,55 @@ try {
   savedLayout = null; await button('Undo').click(); await loaded(); await button('Redo').click(); await loaded();
   near(new THREE.Vector3(...position(second)).distanceTo(new THREE.Vector3(...joined)), 0, .001, 'same place again');
   pass('picking the slotted flange on both panels joins them hole on hole, side by side, with no overlap');
+
+  // The colour switch hides the joint colours but keeps the hole information.
+  await expectDots('matched:94e8aa faces 4 panels 2 opacity 0.6', 'colours on');
+  assert.equal(await button('Colors').getAttribute('aria-pressed'), 'true');
+  await button('Colors').click();
+  await expectDots('', 'hole faces hidden'); await expectColour('', 'picked faces hidden');
+  await page.locator('.asm-holes').getByText('3 matched.').waitFor();
+  await page.screenshot({ path: path.join(output, '17-colors-hidden.png') });
+  await page.reload({ waitUntil: 'networkidle' }); await loaded();
+  assert.equal(await button('Colors').getAttribute('aria-pressed'), 'false', 'the choice is remembered');
+  await page.keyboard.press('c'); assert.equal(await button('Colors').getAttribute('aria-pressed'), 'true');
+  pass('Colors button and C key hide and show the face colours; the choice is remembered');
+
+  // Lock a panel where it is.
+  const pinned = layout().entries[1].id, baseId = layout().entries[0].id, pinnedAt = () => position(pinned);
+  const pinnedRow = page.locator('.asm-tree>li[data-entry=B]');
+  const unmoved = async (from, message) => near(new THREE.Vector3(...pinnedAt()).distanceTo(new THREE.Vector3(...from)), 0, .001, message);
+  await pinnedRow.locator('.asm-tree-name').click(); await loaded(); assert.ok((await gizmo()).attached);
+  await button('Lock Panel B').click(); await loaded();
+  await pinnedRow.getByText(/Locked/).waitFor();
+  const lockedSpot = pinnedAt();
+  assert.equal((await gizmo()).attached, false, 'no arrows on a locked panel');
+  await page.keyboard.press('ArrowRight'); await status.getByText('Panel B is locked. Press L to unlock it.').waitFor();
+  await page.keyboard.press('Delete'); await page.waitForTimeout(500);
+  assert.equal(await button('Remove Panel B').isDisabled(), true); await unmoved(lockedSpot, 'keys do not move or remove it');
+  await page.screenshot({ path: path.join(output, '18-locked.png') });
+  await button('Save Assembly').click(); await status.getByText('Assembly saved to this project.').waitFor({ timeout: 60000 });
+  assert.equal(saves.at(-1).entries[1].locked, true);
+  await page.reload({ waitUntil: 'networkidle' }); await loaded();
+  await pinnedRow.getByText(/Locked/).waitFor(); await unmoved(lockedSpot, 'same place after reload');
+  assert.equal(await page.locator('[data-unsaved-assembly]').count(), 0);
+  // Other panels move around it.
+  await page.locator('.asm-tree>li[data-entry=A] .asm-tree-name').click(); await loaded();
+  await press('ArrowRight'); await unmoved(lockedSpot, 'moving the base leaves it');
+  await button('Mate').click();
+  await clickFace(pinned, (face, normal) => normal.z > .99); await clickFace(baseId, (face, normal) => normal.z > .99);
+  if (!(await status.innerText()).includes('Connecting')) await status.getByText(/Unlock a panel|connected to/).waitFor({ timeout: 60000 });
+  await loaded(); await unmoved(lockedSpot, 'Mate never moves it');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  pass('a locked panel cannot be dragged, nudged, removed or mated away, and stays locked after save and reload');
+  await pinnedRow.locator('.asm-tree-name').click(); await loaded();
+  await button('Unlock panel').click(); await loaded(); assert.ok((await gizmo()).attached);
+  await press('PageUp'); near(pinnedAt()[2], lockedSpot[2] + 1, .001);
+  await button('Lock panel here').click(); await loaded(); assert.equal((await gizmo()).attached, false);
+  await button('Full Screen').click(); await page.waitForTimeout(700);
+  assert.equal(await button('Colors').count(), 0, 'full screen stays minimal');
+  await page.keyboard.press('l'); await loaded(); assert.ok((await gizmo()).attached, 'L unlocks in full screen');
+  await page.keyboard.press('Escape'); await button('Full Screen').waitFor();
+  pass('unlock and lock from the sidebar and with the L key');
 
   assert.deepEqual(errors, []); pass('no page errors and no browser popups');
   console.log(`\n${results.length} checks passed. Screenshots: ${output}`);

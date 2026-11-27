@@ -19,8 +19,8 @@ export function cadEntries(entries: AssemblyEntry[], panels: Panel[]): CadEntry[
   return entries.map(entry => {
     const panel = panels.find(panel => panel.id === entry.panelId);
     if (!panel) throw new Error('An assembly drawing is unavailable.');
-    const {label: _label,...engineering}=entry;
-    void _label;
+    const {label: _label,locked: _locked,...engineering}=entry;
+    void _label;void _locked;
     return { ...engineering, revision: entry.revision??panel.revision };
   });
 }

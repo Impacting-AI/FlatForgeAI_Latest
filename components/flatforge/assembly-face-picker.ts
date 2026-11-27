@@ -28,7 +28,7 @@ export function createAssemblyFacePicker(options:{
   const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
   let down:{x:number;y:number}|null=null;
   let pairs:FacePair[]=[];const outlines=new Map<THREE.BufferGeometry,THREE.EdgesGeometry>();
-  let focus:string|null=null,reported='null';const holes=new Map<string,Hole[]>();
+  let focus:string|null=null,reported='null',colours=true;const holes=new Map<string,Hole[]>();
   function edgeLine(edge:CadEdge,group:THREE.Group,color:number){
     const geometry=new THREE.BufferGeometry().setFromPoints([edge.a,edge.b].map(p=>new THREE.Vector3(...p).multiplyScalar(.001)));
     const line=new THREE.Line(geometry,new THREE.LineBasicMaterial({color,depthTest:false}));
@@ -140,6 +140,7 @@ export function createAssemblyFacePicker(options:{
   }
   /** A whole face in a light, see-through colour, drawn on top because joined faces cover each other. */
   function paintFace(geometry:THREE.BufferGeometry,group:THREE.Group,state:ContactState,userData:Record<string,unknown>){
+    if(!colours)return;
     let outline=outlines.get(geometry);if(!outline){outline=new THREE.EdgesGeometry(geometry,20);outlines.set(geometry,outline);}
     // The stencil paints each pixel once, so faces lying on each other stay equally see-through.
     const fill=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:CONTACT_COLORS[state],transparent:true,opacity:.6,side:THREE.DoubleSide,depthTest:false,depthWrite:false,toneMapped:false,
@@ -266,7 +267,9 @@ export function createAssemblyFacePicker(options:{
   }
   /** The selected panel, whose holes are compared with its neighbours'. */
   function setFocus(id:string|null){if(id===focus)return;focus=id;renderSelection();}
-  return {update,setPairs,setFocus,async loadAll(){for(const entry of options.entries()){if(!alive)return;try{await load(entry.id,false);}catch(error){if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);}}},highlightSide(id:string|null,side:AssemblySide|null){sideHover=id&&side?{id,side}:null;renderSelection();if(id)void load(id).then(()=>{if(alive)renderSelection();}).catch(()=>{});},refresh:renderSelection,dispose(){
+  /** Hides or shows the joint colours. Faces being picked stay highlighted. */
+  function setColours(show:boolean){if(show===colours)return;colours=show;renderSelection();}
+  return {update,setPairs,setFocus,setColours,async loadAll(){for(const entry of options.entries()){if(!alive)return;try{await load(entry.id,false);}catch(error){if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);}}},highlightSide(id:string|null,side:AssemblySide|null){sideHover=id&&side?{id,side}:null;renderSelection();if(id)void load(id).then(()=>{if(alive)renderSelection();}).catch(()=>{});},refresh:renderSelection,dispose(){
     alive=false;abort.abort();clearHover();clearVisuals();options.scene.remove(visuals);
     options.canvas.removeEventListener('pointermove',pointerMove);options.canvas.removeEventListener('pointerleave',clearHover);options.canvas.removeEventListener('pointerdown',pointerDown);options.canvas.removeEventListener('pointerup',pointerUp);
     for(const source of catalogs.values())for(const mesh of source.meshes){mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();}
