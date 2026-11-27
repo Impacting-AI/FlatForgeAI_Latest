@@ -2,6 +2,7 @@
 import { baseId, chooseMoving, convertedMate, currentPose, measureFaces, withMate, type Pick } from './plane-mates';
 import type { CadFaceCatalog, CadPlacement, MateReport } from './assembly-cad';
 import type { AssemblyEntry, PlaneMate } from './types';
+import { lapPlacement } from './hole-match';
 
 export type Connection = {
   movingId: string; targetId: string; mateId: string;
@@ -11,8 +12,10 @@ export type Connection = {
 
 /**
  * Two picked faces become one coincident mate; there is nothing else to set.
- * A panel's first mate puts the faces against each other, centred. Later mates keep the
- * current facing and add to the earlier ones. If they cannot all hold, the newest pick wins.
+ * Faces with screw holes are joined hole on hole, with the panels beside each other, and
+ * that replaces earlier mates. Otherwise a panel's first mate puts the faces against each
+ * other, centred; later mates keep the current facing and add to the earlier ones. If they
+ * cannot all hold, the newest pick wins.
  */
 export function planConnection(entries: AssemblyEntry[], first: Pick, second: Pick, catalogs: Record<string, CadFaceCatalog>,
   placement: CadPlacement, mateId: string, preferred?: string): Connection | { error: string } {
@@ -30,11 +33,19 @@ export function planConnection(entries: AssemblyEntry[], first: Pick, second: Pi
   const isFirst = !entry.planeMates?.length && !convertedMate(entry);
   const mate: PlaneMate = { id: mateId, targetId: target.entryId, type: 'coincident', offset: 0,
     aligned: isFirst ? false : measureFaces(a, b).aligned, lineUp: isFirst, reference: target.face, moving: moving.face };
-  const attempts = [withMate(entries, moving.entryId, mate, placement)];
-  if (!isFirst) {
-    const cleared = entries.map(e => e.id === moving.entryId ? { ...e, planeMates: undefined, connection: undefined } : e);
-    attempts.push(withMate(cleared, moving.entryId, { ...mate, aligned: false, lineUp: true }, placement));
+  const cleared = entries.map(e => e.id === moving.entryId ? { ...e, planeMates: undefined, connection: undefined } : e);
+  const source = catalogs[moving.entryId];
+  const lap = lapPlacement({ matrix: a.matrix, faces: source.faces }, moving.face.faceId,
+    { matrix: b.matrix, faces: catalogs[target.entryId].faces }, target.face.faceId);
+  if (lap) {
+    // The mate holds the flanges together; the starting pose carries the turn and the hole position.
+    const onHoles: PlaneMate = { ...mate, aligned: false, lineUp: false, moving: { faceId: lap.faceId, sourceSha: source.sourceSha, point: lap.point } };
+    const placed = withMate(cleared, moving.entryId, onHoles, placement)
+      .map(e => e.id === moving.entryId ? { ...e, pose: { ...e.pose!, matrix: lap.matrix } } : e);
+    return { movingId: moving.entryId, targetId: target.entryId, mateId, attempts: [placed] };
   }
+  const attempts = [withMate(entries, moving.entryId, mate, placement)];
+  if (!isFirst) attempts.push(withMate(cleared, moving.entryId, { ...mate, aligned: false, lineUp: true }, placement));
   return { movingId: moving.entryId, targetId: target.entryId, mateId, attempts };
 }
 

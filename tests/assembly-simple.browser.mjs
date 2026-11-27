@@ -572,6 +572,33 @@ try {
   await page.keyboard.press('Escape'); await expectDots('', 'nothing selected');
   pass('screw holes on each other turn light green (blue when inside, orange with the move needed when off)');
 
+  // The reported case: the same slotted end flange picked on two 1570 panels.
+  const sheet = drawings.find(d => d.filename.includes('1570'));
+  savedLayout = { id: 'empty', projectId: project.id, revision: 1, units: 'mm', updated: 1, entries: [] };
+  await page.reload({ waitUntil: 'networkidle' }); await button('Add Panel').waitFor();
+  await page.waitForFunction(() => !document.querySelector('.asm-status')?.textContent.includes('Loading saved assembly'));
+  await add(sheet); await add(sheet);
+  await status.getByText('Click a face on Panel B.').waitFor({ timeout: 60000 });
+  const [first, second] = layout().entries.map(e => e.id);
+  await clickFace(second, face => face.id === 'face-520');
+  await clickFace(first, face => face.id === 'face-520');
+  await status.getByText(/Panel B connected to Panel A\./).waitFor({ timeout: 60000 }); await loaded();
+  assert.doesNotMatch(await status.innerText(), /overlap/, 'the panels do not run into each other');
+  await page.locator('.asm-holes').getByText('3 matched.').waitFor({ timeout: 60000 });
+  await expectDots('matched:94e8aa faces 4 panels 2 opacity 0.6', 'flanges painted light green');
+  await expectColour(GREEN, 'the joined faces');
+  await button('Save Assembly').click(); await status.getByText('Assembly saved to this project.').waitFor({ timeout: 60000 }).catch(() => {});
+  const [one, two] = saves.at(-1).entries, offset = two.matrix.slice(12, 15).map((v, i) => v - one.matrix[12 + i]);
+  assert.deepEqual([two.matrix[0], two.matrix[5], two.matrix[10]].map(Math.round), [-1, -1, 1], 'turned half a turn, still the right way up');
+  near(offset[0], 4205, 1, 'beside the base'); near(offset[1], 1559, 1, 'hole on hole'); near(offset[2], 2, .01, 'flange resting on the picked side');
+  assert.deepEqual([two.planeMates[0].moving.faceId, two.planeMates[0].reference.faceId], ['face-470', 'face-520'], 'underside on top side');
+  await page.screenshot({ path: path.join(output, '16-lap-joint.png') });
+  // The saved joint survives a CAD solve from scratch.
+  const joined = position(second);
+  savedLayout = null; await button('Undo').click(); await loaded(); await button('Redo').click(); await loaded();
+  near(new THREE.Vector3(...position(second)).distanceTo(new THREE.Vector3(...joined)), 0, .001, 'same place again');
+  pass('picking the slotted flange on both panels joins them hole on hole, side by side, with no overlap');
+
   assert.deepEqual(errors, []); pass('no page errors and no browser popups');
   console.log(`\n${results.length} checks passed. Screenshots: ${output}`);
 } catch (error) {

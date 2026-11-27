@@ -7,7 +7,8 @@ import { withMate } from '../components/flatforge/plane-mates.ts';
 // its one runtime dependency to the original source for Node's type stripper.
 const source = fs.readFileSync(new URL('../components/flatforge/assembly-actions.ts', import.meta.url), 'utf8');
 const compiled = ts.transpile(source, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })
-  .replace("'./plane-mates'", JSON.stringify(new URL('../components/flatforge/plane-mates.ts', import.meta.url).href));
+  .replace("'./plane-mates'", JSON.stringify(new URL('../components/flatforge/plane-mates.ts', import.meta.url).href))
+  .replace("'./hole-match'", JSON.stringify(new URL('../components/flatforge/hole-match.ts', import.meta.url).href));
 const { canMove, connectionStatus, describeMove, movePanel, planConnection, removePanel } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
 
 const identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];

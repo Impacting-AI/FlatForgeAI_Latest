@@ -110,3 +110,79 @@ export function matchHoles(moving: Hole[], target: Hole[], reach = 30): HoleMatc
   });
   return { matched, inside, onto, move };
 }
+
+export type JointPanel = {
+  /** Column-major placement in millimetres. */
+  matrix: number[];
+  faces: { id: string; supported: boolean; normal?: number[]; positions: number[]; indices: number[] }[];
+};
+
+const rotate = (m: number[], v: number[]) => [0, 1, 2].map(i => m[i] * v[0] + m[4 + i] * v[1] + m[8 + i] * v[2]);
+const place = (m: number[], p: number[]) => rotate(m, p).map((v, i) => v + m[12 + i]);
+
+/** The axis-aligned box a panel fills at a placement. */
+function box(panel: JointPanel, matrix: number[]) {
+  const low = [Infinity, Infinity, Infinity], high = [-Infinity, -Infinity, -Infinity];
+  for (const face of panel.faces) for (let i = 0; i < face.positions.length; i++) {
+    low[i % 3] = Math.min(low[i % 3], face.positions[i]); high[i % 3] = Math.max(high[i % 3], face.positions[i]);
+  }
+  const corners = [0, 1, 2, 3, 4, 5, 6, 7].map(n => place(matrix, [0, 1, 2].map(i => (n >> i & 1 ? high : low)[i])));
+  return { min: [0, 1, 2].map(i => Math.min(...corners.map(c => c[i]))), max: [0, 1, 2].map(i => Math.max(...corners.map(c => c[i]))) };
+}
+const volume = (a: ReturnType<typeof box>, b = a) => [0, 1, 2].reduce((v, i) => v * Math.max(0, Math.min(a.max[i], b.max[i]) - Math.max(a.min[i], b.min[i])), 1);
+
+/** A point inside the face itself, never in one of its holes. */
+function facePoint({ positions, indices }: JointPanel['faces'][number]) {
+  let widest = -1, point = [0, 0, 0];
+  for (let i = 0; i + 2 < indices.length; i += 3) {
+    const [a, b, c] = [0, 1, 2].map(k => positions.slice(indices[i + k] * 3, indices[i + k] * 3 + 3));
+    const u = sub(b, a), v = sub(c, a);
+    const area = Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
+    if (area > widest) { widest = area; point = a.map((x, k) => (x + b[k] + c[k]) / 3); }
+  }
+  return point;
+}
+
+/**
+ * Where the moving panel belongs when both picked faces have screw holes: flange on flange,
+ * hole on hole, and the two panels beside each other rather than one on top of the other.
+ * The panel stays the right way up and is only turned about the vertical in quarter turns;
+ * it rests on the side of the target face that was picked. Null when no such joint exists.
+ */
+export function lapPlacement(moving: JointPanel, movingFace: string, target: JointPanel, targetFace: string) {
+  const own = panelHoles(moving.faces), theirs = panelHoles(target.faces);
+  const movingIndex = moving.faces.findIndex(f => f.id === movingFace), targetIndex = target.faces.findIndex(f => f.id === targetFace);
+  const picked = own.filter(h => h.faces.includes(movingIndex)), onto = theirs.filter(h => h.faces.includes(targetIndex));
+  if (!picked.length || !onto.length) return null;
+  /** Hole centres moved onto the surface of one face. */
+  const surface = (panel: JointPanel, holes: Hole[], index: number) => {
+    const face = panel.faces[index], n = face.normal!;
+    return holes.map(h => add(h.centre, n, -dot(sub(h.centre, face.positions.slice(0, 3)), n)));
+  };
+  const aim = surface(target, onto, targetIndex).map(p => place(target.matrix, p));
+  const normal = rotate(target.matrix, target.faces[targetIndex].normal!), fixed = box(target, target.matrix);
+  // Either side of the picked sheet may be the one that touches.
+  const sides = [...new Set(picked.flatMap(h => h.faces))];
+  const options = [0, 90, 180, 270].flatMap(turn => {
+    const c = Math.round(Math.cos(turn * Math.PI / 180)), s = Math.round(Math.sin(turn * Math.PI / 180));
+    const turned = [0, 4, 8].flatMap(col => { const [x, y, z] = moving.matrix.slice(col, col + 3); return [c * x - s * y, s * x + c * y, z, 0]; });
+    return sides.flatMap(side => {
+      if (dot(rotate(turned, moving.faces[side].normal!), normal) > -.999) return [];
+      const holes = surface(moving, picked.filter(h => h.faces.includes(side)), side).map(p => rotate(turned, p));
+      // The shift that puts the most holes on holes.
+      let best = { count: 0, shift: [0, 0, 0] };
+      for (const a of aim) for (const b of holes) {
+        const shift = sub(a, b);
+        const count = holes.filter(p => aim.some(q => Math.hypot(...sub(add(p, shift), q)) <= HOLE_TOLERANCE_MM)).length;
+        if (count > best.count) best = { count, shift };
+      }
+      const matrix = [...turned, ...best.shift, 1];
+      const placed = box(moving, matrix), shared = volume(placed, fixed);
+      return [{ matrix, side, turn, matched: best.count, shared, stacked: shared > .5 * Math.min(volume(placed), volume(fixed)) }];
+    });
+  });
+  const found = options.filter(o => !o.stacked).sort((a, b) => b.matched - a.matched || a.shared - b.shared || Math.min(a.turn, 360 - a.turn) - Math.min(b.turn, 360 - b.turn))[0];
+  if (!found) return null;
+  const face = moving.faces[found.side];
+  return { matrix: found.matrix, faceId: face.id, point: facePoint(face) as [number, number, number], turn: found.turn, matched: found.matched };
+}
