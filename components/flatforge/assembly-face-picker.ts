@@ -105,10 +105,10 @@ export function createAssemblyFacePicker(options:{
     if(!source?.data.faces.length||!group?.visible)return null;
     let own=holes.get(id);if(!own){own=panelHoles(source.data.faces);holes.set(id,own);}
     group.updateMatrixWorld(true);
-    return own.map(hole=>({half:hole.half,axis:new THREE.Vector3(...hole.axis as [number,number,number]).transformDirection(group.matrixWorld).toArray(),
+    return own.map(hole=>({half:hole.half,faces:hole.faces,axis:new THREE.Vector3(...hole.axis as [number,number,number]).transformDirection(group.matrixWorld).toArray(),
       centre:new THREE.Vector3(...hole.centre as [number,number,number]).multiplyScalar(.001).applyMatrix4(group.matrixWorld).multiplyScalar(1000).toArray()}));
   }
-  /** Marks the selected panel's holes that sit on another panel's holes, and returns the state for each such panel. */
+  /** Colours the faces fastened through lined-up holes, and returns the state for each such panel. */
   function renderHoles(){
     const states=new Map<string,ContactState>();let report:HoleReport|null=null;
     const group=focus?options.groups.get(focus)?.group:undefined;
@@ -122,11 +122,12 @@ export function createAssemblyFacePicker(options:{
         const moving=placedHoles(focus),target=placedHoles(id);if(!moving||!target)continue;
         const found=matchHoles(moving,target);
         if(found.inside.length)states.set(id,'inside');else if(found.matched.length)states.set(id,'matched');
-        for(const [list,state] of [[found.matched,'matched'],[found.inside,'inside']] as const){
-          if(!list.length)continue;
-          const geometry=new THREE.BufferGeometry().setFromPoints(list.map(i=>new THREE.Vector3(...moving[i].centre as [number,number,number]).multiplyScalar(.001)));
-          const dots=new THREE.Points(geometry,new THREE.PointsMaterial({color:CONTACT_COLORS[state],size:11,sizeAttenuation:false,transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));
-          dots.userData={holes:state,entryId:id};dots.renderOrder=6;dots.raycast=()=>{};visuals.add(dots);
+        // The whole face around the holes takes the colour, on both panels.
+        for(const state of ['inside','matched'] as const){
+          for(const [panel,own,list] of [[focus,moving,found[state]],[id,target,found.onto[state]]] as const){
+            const source=catalogs.get(panel)!,owner=options.groups.get(panel)!.group;
+            for(const index of new Set(list.flatMap(i=>own[i].faces)))paintFace(source.meshes[index].geometry,owner,state,{holes:state,entryId:panel,faceId:source.data.faces[index].id});
+          }
         }
         const seated=found.matched.length+found.inside.length,best=report?report.matched+report.inside:-1;
         if(found.move&&(seated>best||seated===best&&Math.hypot(...found.move)<Math.hypot(...report?.move??[Infinity])))
@@ -137,19 +138,24 @@ export function createAssemblyFacePicker(options:{
     if(text!==reported){reported=text;options.onHoles?.(report);}
     return states;
   }
-  /** Colours both faces of each pair by how they sit now. Drawn on top, because joined faces cover each other. */
+  /** A whole face in a light, see-through colour, drawn on top because joined faces cover each other. */
+  function paintFace(geometry:THREE.BufferGeometry,group:THREE.Group,state:ContactState,userData:Record<string,unknown>){
+    let outline=outlines.get(geometry);if(!outline){outline=new THREE.EdgesGeometry(geometry,20);outlines.set(geometry,outline);}
+    // The stencil paints each pixel once, so faces lying on each other stay equally see-through.
+    const fill=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:CONTACT_COLORS[state],transparent:true,opacity:.6,side:THREE.DoubleSide,depthTest:false,depthWrite:false,toneMapped:false,
+      stencilWrite:true,stencilRef:1,stencilFunc:THREE.NotEqualStencilFunc,stencilZPass:THREE.ReplaceStencilOp}));
+    const edge=new THREE.LineSegments(outline,new THREE.LineBasicMaterial({color:CONTACT_COLORS[state],transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));
+    group.updateMatrixWorld(true);
+    for(const object of [fill,edge]){object.userData={sharedFaceGeometry:true,...userData};object.matrixAutoUpdate=false;object.matrix.copy(group.matrixWorld);object.renderOrder=5;object.raycast=()=>{};visuals.add(object);}
+  }
+  /** Colours both faces of each pair by how they sit now. */
   function renderPairs(holeStates:Map<string,ContactState>){
     for(const pair of pairs){
       const moving=placedFace(pair.moving),target=placedFace(pair.target);if(!moving||!target)continue;
       // Panels fastened through lined-up holes are matched even where the picked faces sit apart.
       const other=pair.moving.entryId===focus?pair.target.entryId:pair.target.entryId===focus?pair.moving.entryId:null;
       const state=pair.force??(other?holeStates.get(other):undefined)??faceContact(moving,target,{moving:moving.box,target:target.box});
-      for(const end of [moving,target]){
-        let outline=outlines.get(end.geometry);if(!outline){outline=new THREE.EdgesGeometry(end.geometry,20);outlines.set(end.geometry,outline);}
-        const fill=new THREE.Mesh(end.geometry,new THREE.MeshBasicMaterial({color:CONTACT_COLORS[state],transparent:true,opacity:.85,side:THREE.DoubleSide,depthTest:false,depthWrite:false,toneMapped:false}));
-        const edge=new THREE.LineSegments(outline,new THREE.LineBasicMaterial({color:CONTACT_COLORS[state],transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));
-        for(const object of [fill,edge]){object.userData={sharedFaceGeometry:true,contact:state,entryId:end===moving?pair.moving.entryId:pair.target.entryId};object.matrixAutoUpdate=false;object.matrix.copy(end.group.matrixWorld);object.renderOrder=5;object.raycast=()=>{};visuals.add(object);}
-      }
+      for(const end of [moving,target])paintFace(end.geometry,end.group,state,{contact:state,entryId:end===moving?pair.moving.entryId:pair.target.entryId});
     }
   }
   function renderSelection(){

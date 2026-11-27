@@ -10,7 +10,7 @@ const LARGEST_HOLE_MM = 60;
 const SHEET_MM = 6;
 
 /** One hole through a sheet: its middle, direction and half the sheet thickness, in millimetres. */
-export type Hole = { centre: number[]; axis: number[]; half: number };
+export type Hole = { centre: number[]; axis: number[]; half: number; /** The faces it opens in. */ faces: number[] };
 
 const sub = (a: number[], b: number[]) => a.map((v, i) => v - b[i]);
 const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -57,7 +57,7 @@ export function innerLoops(positions: number[], indices: number[]) {
 /** The holes of a panel, in its own coordinates. */
 export function panelHoles(faces: { supported: boolean; normal?: number[]; positions: number[]; indices: number[] }[]) {
   const holes: Hole[] = [];
-  for (const face of faces) {
+  for (const [index, face] of faces.entries()) {
     if (!face.supported || !face.normal) continue;
     for (const centre of innerLoops(face.positions, face.indices)) {
       const found = holes.find(hole => {
@@ -65,7 +65,8 @@ export function panelHoles(faces: { supported: boolean; normal?: number[]; posit
         const apart = sub(centre, hole.centre), along = dot(apart, hole.axis);
         return Math.hypot(...add(apart, hole.axis, -along)) < .2 && Math.abs(along) <= SHEET_MM;
       });
-      if (!found) { holes.push({ centre, axis: face.normal, half: 0 }); continue; }
+      if (!found) { holes.push({ centre, axis: face.normal, half: 0, faces: [index] }); continue; }
+      found.faces.push(index);
       // The other side of the sheet: widen the hole to span both.
       const along = dot(sub(centre, found.centre), found.axis);
       const low = Math.min(-found.half, along), high = Math.max(found.half, along);
@@ -81,22 +82,25 @@ export type HoleMatch = {
   matched: number[];
   /** Lined up, but the two sheets occupy the same space. */
   inside: number[];
+  /** The holes of the other panel that those sit on. */
+  onto: { matched: number[]; inside: number[] };
   /** Smallest movement of the moving panel, in mm, that would seat a nearby pair. */
   move: number[] | null;
 };
 
 /** Compares holes given in the same (world) coordinates. */
 export function matchHoles(moving: Hole[], target: Hole[], reach = 30): HoleMatch {
-  const matched: number[] = [], inside: number[] = [];
+  const matched: number[] = [], inside: number[] = [], onto = { matched: [] as number[], inside: [] as number[] };
   let move: number[] | null = null, shortest = reach;
   moving.forEach((a, index) => {
-    for (const b of target) {
+    for (const [other, b] of target.entries()) {
       if (Math.abs(dot(a.axis, b.axis)) < .999) continue;
       const apart = sub(a.centre, b.centre), along = dot(apart, b.axis), across = add(apart, b.axis, -along);
       const thickness = a.half + b.half, gap = Math.abs(along) - thickness;
       if (Math.hypot(...across) <= HOLE_TOLERANCE_MM && gap <= SEAT_TOLERANCE_MM) {
-        const list = gap < -SEAT_TOLERANCE_MM ? inside : matched;
+        const state = gap < -SEAT_TOLERANCE_MM ? 'inside' : 'matched', list = state === 'inside' ? inside : matched;
         if (!list.includes(index)) list.push(index);
+        if (!onto[state].includes(other)) onto[state].push(other);
       }
       // Slide across onto the other hole, then rest the sheet on its nearer side.
       const needed = add(across.map(v => -v), b.axis, (along < 0 ? -thickness : thickness) - along);
@@ -104,5 +108,5 @@ export function matchHoles(moving: Hole[], target: Hole[], reach = 30): HoleMatc
       if (length < shortest) { shortest = length; move = needed; }
     }
   });
-  return { matched, inside, move };
+  return { matched, inside, onto, move };
 }

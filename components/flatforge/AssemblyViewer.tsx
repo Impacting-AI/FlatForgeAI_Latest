@@ -112,7 +112,7 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
    setMsg('Loading assembly…'); setErr(false);
 
    let renderer:THREE.WebGLRenderer;
-   try{renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});}
+   try{renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true,stencil:true});}
    catch{setMsg('WebGL not available');setErr(true);return;}
    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
    configureInspectionRenderer(renderer);

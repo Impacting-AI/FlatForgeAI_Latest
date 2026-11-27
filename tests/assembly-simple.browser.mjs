@@ -534,38 +534,41 @@ try {
   await page.reload({ waitUntil: 'networkidle' }); await loaded();
   await page.locator('.asm-tree>li[data-entry=B] .asm-tree-name').click(); await loaded();
   const holeText = page.locator('.asm-holes');
+  /** The faces painted because of lined-up holes: state, colour, number of faces and the panels they are on. */
   const dots = () => page.evaluate(() => {
-    const found = [];
-    window.__scene.traverse(o => { if (o.isPoints && o.userData.holes) found.push(`${o.userData.holes}:${o.material.color.getHexString()}:${o.geometry.attributes.position.count}`); });
-    return found.join(' ');
+    const found = [], panels = new Set(), opacity = new Set();
+    window.__scene.traverse(o => { if (o.isMesh && o.userData.holes) { found.push(`${o.userData.holes}:${o.material.color.getHexString()}`); panels.add(o.userData.entryId); opacity.add(o.material.opacity); } });
+    return found.length ? `${[...new Set(found)].join(' ')} faces ${found.length} panels ${panels.size} opacity ${[...opacity]}` : '';
   });
   async function expectDots(wanted, message) {
     let seen;
     for (let i = 0; i < 100; i++) { seen = await dots(); if (seen === wanted) return; await page.waitForTimeout(100); }
     assert.fail(`${message}: wanted "${wanted}", drawn "${seen}"`);
   }
+  // Both sides of one flange on each panel carry the four slots.
+  const MATCHED_FACES = 'matched:94e8aa faces 4 panels 2 opacity 0.6', INSIDE_FACES = 'inside:9dcbff faces 4 panels 2 opacity 0.6';
   await holeText.getByText('Not matched yet. Move:').waitFor({ timeout: 60000 });
   assert.equal(await page.locator('[data-hole-move=Y] dd').innerText(), '+3 mm');
-  await expectColour(ORANGE, 'holes 3 mm off, picked faces apart'); await expectDots('', 'no hole marked yet');
+  await expectColour(ORANGE, 'holes 3 mm off, picked faces apart'); await expectDots('', 'no face painted yet');
   await page.screenshot({ path: path.join(output, '14-holes-off.png') });
   await press('ArrowUp'); await press('ArrowUp'); await press('ArrowUp');
   await holeText.getByText('4 matched.').waitFor();
-  await expectColour(GREEN, 'screw holes on each other'); await expectDots('matched:94e8aa:4', 'matched holes marked');
+  await expectColour(GREEN, 'screw holes on each other'); await expectDots(MATCHED_FACES, 'whole faces light green');
   await page.screenshot({ path: path.join(output, '15-holes-matched.png') });
   await press('PageDown'); await holeText.getByText(/inside the other/).waitFor();
-  await expectColour(BLUE, 'one sheet inside the other'); await expectDots('inside:9dcbff:4', 'holes marked inside');
+  await expectColour(BLUE, 'one sheet inside the other'); await expectDots(INSIDE_FACES, 'whole faces light blue');
   await press('PageUp'); await press('PageUp'); await holeText.getByText('Not matched yet. Move:').waitFor();
   assert.equal(await page.locator('[data-hole-move=Z] dd').innerText(), '-1 mm');
-  await expectColour(ORANGE, 'sheets 1 mm apart'); await expectDots('', 'no hole marked');
+  await expectColour(ORANGE, 'sheets 1 mm apart'); await expectDots('', 'no face painted');
   await press('PageDown'); await expectColour(GREEN, 'seated again');
   // Without any picked faces, the holes themselves still turn green.
   delete savedLayout.entries[1].connection; delete savedLayout.entries[1].mateState; savedLayout.entries[1].pose.matrix[13] = -4382.5;
   await page.reload({ waitUntil: 'networkidle' }); await loaded();
   await page.locator('.asm-tree>li[data-entry=B] .asm-tree-name').click(); await loaded();
-  await expectDots('matched:94e8aa:4', 'holes alone'); await expectColour('', 'no picked faces');
+  await expectDots(MATCHED_FACES, 'holes alone'); await expectColour('', 'no picked faces');
   await page.getByRole('button', { name: 'Full Screen', exact: true }).click(); await page.waitForTimeout(700);
-  await expectDots('matched:94e8aa:4', 'full screen');
-  await page.keyboard.press('Escape'); await expectDots('matched:94e8aa:4', 'after leaving full screen');
+  await expectDots(MATCHED_FACES, 'full screen');
+  await page.keyboard.press('Escape'); await expectDots(MATCHED_FACES, 'after leaving full screen');
   await page.keyboard.press('Escape'); await expectDots('', 'nothing selected');
   pass('screw holes on each other turn light green (blue when inside, orange with the move needed when off)');
 
