@@ -83,6 +83,41 @@ export function setLocked(entries: AssemblyEntry[], id: string, locked: boolean)
   });
 }
 
+const mates = (entry: AssemblyEntry) => entry.planeMates ?? [convertedMate(entry)].filter((m): m is PlaneMate => !!m);
+
+/**
+ * The panels a reset would disconnect: the selected one, or for a panel with no mate of its
+ * own (such as the base) the panels mated to it. With nothing selected, every mated panel.
+ */
+export function resetTargets(entries: AssemblyEntry[], selected: string | null) {
+  const mated = entries.filter(entry => mates(entry).length);
+  if (!selected) return mated.map(entry => entry.id);
+  if (mated.some(entry => entry.id === selected)) return [selected];
+  return mated.filter(entry => mates(entry).some(m => m.targetId === selected)).map(entry => entry.id);
+}
+
+/**
+ * Takes mated panels apart so any of their faces can be picked again. Each one goes back to
+ * how it was added: its own way up, waiting `clearance` mm to the right of everything else.
+ * Locked panels keep their mate, and no other panel moves.
+ */
+export function resetMates(entries: AssemblyEntry[], selected: string | null, placement: CadPlacement, clearance: number) {
+  const found = resetTargets(entries, selected);
+  const reset = found.filter(id => !entries.find(e => e.id === id)!.locked), kept = found.filter(id => !reset.includes(id));
+  const base = baseId(entries)!, box = placement.bounds[base];
+  const others = entries.filter(e => !reset.includes(e.id)).map(e => placement.bounds[e.id]);
+  if (!box || others.some(b => !b)) throw new Error('Wait for the current panel positions, then try again.');
+  let gap = Math.max(...others.map(b => b.max[0])) - box.max[0] + clearance;
+  const waiting = new Map(reset.map(id => {
+    const { label, panelId, revision, rotation } = entries.find(e => e.id === id)!, size = placement.bounds[id];
+    const entry: AssemblyEntry = { id, label, panelId, revision, rotation, myFace: '-X', targetId: base, targetFace: '+X', gap };
+    // Room for the next one, whichever way up this one lands.
+    gap += Math.max(...size.max.map((value, i) => value - size.min[i])) + clearance;
+    return [id, entry];
+  }));
+  return { reset, kept, entries: entries.map(e => waiting.get(e.id) ?? reset.reduce((next, id) => detached(next, id, placement), e)) };
+}
+
 /** Moving by hand needs current CAD positions only when a connection has to be released. */
 export function canMove(entries: AssemblyEntry[], id: string, positionsReady: boolean) {
   const entry = entries.find(e => e.id === id);

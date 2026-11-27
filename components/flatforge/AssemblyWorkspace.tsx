@@ -1,12 +1,12 @@
 'use client';
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
-import {Plus,Undo2,Redo2,Link2,Maximize2,Minimize2,Save,Eye,EyeOff} from 'lucide-react';
+import {Plus,Undo2,Redo2,Link2,Unlink2,Maximize2,Minimize2,Save,Eye,EyeOff} from 'lucide-react';
 import AssemblyPanelList from './AssemblyPanelList';
 import AssemblyMovePanel from './AssemblyMovePanel';
 import AssemblyViewer,{type AssemblyViewerHandle} from './AssemblyViewer';
 import {useProjectAssembly} from './useProjectAssembly';
 import {baseId,type Pick} from './plane-mates';
-import {canMove,movePanel,planConnection,removePanel,setLocked,type Connection} from './assembly-actions';
+import {canMove,movePanel,planConnection,removePanel,resetMates,resetTargets,setLocked,type Connection} from './assembly-actions';
 import type {AssemblyEntry,Panel,CadFaceReference} from './types';
 import type {CadFaceCatalog,CadPlacement} from './assembly-cad';
 import type {HoleReport} from './assembly-face-picker';
@@ -60,6 +60,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const available=panels.filter(p=>p.status==='PASS'&&p.artifacts.includes('panel.glb')&&p.artifacts.includes('panel.step'));
  const busy=!store.loaded||store.saving||!!pending;
  const movable=live&&!busy&&!mating&&!!selected&&!selected.locked&&(!!drag||canMove(entries,selected.id,ready));
+ const resettable=resetTargets(entries,active);
  const selection=useMemo<FaceSelection|null>(()=>mating?{anyPanel:true,geometry:'face',alignment:'top',referenceEntryId:'',movingEntryId:mating.first?.entryId??'',moving:mating.first?.face,pick:mating.first?'reference':'moving'}:null,[mating]);
 
  // While joining, the two faces are orange; afterwards the selected panel's joints show how they sit.
@@ -79,7 +80,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function commit(next:AssemblyEntry[]){setHistory(h=>recordAction(h,entries));store.setEntries(next);}
  function travel(direction:'undo'|'redo'){
   if(busy||drag)return;const from=direction==='undo'?history.past:history.future;if(!from.length)return;
-  const next=from[from.length-1];store.setEntries(next);setMating(null);setNotice('');setLastMove(null);setJoined([]);setOverlapping([]);
+  const next=from[from.length-1];added.current=null;store.setEntries(next);setMating(null);setNotice('');setLastMove(null);setJoined([]);setOverlapping([]);
   setHistory(direction==='undo'?{past:history.past.slice(0,-1),future:[...history.future,entries]}:{past:[...history.past,entries],future:history.future.slice(0,-1)});
   if(!next.some(e=>e.id===active))setActive(null);
  }
@@ -173,6 +174,19 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   if(busy||drag)return;const locked=!entries.find(e=>e.id===id)?.locked;
   commit(setLocked(entries,id,locked));setMating(null);setNotice(`${title(id)} ${locked?'locked in place':'unlocked'}.`);
  }
+ /** Takes mated panels apart and goes straight back to picking faces. */
+ function resetMate(){
+  if(!live||busy||drag||!ready||!placement||!resettable.length)return;
+  try{
+   const result=resetMates(entries,active,placement,PARKING_MM),names=(ids:string[])=>ids.map(title).join(', ');
+   if(!result.reset.length){setNotice(`${names(result.kept)} is locked. Unlock it to reset its mate.`);return;}
+   const apart=(pair:FacePair)=>[pair.moving,pair.target].every(end=>!result.reset.includes(end.entryId));
+   added.current=result.reset[0];commit(result.entries);
+   setActive(result.reset[0]);setMating(null);setAddOpen(false);setLastMove(null);
+   setJoined(old=>old.filter(apart));setOverlapping(old=>old.filter(key=>!result.reset.some(id=>key.includes(id+':'))));
+   setNotice(`Mate reset: ${names(result.reset)} moved aside. Pick two faces to connect again.${result.kept.length?` Locked, so unchanged: ${names(result.kept)}.`:''}`);
+  }catch(error){setNotice((error as Error).message);}
+ }
  function remove(id:string){
   if(busy||drag)return;
   try{const name=title(id);commit(removePanel(entries,id,ready?placement:null));setActive(null);setMating(null);setNotice(`${name} removed. Undo (Ctrl+Z) restores it.`);}
@@ -208,6 +222,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   else if(name==='c')setShowColors(shown=>!shown);
   else if(event.key==='Delete'&&selected){event.preventDefault();remove(selected.id);}
   else if(name==='m')toggleMate();
+  else if(name==='r')resetMate();
   else if(name==='f')view.current?.fit();
  };release.current=event=>{if(!event||NUDGES[event.key])finishKeys();};});
  useEffect(()=>{
@@ -239,6 +254,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    activeId={active} movable={movable} onSelect={select} onMove={finishMove} onDrag={onDrag} onCatalog={onCatalog} onPlaced={onPlaced}>
    <div className="asm-workspace-toolbar">
     {!fullscreen&&<button className="primary" title="Connect two panels: click a face on each (M)" aria-pressed={!!mating} disabled={!live||busy||!ready||entries.length<2} onClick={toggleMate}><Link2 size={15}/>Mate</button>}
+    {!fullscreen&&<button className="asm-reset-mate" title={`${active?'Reset the selected panel’s mate':'Reset all mates'} (R)`} disabled={!live||busy||!!drag||!ready||!resettable.length} onClick={resetMate}><Unlink2 size={15}/>Reset Mate</button>}
     <button className="primary" aria-expanded={addOpen} disabled={busy||!!drag||entries.length>=100||!!entries.length&&!ready} onClick={()=>setAddOpen(!addOpen)}><Plus size={15}/>Add Panel</button>
     <button className="primary" disabled={busy||!live||!!drag||!!entries.length&&!valid} onClick={()=>void save()}><Save size={15}/>{store.saving?'Saving…':'Save Assembly'}</button>
     {!fullscreen&&<>

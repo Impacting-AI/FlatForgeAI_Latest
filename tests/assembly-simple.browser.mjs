@@ -151,7 +151,7 @@ try {
   await page.goto(`${url}/projects/${project.id}/assembly`, { waitUntil: 'networkidle' });
   await button('Add Panel').waitFor();
   await page.waitForFunction(() => !document.querySelector('.asm-status')?.textContent.includes('Loading saved assembly'));
-  assert.deepEqual((await visibleButtons()).sort(), ['Add Panel', 'Colors', 'Export assembly GLB', 'Export assembly as STEP (.step)', 'Full Screen', 'Mate', 'Redo', 'Save Assembly', 'Screenshot', 'Undo']);
+  assert.deepEqual((await visibleButtons()).sort(), ['Add Panel', 'Colors', 'Export assembly GLB', 'Export assembly as STEP (.step)', 'Full Screen', 'Mate', 'Redo', 'Reset Mate', 'Save Assembly', 'Screenshot', 'Undo']);
   pass('empty workspace shows only Mate, Add Panel, Save, Undo, Redo, Full Screen and the export controls');
 
   async function add(drawing) {
@@ -647,6 +647,68 @@ try {
   await page.keyboard.press('l'); await loaded(); assert.ok((await gizmo()).attached, 'L unlocks in full screen');
   await page.keyboard.press('Escape'); await button('Full Screen').waitFor();
   pass('unlock and lock from the sidebar and with the L key');
+
+  // Reset Mate takes a joint apart so other faces can be connected.
+  const removeButtons = page.locator('.asm-tree button[aria-label^="Remove Panel"]');
+  while (await removeButtons.count()) { const left = await removeButtons.count(); await removeButtons.last().click(); await page.waitForTimeout(900); assert.ok(await removeButtons.count() < left, 'panel removed'); }
+  await add(sheet); await add(sheet);
+  await status.getByText('Click a face on Panel B.').waitFor({ timeout: 60000 }); await loaded();
+  const [fixed, loose] = layout().entries.map(e => e.id), reset = button('Reset Mate');
+  assert.equal(await reset.isDisabled(), true, 'nothing to reset yet');
+  const rotationOf = id => matrixOf(id).elements.filter((_, i) => i < 11 && i % 4 !== 3).map(v => Math.round(v) || 0);
+  const upright = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const clearance = () => layout().bounds[loose].min[0] - layout().bounds[fixed].max[0];
+  const fit = async () => { await loaded(); await page.keyboard.press('f'); await page.waitForTimeout(900); };
+  const joinFlanges = async () => {
+    await fit();
+    await clickFace(loose, face => face.id === 'face-520'); await clickFace(fixed, face => face.id === 'face-520');
+    await status.getByText(/Panel B connected to Panel A\./).waitFor({ timeout: 60000 }); await loaded();
+  };
+  await joinFlanges();
+  await expectColour(GREEN, 'joined');
+  assert.equal(await reset.isDisabled(), false);
+  await reset.click(); await status.getByText(/Mate reset: Panel B moved aside/).waitFor();
+  await status.getByText('Click a face on Panel B.').waitFor({ timeout: 60000 }); await loaded();
+  near(clearance(), 250, 1, 'waiting beside the assembly'); assert.deepEqual(rotationOf(loose), upright, 'the way up it was added');
+  await expectColour('', 'old joint colours cleared'); await expectDots('', 'old hole colours cleared');
+  await page.locator('.asm-tree>li[data-entry=B]').getByText('Not connected').waitFor();
+  await page.screenshot({ path: path.join(output, '19-reset.png') });
+  // Any other pair of faces can now be connected.
+  await fit();
+  await clickFace(loose, (face, normal) => normal.z > .99); await clickFace(fixed, (face, normal) => normal.z > .99);
+  await status.getByText(/Panel B connected to Panel A\./).waitFor({ timeout: 60000 }); await loaded();
+  await button('Save Assembly').click(); await status.getByText('Assembly saved to this project.').waitFor({ timeout: 60000 });
+  assert.equal(saves.at(-1).entries[1].planeMates.length, 1, 'only the new mate');
+  assert.notEqual(saves.at(-1).entries[1].planeMates[0].reference.faceId, 'face-520');
+  pass('Reset Mate takes the joint apart, returns the panel upright beside the base, and other faces connect');
+
+  // R key, Undo, and resetting from the base.
+  const mated = position(loose);
+  await page.keyboard.press('r'); await status.getByText(/Mate reset: Panel B/).waitFor(); await loaded();
+  near(clearance(), 250, 1, 'R resets');
+  await page.keyboard.press('Control+z'); await loaded();
+  near(new THREE.Vector3(...position(loose)).distanceTo(new THREE.Vector3(...mated)), 0, .001, 'Undo restores the mate');
+  await page.locator('.asm-tree>li[data-entry=A] .asm-tree-name').click(); await loaded();
+  await reset.click(); await status.getByText(/Mate reset: Panel B/).waitFor(); await loaded(); near(clearance(), 250, 1, 'from the base');
+  await status.getByText('Click a face on Panel B.').waitFor({ timeout: 60000 });
+  await page.keyboard.press('Escape'); await loaded();
+  const parkedSpot = position(loose);
+  await button('Save Assembly').click(); await status.getByText('Assembly saved to this project.').waitFor({ timeout: 60000 });
+  assert.ok(!saves.at(-1).entries[1].planeMates, 'no mate saved');
+  await page.reload({ waitUntil: 'networkidle' }); await loaded();
+  near(new THREE.Vector3(...position(loose)).distanceTo(new THREE.Vector3(...parkedSpot)), 0, .001, 'the reset is saved');
+  // A locked panel keeps its mate.
+  await button('Mate').click(); await joinFlanges();
+  const lockedAt = position(loose);
+  await button('Lock Panel B').click(); await loaded();
+  await reset.click(); await status.getByText('Panel B is locked. Unlock it to reset its mate.').waitFor();
+  near(new THREE.Vector3(...position(loose)).distanceTo(new THREE.Vector3(...lockedAt)), 0, .001, 'locked panel untouched');
+  await button('Unlock Panel B').click(); await loaded();
+  await button('Full Screen').click(); await page.waitForTimeout(700);
+  assert.equal(await reset.count(), 0, 'full screen stays minimal');
+  await page.keyboard.press('r'); await status.getByText('Click a face on Panel B.').waitFor({ timeout: 60000 }); await loaded(); near(clearance(), 250, 1, 'R in full screen');
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await button('Full Screen').waitFor();
+  pass('R resets too, Undo restores, selecting the base resets its joints, locked panels keep theirs');
 
   assert.deepEqual(errors, []); pass('no page errors and no browser popups');
   console.log(`\n${results.length} checks passed. Screenshots: ${output}`);

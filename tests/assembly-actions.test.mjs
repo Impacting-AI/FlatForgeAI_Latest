@@ -9,7 +9,7 @@ const source = fs.readFileSync(new URL('../components/flatforge/assembly-actions
 const compiled = ts.transpile(source, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })
   .replace("'./plane-mates'", JSON.stringify(new URL('../components/flatforge/plane-mates.ts', import.meta.url).href))
   .replace("'./hole-match'", JSON.stringify(new URL('../components/flatforge/hole-match.ts', import.meta.url).href));
-const { canMove, connectionStatus, describeMove, movePanel, planConnection, removePanel, setLocked } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
+const { canMove, connectionStatus, describeMove, movePanel, planConnection, removePanel, resetMates, resetTargets, setLocked } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
 
 const identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 const at = x => [...identity.slice(0, 12), x, 0, 0, 1];
@@ -148,6 +148,48 @@ test('a locked panel stays when the panel it follows is moved or mated', () => {
   const plan = planConnection(chained, pick('b', 2), pick('a', 1), catalogs, placed(chained), 'new', 'b');
   const after = plan.attempts[0][2];
   assert.deepEqual([after.locked, after.planeMates, after.pose.matrix], [true, undefined, at(600)]);
+});
+
+// B and C are both mated to the base.
+const bothMated = () => withMate(withMate(entries, 'b', mate('m1'), placement), 'c', mate('m2'), placement);
+
+test('reset picks the selected panel, the panels mated to the base, or every mated panel', () => {
+  const rows = bothMated();
+  assert.deepEqual(resetTargets(rows, 'b'), ['b']);
+  assert.deepEqual(resetTargets(rows, 'a'), ['b', 'c']);
+  assert.deepEqual(resetTargets(rows, null), ['b', 'c']);
+  assert.deepEqual(resetTargets(entries, null), []);
+  assert.deepEqual(resetTargets(entries, 'b'), []);
+});
+
+test('reset takes a panel apart, back to how it was added, and leaves the others alone', () => {
+  const rows = bothMated(), result = resetMates(rows, 'b', placed(rows), 250);
+  assert.deepEqual(result.reset, ['b']);
+  assert.deepEqual(result.entries[1], { ...parked('b'), revision: undefined, rotation: undefined, gap: 700 - 100 + 250 });
+  assert.equal(result.entries[0], rows[0]);
+  assert.equal(result.entries[2], rows[2]);
+  assert.equal(connectionStatus(result.entries[1], result.entries).label, 'Not connected');
+  // The next pick is a first mate again: centred, faces towards each other.
+  const [made] = connect(result.entries, pick('b', 3), pick('c', 1), 'b').attempts[0][1].planeMates;
+  assert.deepEqual([made.targetId, made.aligned, made.lineUp], ['c', false, true]);
+});
+
+test('panels reset together wait clear of each other', () => {
+  const rows = bothMated(), { entries: after } = resetMates(rows, null, placed(rows), 250);
+  assert.deepEqual(after.slice(1).map(e => [e.targetId, e.planeMates, e.pose, e.gap]), [['a', undefined, undefined, 250], ['a', undefined, undefined, 250 + 100 + 250]]);
+});
+
+test('a panel following a reset one stays where it is', () => {
+  const chained = withMate(withMate(entries, 'b', mate('m1'), placement), 'c', mate('m2', 'b'), placement);
+  const { entries: after } = resetMates(chained, 'b', placed(chained), 250);
+  assert.deepEqual([after[2].planeMates, after[2].pose.matrix, after[2].pose.offset], [undefined, at(600), [0, 0, 0]]);
+});
+
+test('a locked panel keeps its mate through a reset', () => {
+  const rows = setLocked(bothMated(), 'b', true), result = resetMates(rows, null, placed(rows), 250);
+  assert.deepEqual([result.reset, result.kept], [['c'], ['b']]);
+  assert.equal(result.entries[1], rows[1]);
+  assert.deepEqual(resetMates(rows, 'b', placed(rows), 250).reset, []);
 });
 
 test('the list says what each panel is connected to', () => {
