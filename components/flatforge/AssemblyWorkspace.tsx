@@ -9,7 +9,9 @@ import {baseId,type Pick} from './plane-mates';
 import {canMove,movePanel,planConnection,removePanel,type Connection} from './assembly-actions';
 import type {AssemblyEntry,Panel,CadFaceReference} from './types';
 import type {CadFaceCatalog,CadPlacement} from './assembly-cad';
+import type {HoleReport} from './assembly-face-picker';
 import type {FaceRole,FaceSelection} from './face-connection-state';
+import {connectedPairs,pairKey,type FacePair} from './face-contact';
 import {DEFAULT_ASSEMBLY_GAP_MM} from './assembly-geometry';
 import {namedEntries,stagedPanel,freezePlacements,recordAction,type AssemblyHistory} from './assembly-workspace-state';
 
@@ -41,6 +43,9 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const [lastMove,setLastMove]=useState<{id:string;delta:number[]}|null>(null);
  const [valuesMinimized,setValuesMinimized]=useState(()=>{try{return localStorage.getItem('ffMoveValues')==='minimized'}catch{return false}});
  useEffect(()=>{try{localStorage.setItem('ffMoveValues',valuesMinimized?'minimized':'open')}catch{}},[valuesMinimized]);
+ // Faces joined this session keep their colour after a move releases the connection.
+ const [joined,setJoined]=useState<FacePair[]>([]),[overlapping,setOverlapping]=useState<string[]>([]);
+ const [holes,setHoles]=useState<HoleReport|null>(null);
  const catalogs=useRef<Record<string,CadFaceCatalog>>({}),added=useRef<string|null>(null);
  const hold=useRef<Hold|null>(null);
 
@@ -55,10 +60,24 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const movable=live&&!busy&&!mating&&!!selected&&(!!drag||canMove(entries,selected.id,ready));
  const selection=useMemo<FaceSelection|null>(()=>mating?{anyPanel:true,geometry:'face',alignment:'top',referenceEntryId:'',movingEntryId:mating.first?.entryId??'',moving:mating.first?.face,pick:mating.first?'reference':'moving'}:null,[mating]);
 
+ // While joining, the two faces are orange; afterwards the selected panel's joints show how they sit.
+ const dragging=!!drag;
+ const pairs=useMemo<FacePair[]>(()=>{
+  if(pending){
+   const mate=pending.attempts[pending.attempt].find(e=>e.id===pending.movingId)?.planeMates?.find(m=>m.id===pending.mateId);
+   return mate?[{moving:{entryId:pending.movingId,face:mate.moving},target:{entryId:pending.targetId,face:mate.reference},force:'joining'}]:[];
+  }
+  if(mating||!active)return [];
+  const known=new Map([...joined,...connectedPairs(entries)].map(pair=>[pairKey(pair),pair]));
+  return [...known.values()].filter(pair=>(pair.moving.entryId===active||pair.target.entryId===active)&&[pair.moving,pair.target].every(end=>entries.some(e=>e.id===end.entryId)))
+   // The CAD check found the panels inside each other; once moved, the faces speak for themselves.
+   .map(pair=>!dragging&&overlapping.includes(pairKey(pair))?{...pair,force:'inside' as const}:pair);
+ },[pending,mating,active,entries,joined,overlapping,dragging]);
+
  function commit(next:AssemblyEntry[]){setHistory(h=>recordAction(h,entries));store.setEntries(next);}
  function travel(direction:'undo'|'redo'){
   if(busy||drag)return;const from=direction==='undo'?history.past:history.future;if(!from.length)return;
-  const next=from[from.length-1];store.setEntries(next);setMating(null);setNotice('');setLastMove(null);
+  const next=from[from.length-1];store.setEntries(next);setMating(null);setNotice('');setLastMove(null);setJoined([]);setOverlapping([]);
   setHistory(direction==='undo'?{past:history.past.slice(0,-1),future:[...history.future,entries]}:{past:[...history.past,entries],future:history.future.slice(0,-1)});
   if(!next.some(e=>e.id===active))setActive(null);
  }
@@ -108,6 +127,9 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   const report=placement?.constraints?.[pending.movingId];
   if(result.valid&&report?.status!=='conflict'){
    commit(effective);setPending(null);setActive(pending.movingId);setLastMove(null);
+   const made=connectedPairs(effective).filter(pair=>pair.moving.entryId===pending.movingId);
+   setJoined(old=>[...old.filter(pair=>pair.moving.entryId!==pending.movingId),...made]);
+   setOverlapping(result.warning?made.map(pairKey):[]);
    setNotice(`${title(pending.movingId)} connected to ${title(pending.targetId)}.${result.warning?` ${result.warning} Undo, or drag the panel clear.`:''}`);
   }else if(report?.status==='conflict'&&pending.attempt+1<pending.attempts.length)setPending({...pending,attempt:pending.attempt+1});
   else{
@@ -127,7 +149,12 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function finishMove(id:string,delta:number[]){
   const start=hold.current;hold.current=null;setDrag(null);
   if(delta.every(v=>!v))return false;
-  try{commit(movePanel(entries,id,delta,start?.placement??(ready?placement:null)));setNotice('');setLastMove({id,delta});return true;}
+  try{
+   commit(movePanel(entries,id,delta,start?.placement??(ready?placement:null)));setNotice('');setLastMove({id,delta});
+   setJoined(old=>[...new Map([...old,...connectedPairs(entries)].map(pair=>[pairKey(pair),pair])).values()]);
+   setOverlapping(old=>old.filter(key=>!key.includes(id+':')));
+   return true;
+  }
   catch(error){setNotice((error as Error).message);return false;}
  }
  /** A held key is previewed as it repeats and saved once, on release. */
@@ -198,7 +225,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
 
  return <section ref={workspace} className={'assembly-workspace'+(fullscreen?' is-fullscreen':'')} aria-label="Interactive assembly workspace" data-mating={!!mating||undefined} data-unsaved-assembly={store.dirty||pending?'true':undefined} aria-busy={store.saving}>
   <AssemblyViewer ref={view} projectId={projectId} live={live} entries={effective} panels={available} onReadyChange={setReady}
-   mateCheckId={mateCheckId} selection={selection} previewOnly={!!pending} onFacePicked={facePicked} onFaceMessage={setNotice} onValidation={onValidation}
+   mateCheckId={mateCheckId} selection={selection} pairs={pairs} onHoles={setHoles} previewOnly={!!pending} onFacePicked={facePicked} onFaceMessage={setNotice} onValidation={onValidation}
    activeId={active} movable={movable} onSelect={select} onMove={finishMove} onDrag={onDrag} onCatalog={onCatalog} onPlaced={onPlaced}>
    <div className="asm-workspace-toolbar">
     {!fullscreen&&<button className="primary" title="Connect two panels: click a face on each (M)" aria-pressed={!!mating} disabled={!live||busy||!ready||entries.length<2} onClick={toggleMate}><Link2 size={15}/>Mate</button>}
@@ -219,9 +246,10 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
     <AssemblyPanelList entries={effective} placement={placement} fileNames={fileNames} active={active} busy={busy||!!drag} onSelect={select} onRemove={remove}/>
    </aside>}
    {!fullscreen&&!mating&&!pending&&selected&&live&&<AssemblyMovePanel title={title(selected.id)} fileName={fileNames[selected.id]} delta={shownMove} moving={!!drag}
+    holes={holes&&holes.entryId===selected.id?{...holes,other:title(holes.otherId)}:null}
     position={position} matrix={placement?.entries.find(e=>e.id===selected.id)?.matrix??null} minimized={valuesMinimized} onMinimize={setValuesMinimized}/>}
    {(message||hint)&&<div className="asm-status">
-    {message&&<p role={store.error?'alert':'status'} className="asm-message">{message}{store.error&&<button onClick={()=>{if((store.dirty||pending)&&!window.confirm('Discard current edits and reload the saved project assembly?'))return;setPending(null);setMating(null);setActive(null);setNotice('');setHistory({past:[],future:[]});store.reload();}}>Reload saved assembly</button>}</p>}
+    {message&&<p role={store.error?'alert':'status'} className="asm-message">{message}{store.error&&<button onClick={()=>{if((store.dirty||pending)&&!window.confirm('Discard current edits and reload the saved project assembly?'))return;setPending(null);setMating(null);setActive(null);setNotice('');setJoined([]);setOverlapping([]);setHistory({past:[],future:[]});store.reload();}}>Reload saved assembly</button>}</p>}
     {hint&&<p role="status" className="asm-mode-indicator">{hint}{(store.dirty||pending)&&<span>Unsaved changes</span>}</p>}
    </div>}
   </AssemblyViewer>

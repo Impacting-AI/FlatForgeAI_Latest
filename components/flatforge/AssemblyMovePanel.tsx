@@ -14,10 +14,12 @@ const signed = (value: number) => (Math.round(value * 10) > 0 ? '+' : '') + numb
 // A half turn reads as 180°, never -180°.
 const degrees = (value: number | null) => value === null ? '—' : `${number(value < -179.95 ? 180 : value)}°`;
 
-export default function AssemblyMovePanel({ title, fileName, delta, moving, position, matrix, minimized, onMinimize }: {
+export default function AssemblyMovePanel({ title, fileName, delta, moving, holes, position, matrix, minimized, onMinimize }: {
   title: string; fileName: string;
   /** World millimetres of the movement in progress, or of the last one made. */
   delta: number[] | null; moving: boolean;
+  /** Screw holes against the nearest panel: how many sit properly, or the movement still needed. */
+  holes: { other: string; matched: number; inside: number; move: number[] | null } | null;
   /** Centre of this panel measured from the centre of the base; null for the base itself. */
   position: { base: string; offset: number[] } | null;
   /** Current column-major CAD placement. */
@@ -43,6 +45,13 @@ export default function AssemblyMovePanel({ title, fileName, delta, moving, posi
         <div data-value="tilt" title="Above (+) or below (−) level"><dt>Angle, up / down</dt><dd>{degrees(move.tilt)}</dd></div>
       </dl>
     </> : <p>Drag an arrow or press an arrow key to see the values.</p>}
+    {holes && <>
+      <h4>Holes with {holes.other}</h4>
+      <p className="asm-holes" data-holes={holes.inside ? 'inside' : holes.matched ? 'matched' : 'apart'}>{holes.inside
+        ? `${holes.inside} lined up, but one panel is inside the other.`
+        : holes.matched ? `${holes.matched} matched.` : 'Not matched yet. Move:'}</p>
+      {!holes.matched && holes.move && <dl>{AXES.map(({ axis }, i) => <div key={axis} data-hole-move={axis}><dt><b>{axis}</b></dt><dd>{signed(holes.move![i])} mm</dd></div>)}</dl>}
+    </>}
     {position && <>
       <h4>Position from {position.base}</h4>
       <dl>{AXES.map(({ axis }, i) => <div key={axis} data-position={axis}><dt><b>{axis}</b></dt><dd>{signed(position.offset[i])} mm</dd></div>)}</dl>

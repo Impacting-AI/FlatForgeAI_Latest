@@ -35,7 +35,8 @@ try {
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-angle=default', '--enable-gpu', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
-  page.on('dialog', dialog => { errors.push('Unexpected popup: ' + dialog.message()); void dialog.dismiss(); });
+  // The browser's own leave-page prompt is expected when a reload follows unsaved edits.
+  page.on('dialog', dialog => { if (dialog.type() === 'beforeunload') return void dialog.accept(); errors.push('Unexpected popup: ' + dialog.message()); void dialog.dismiss(); });
   await page.addInitScript(() => {
     localStorage.setItem('flatforge_admin_token', 'x'.repeat(40));
     // Three.js announces its objects to developer tools; record what is drawn and from where.
@@ -50,12 +51,14 @@ try {
   const project = data.projects.find(p => p.id === fixture.projects[0].id);
   const drawings = data.panels.filter(p => p.project_id === project.id);
   const placements = [], saves = [], catalogs = {};
-  let failValidation = false;
+  let failValidation = false, slowValidation = false, savedLayout = null;
   await page.route('**/api/bootstrap', route => route.fulfill({ json: data }));
   await page.route('**/api/engine/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname.replace('/api/engine', '');
     if (failValidation && pathname.endsWith('/assembly/validate') && request.postDataJSON().mateCheckId) { return route.fulfill({ status: 503, json: { detail: 'Test CAD interruption.' } }); }
     if (pathname.endsWith('/assembly') && request.method() === 'PUT') saves.push(request.postDataJSON());
+    if (savedLayout && pathname.endsWith('/assembly') && request.method() === 'GET') return route.fulfill({ json: savedLayout });
+    if (slowValidation && pathname.endsWith('/assembly/validate')) await new Promise(resolve => setTimeout(resolve, 4000));
     const response = await fetch(apiURL + pathname, { method: request.method(), headers: { 'x-flatforge-key': apiKey, 'content-type': request.headers()['content-type'] || 'application/json' }, body: request.postDataBuffer() || undefined });
     const body = Buffer.from(await response.arrayBuffer());
     if (response.ok && pathname.endsWith('/assembly/place')) placements.push(JSON.parse(body));
@@ -114,6 +117,25 @@ try {
     throw new Error(`No clickable face found on ${id}`);
   }
 
+  /** Colours of the joined faces as drawn: one entry for each face fill. */
+  const faceColours = () => page.evaluate(() => {
+    const shown = [];
+    window.__scene.traverse(o => { if (o.isMesh && o.userData.contact) shown.push(`${o.userData.contact}:${o.material.color.getHexString()}`); });
+    return [...new Set(shown)].join(' ') + (shown.length ? ' x' + shown.length : '');
+  });
+  const ORANGE = 'joining:ffc184 x2', GREEN = 'matched:94e8aa x2', BLUE = 'inside:9dcbff x2';
+  async function expectColour(wanted, message) {
+    let seen;
+    for (let i = 0; i < 100; i++) { seen = await faceColours(); if (seen === wanted) return; await page.waitForTimeout(100); }
+    assert.fail(`${message}: wanted "${wanted}", drawn "${seen}"`);
+  }
+  /** The orange highlight of faces picked in Mate mode. */
+  const pickedOrange = () => page.evaluate(() => {
+    let count = 0;
+    window.__scene.traverse(o => { if (o.isMesh && o.userData.sharedFaceGeometry && !o.userData.contact && o.material.color.getHexString() === 'ffc184') count++; });
+    return count;
+  });
+
   /** The saved mate must hold exactly: faces opposed or flush, planes touching, and (first mate) centred. */
   function checkMate(entry, mate, { centred = true } = {}) {
     const face = (panel, ref) => {
@@ -154,7 +176,13 @@ try {
   const start = position(b);
   await clickFace(b, side);
   await status.getByText('Now click the face it should join, on another panel.').waitFor();
+  await frames(); assert.equal(await pickedOrange(), 1, 'the first picked face is orange');
+  slowValidation = true;
   await clickFace(a, side);
+  await status.getByText('Connecting…').waitFor();
+  await expectColour(ORANGE, 'while joining');
+  await page.screenshot({ path: path.join(output, '10-orange.png') });
+  slowValidation = false;
   await status.getByText(/Panel B connected to Panel A\./).waitFor({ timeout: 60000 }); await loaded();
   const boxA = layout().bounds[a], boxB = layout().bounds[b];
   assert.ok(boxB.min[0] > boxA.max[0] - 40 && boxB.max[0] > boxA.max[0] + 900, `side by side ${JSON.stringify([boxA, boxB])}`);
@@ -163,6 +191,8 @@ try {
   assert.ok(new THREE.Vector3(...moved).distanceTo(new THREE.Vector3(...start)) > 1, 'panel B moved');
   assert.equal(await page.getByRole('button', { name: 'Apply', exact: true }).count(), 0);
   await page.locator('.asm-tree>li[data-entry=B]').getByText('Connected to A').waitFor();
+  await status.getByText(/overlap by/).waitFor();
+  await expectColour(BLUE, 'joined, with the panels inside each other');
   await page.screenshot({ path: path.join(output, '02-connected.png') });
   await button('Save Assembly').click(); await status.getByText('Assembly saved to this project.').waitFor({ timeout: 60000 });
   let saved = saves.at(-1).entries;
@@ -176,6 +206,38 @@ try {
   await button('Redo').click(); await loaded();
   near(new THREE.Vector3(...position(b)).distanceTo(new THREE.Vector3(...moved)), 0, .01);
   pass('Undo and Redo revert and restore the connection');
+
+  // Colours follow the faces while the panel moves. Redo restored the joint: it is touching.
+  await page.locator('.asm-tree>li[data-entry=B] .asm-tree-name').click(); await loaded();
+  await expectColour(GREEN, 'restored joint');
+  const press = async (key, { shift = false } = {}) => {
+    const count = placements.length;
+    if (shift) await page.keyboard.down('Shift');
+    await page.keyboard.press(key);
+    if (shift) await page.keyboard.up('Shift');
+    for (let i = 0; i < 200 && placements.length === count; i++) await page.waitForTimeout(50);
+    await loaded();
+  };
+  await press('ArrowRight'); await expectColour(ORANGE, '1 mm apart');
+  await page.screenshot({ path: path.join(output, '11-apart.png') });
+  await press('ArrowLeft'); await expectColour(GREEN, 'touching again');
+  await page.screenshot({ path: path.join(output, '12-green.png') });
+  await press('ArrowLeft'); await expectColour(BLUE, '1 mm inside');
+  await page.screenshot({ path: path.join(output, '13-blue.png') });
+  await press('ArrowRight'); await expectColour(GREEN, 'back to contact');
+  await press('ArrowRight', { shift: true }); await expectColour(GREEN, '0.1 mm is within tolerance');
+  await press('ArrowRight', { shift: true }); await expectColour(ORANGE, '0.2 mm apart');
+  // Live during a held key, before anything is saved.
+  await page.keyboard.down('Shift'); await page.keyboard.down('ArrowLeft'); await expectColour(GREEN, 'held key');
+  for (let i = 0; i < 3; i++) await page.keyboard.down('ArrowLeft');
+  await expectColour(BLUE, 'held key, inside');
+  const unsaved = placements.length; await page.keyboard.up('ArrowLeft'); await page.keyboard.up('Shift');
+  for (let i = 0; i < 200 && placements.length === unsaved; i++) await page.waitForTimeout(50);
+  await loaded(); await expectColour(BLUE, 'after release');
+  await page.keyboard.press('Escape'); await expectColour('', 'nothing selected, no colours');
+  for (let i = 0; i < 12; i++) { if (!(await page.getByRole('button', { name: 'Undo', exact: true }).isEnabled())) break; if (new THREE.Vector3(...position(b)).distanceTo(new THREE.Vector3(...moved)) < .001) break; await button('Undo').click(); await loaded(); }
+  near(new THREE.Vector3(...position(b)).distanceTo(new THREE.Vector3(...moved)), 0, .01, 'back at the joint');
+  pass('face colours: orange while joining or apart, green on contact, blue inside, live while moving');
 
   // Gizmo: select from the list, then drag each axis.
   await page.locator('.asm-tree>li[data-entry=B] .asm-tree-name').click(); await loaded();
@@ -455,6 +517,57 @@ try {
   await page.setViewportSize({ width: 800, height: 900 }); await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(output, '06-narrow.png') });
   pass('STEP export works');
+
+  // Sample 1648 panels fasten end to end: one end flange rests on the other, screw slot on screw slot.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const sha = catalogs[a].sourceSha, panelId = drawings[0].id;
+  // The upper panel's slots sit exactly on the base panel's at (-580, -4382.5, 54); start 3 mm short.
+  const at = [-580, -4385.5, 54], web = { faceId: 'face-115', sourceSha: sha, point: [0, 0, 0] };
+  web.point = (() => { const f = catalogs[a].faces.find(face => face.id === 'face-115'); return f.indices.slice(0, 3).map(i => f.positions.slice(i * 3, i * 3 + 3)).reduce((s, p) => s.map((v, k) => v + p[k] / 3), [0, 0, 0]); })();
+  const common = { panelId, revision: drawings[0].revision, myFace: '-X' };
+  savedLayout = { id: 'holes', projectId: project.id, revision: 1, units: 'mm', updated: 1, entries: [
+    { ...common, id: a, label: 'A', targetId: null, targetFace: null, gap: 10 },
+    { ...common, id: b, label: 'B', targetId: a, targetFace: '+X', gap: 10, mateState: 'suspended',
+      connection: { type: 'planar', reference: web, moving: web, offsetU: 0, offsetV: 0, normalOffset: 0, twist: 0 },
+      pose: { matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, ...at, 1], sourceSha: sha, pivot: [0, 0, 0], axis: [0, 0, 1], offset: [0, 0, 0], turn: 0 } },
+  ] };
+  await page.reload({ waitUntil: 'networkidle' }); await loaded();
+  await page.locator('.asm-tree>li[data-entry=B] .asm-tree-name').click(); await loaded();
+  const holeText = page.locator('.asm-holes');
+  const dots = () => page.evaluate(() => {
+    const found = [];
+    window.__scene.traverse(o => { if (o.isPoints && o.userData.holes) found.push(`${o.userData.holes}:${o.material.color.getHexString()}:${o.geometry.attributes.position.count}`); });
+    return found.join(' ');
+  });
+  async function expectDots(wanted, message) {
+    let seen;
+    for (let i = 0; i < 100; i++) { seen = await dots(); if (seen === wanted) return; await page.waitForTimeout(100); }
+    assert.fail(`${message}: wanted "${wanted}", drawn "${seen}"`);
+  }
+  await holeText.getByText('Not matched yet. Move:').waitFor({ timeout: 60000 });
+  assert.equal(await page.locator('[data-hole-move=Y] dd').innerText(), '+3 mm');
+  await expectColour(ORANGE, 'holes 3 mm off, picked faces apart'); await expectDots('', 'no hole marked yet');
+  await page.screenshot({ path: path.join(output, '14-holes-off.png') });
+  await press('ArrowUp'); await press('ArrowUp'); await press('ArrowUp');
+  await holeText.getByText('4 matched.').waitFor();
+  await expectColour(GREEN, 'screw holes on each other'); await expectDots('matched:94e8aa:4', 'matched holes marked');
+  await page.screenshot({ path: path.join(output, '15-holes-matched.png') });
+  await press('PageDown'); await holeText.getByText(/inside the other/).waitFor();
+  await expectColour(BLUE, 'one sheet inside the other'); await expectDots('inside:9dcbff:4', 'holes marked inside');
+  await press('PageUp'); await press('PageUp'); await holeText.getByText('Not matched yet. Move:').waitFor();
+  assert.equal(await page.locator('[data-hole-move=Z] dd').innerText(), '-1 mm');
+  await expectColour(ORANGE, 'sheets 1 mm apart'); await expectDots('', 'no hole marked');
+  await press('PageDown'); await expectColour(GREEN, 'seated again');
+  // Without any picked faces, the holes themselves still turn green.
+  delete savedLayout.entries[1].connection; delete savedLayout.entries[1].mateState; savedLayout.entries[1].pose.matrix[13] = -4382.5;
+  await page.reload({ waitUntil: 'networkidle' }); await loaded();
+  await page.locator('.asm-tree>li[data-entry=B] .asm-tree-name').click(); await loaded();
+  await expectDots('matched:94e8aa:4', 'holes alone'); await expectColour('', 'no picked faces');
+  await page.getByRole('button', { name: 'Full Screen', exact: true }).click(); await page.waitForTimeout(700);
+  await expectDots('matched:94e8aa:4', 'full screen');
+  await page.keyboard.press('Escape'); await expectDots('matched:94e8aa:4', 'after leaving full screen');
+  await page.keyboard.press('Escape'); await expectDots('', 'nothing selected');
+  pass('screw holes on each other turn light green (blue when inside, orange with the move needed when off)');
 
   assert.deepEqual(errors, []); pass('no page errors and no browser popups');
   console.log(`\n${results.length} checks passed. Screenshots: ${output}`);

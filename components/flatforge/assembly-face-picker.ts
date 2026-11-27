@@ -2,9 +2,14 @@ import * as THREE from 'three';
 import { assemblyFaces, type CadEntry, type CadEdge, type CadFace, type CadFaceCatalog } from './assembly-cad';
 import type { CadFaceReference,AssemblySide } from './types';
 import type { FaceRole, FaceSelection } from './face-connection-state';
+import { CONTACT_COLORS, faceContact, type ContactState, type FacePair } from './face-contact';
+import { matchHoles, panelHoles, type Hole } from './hole-match';
 
 /** CAD-face proxies and highlights live outside panel groups, so exports never
  * contain selection geometry. Ray hits identify exact hash-pinned BREP faces. */
+/** How the selected panel's holes sit on the nearest other panel. */
+export type HoleReport={entryId:string;otherId:string;matched:number;inside:number;move:number[]|null};
+
 export function createAssemblyFacePicker(options:{
   projectId:string;scene:THREE.Scene;camera:THREE.Camera;canvas:HTMLCanvasElement;
   entries:()=>CadEntry[];groups:Map<string,{group:THREE.Group}>;
@@ -13,6 +18,7 @@ export function createAssemblyFacePicker(options:{
   onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;
   /** True when the latest press turned the view, even if the pointer came back to its start. */
   dragged?:()=>boolean;
+  onHoles?:(report:HoleReport|null)=>void;
 }) {
   let sideHover:{id:string;side:AssemblySide}|null=null;
   let selection:FaceSelection|null=null,alive=true,sequence=0,pickRevision=0;
@@ -21,6 +27,8 @@ export function createAssemblyFacePicker(options:{
   const visuals=new THREE.Group();options.scene.add(visuals);
   const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
   let down:{x:number;y:number}|null=null;
+  let pairs:FacePair[]=[];const outlines=new Map<THREE.BufferGeometry,THREE.EdgesGeometry>();
+  let focus:string|null=null,reported='null';const holes=new Map<string,Hole[]>();
   function edgeLine(edge:CadEdge,group:THREE.Group,color:number){
     const geometry=new THREE.BufferGeometry().setFromPoints([edge.a,edge.b].map(p=>new THREE.Vector3(...p).multiplyScalar(.001)));
     const line=new THREE.Line(geometry,new THREE.LineBasicMaterial({color,depthTest:false}));
@@ -66,20 +74,87 @@ export function createAssemblyFacePicker(options:{
     const candidate=selection?.geometry==='edge'?nearestEdge(face,options.groups.get(id)!.group):undefined;
     if(selection?.geometry==='edge'&&!candidate){clearHover();return;}
     const key=id+':'+face.id+':'+(candidate?.edge.id??'');
-    if(key!==hoverKey){clearHover();hoverKey=key;hover=candidate?edgeLine(candidate.edge,options.groups.get(id)!.group,0x008dd2):new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0x70bde0:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
+    if(key!==hoverKey){clearHover();hoverKey=key;hover=candidate?edgeLine(candidate.edge,options.groups.get(id)!.group,0x008dd2):new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0xffd9ae:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
   };
   function clearVisuals(){
     for(const object of [...visuals.children]){
       object.traverse(child=>{
-        if(child instanceof THREE.Mesh||child instanceof THREE.Line){
+        if(child instanceof THREE.Mesh||child instanceof THREE.Line||child instanceof THREE.Points){
           if(!child.userData.sharedFaceGeometry)child.geometry.dispose();
           for(const material of Array.isArray(child.material)?child.material:[child.material])material.dispose();
         }
       });visuals.remove(object);
     }
   }
+  /** A face of a loaded panel at its current position, or nothing if it cannot be shown. */
+  function placedFace(end:FacePair['moving']){
+    const source=catalogs.get(end.entryId),group=options.groups.get(end.entryId)?.group;
+    if(!source||!group?.visible||source.data.sourceSha!==end.face.sourceSha)return null;
+    const index=source.data.faces.findIndex(face=>face.id===end.face.faceId),face=source.data.faces[index];
+    if(!face?.normal)return null;
+    group.updateMatrixWorld(true);
+    const point=new THREE.Vector3(),points:number[][]=[];
+    for(let i=0;i<face.positions.length;i+=3)points.push(point.fromArray(face.positions,i).multiplyScalar(.001).applyMatrix4(group.matrixWorld).multiplyScalar(1000).toArray());
+    const box=new THREE.Box3().setFromObject(group);
+    return {geometry:source.meshes[index].geometry,group,points,normal:new THREE.Vector3(...face.normal).transformDirection(group.matrixWorld).toArray(),
+      box:{min:box.min.multiplyScalar(1000).toArray(),max:box.max.multiplyScalar(1000).toArray()}};
+  }
+  /** The panel's holes where it stands now, in world millimetres. */
+  function placedHoles(id:string){
+    const source=catalogs.get(id),group=options.groups.get(id)?.group;
+    if(!source?.data.faces.length||!group?.visible)return null;
+    let own=holes.get(id);if(!own){own=panelHoles(source.data.faces);holes.set(id,own);}
+    group.updateMatrixWorld(true);
+    return own.map(hole=>({half:hole.half,axis:new THREE.Vector3(...hole.axis as [number,number,number]).transformDirection(group.matrixWorld).toArray(),
+      centre:new THREE.Vector3(...hole.centre as [number,number,number]).multiplyScalar(.001).applyMatrix4(group.matrixWorld).multiplyScalar(1000).toArray()}));
+  }
+  /** Marks the selected panel's holes that sit on another panel's holes, and returns the state for each such panel. */
+  function renderHoles(){
+    const states=new Map<string,ContactState>();let report:HoleReport|null=null;
+    const group=focus?options.groups.get(focus)?.group:undefined;
+    if(focus&&group){
+      const near=new THREE.Box3().setFromObject(group).expandByScalar(.05);
+      for(const [id,item] of options.groups){
+        if(id===focus||!near.intersectsBox(new THREE.Box3().setFromObject(item.group)))continue;
+        // Face meshes are fetched once, the first time two panels come close.
+        const missing=[focus,id].filter(panel=>!catalogs.get(panel)?.data.faces.length);
+        if(missing.length){for(const panel of missing)if(!pending.has(panel))void load(panel).then(()=>{if(alive)renderSelection();}).catch(error=>{if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);});continue;}
+        const moving=placedHoles(focus),target=placedHoles(id);if(!moving||!target)continue;
+        const found=matchHoles(moving,target);
+        if(found.inside.length)states.set(id,'inside');else if(found.matched.length)states.set(id,'matched');
+        for(const [list,state] of [[found.matched,'matched'],[found.inside,'inside']] as const){
+          if(!list.length)continue;
+          const geometry=new THREE.BufferGeometry().setFromPoints(list.map(i=>new THREE.Vector3(...moving[i].centre as [number,number,number]).multiplyScalar(.001)));
+          const dots=new THREE.Points(geometry,new THREE.PointsMaterial({color:CONTACT_COLORS[state],size:11,sizeAttenuation:false,transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));
+          dots.userData={holes:state,entryId:id};dots.renderOrder=6;dots.raycast=()=>{};visuals.add(dots);
+        }
+        const seated=found.matched.length+found.inside.length,best=report?report.matched+report.inside:-1;
+        if(found.move&&(seated>best||seated===best&&Math.hypot(...found.move)<Math.hypot(...report?.move??[Infinity])))
+          report={entryId:focus,otherId:id,matched:found.matched.length,inside:found.inside.length,move:found.move.map(v=>Math.round(v*10)/10||0)};
+      }
+    }
+    const text=JSON.stringify(report);
+    if(text!==reported){reported=text;options.onHoles?.(report);}
+    return states;
+  }
+  /** Colours both faces of each pair by how they sit now. Drawn on top, because joined faces cover each other. */
+  function renderPairs(holeStates:Map<string,ContactState>){
+    for(const pair of pairs){
+      const moving=placedFace(pair.moving),target=placedFace(pair.target);if(!moving||!target)continue;
+      // Panels fastened through lined-up holes are matched even where the picked faces sit apart.
+      const other=pair.moving.entryId===focus?pair.target.entryId:pair.target.entryId===focus?pair.moving.entryId:null;
+      const state=pair.force??(other?holeStates.get(other):undefined)??faceContact(moving,target,{moving:moving.box,target:target.box});
+      for(const end of [moving,target]){
+        let outline=outlines.get(end.geometry);if(!outline){outline=new THREE.EdgesGeometry(end.geometry,20);outlines.set(end.geometry,outline);}
+        const fill=new THREE.Mesh(end.geometry,new THREE.MeshBasicMaterial({color:CONTACT_COLORS[state],transparent:true,opacity:.85,side:THREE.DoubleSide,depthTest:false,depthWrite:false,toneMapped:false}));
+        const edge=new THREE.LineSegments(outline,new THREE.LineBasicMaterial({color:CONTACT_COLORS[state],transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));
+        for(const object of [fill,edge]){object.userData={sharedFaceGeometry:true,contact:state,entryId:end===moving?pair.moving.entryId:pair.target.entryId};object.matrixAutoUpdate=false;object.matrix.copy(end.group.matrixWorld);object.renderOrder=5;object.raycast=()=>{};visuals.add(object);}
+      }
+    }
+  }
   function renderSelection(){
     clearVisuals();
+    renderPairs(renderHoles());
     if(sideHover){const source=catalogs.get(sideHover.id),group=options.groups.get(sideHover.id)?.group;
      if(source&&group?.visible)for(const region of source.data.sides?.[sideHover.side].candidates??[]){const meshSource=source.meshes.find(m=>m.userData.faceId===region.faceId);if(!meshSource)continue;const mesh=new THREE.Mesh(meshSource.geometry,new THREE.MeshBasicMaterial({color:0x2788ee,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));mesh.userData.sharedFaceGeometry=true;mesh.matrixAutoUpdate=false;mesh.matrix.copy(group.matrixWorld);mesh.raycast=()=>{};visuals.add(mesh);}
     }
@@ -104,7 +179,7 @@ export function createAssemblyFacePicker(options:{
         if(edge)visuals.add(edgeLine(edge,group,role==='reference'?0x0079dd:0xe88700));
         continue;
       }
-      const mesh=new THREE.Mesh(source.meshes[index].geometry,new THREE.MeshBasicMaterial({color:role==='reference'?0x2788ee:0xffa336,opacity:.42,transparent:true,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
+      const mesh=new THREE.Mesh(source.meshes[index].geometry,new THREE.MeshBasicMaterial({color:CONTACT_COLORS.joining,opacity:.85,toneMapped:false,transparent:true,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
       mesh.userData.sharedFaceGeometry=true;mesh.matrixAutoUpdate=false;mesh.matrix.copy(group.matrixWorld);mesh.renderOrder=2;mesh.raycast=()=>{};visuals.add(mesh);
       if(role==='reference'&&selection.alignment!=='top'&&face.normal&&face.u&&face.v){
         const origin=new THREE.Vector3(...reference.point).multiplyScalar(.001).applyMatrix4(group.matrixWorld);
@@ -177,10 +252,20 @@ export function createAssemblyFacePicker(options:{
     options.onPick(role,{faceId:face.id,sourceSha:source.data.sourceSha,point:point.toArray()},id);
   };
   options.canvas.addEventListener('pointermove',pointerMove);options.canvas.addEventListener('pointerleave',clearHover);options.canvas.addEventListener('pointerdown',pointerDown);options.canvas.addEventListener('pointerup',pointerUp);
-  return {update,async loadAll(){for(const entry of options.entries()){if(!alive)return;try{await load(entry.id,false);}catch(error){if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);}}},highlightSide(id:string|null,side:AssemblySide|null){sideHover=id&&side?{id,side}:null;renderSelection();if(id)void load(id).then(()=>{if(alive)renderSelection();}).catch(()=>{});},refresh:renderSelection,dispose(){
+  function setPairs(next:FacePair[]){
+    if(JSON.stringify(next)===JSON.stringify(pairs))return;
+    pairs=next;renderSelection();
+    for(const id of new Set(next.flatMap(pair=>[pair.moving.entryId,pair.target.entryId])))
+      void load(id).then(()=>{if(alive)renderSelection();}).catch(error=>{if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);});
+  }
+  /** The selected panel, whose holes are compared with its neighbours'. */
+  function setFocus(id:string|null){if(id===focus)return;focus=id;renderSelection();}
+  return {update,setPairs,setFocus,async loadAll(){for(const entry of options.entries()){if(!alive)return;try{await load(entry.id,false);}catch(error){if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);}}},highlightSide(id:string|null,side:AssemblySide|null){sideHover=id&&side?{id,side}:null;renderSelection();if(id)void load(id).then(()=>{if(alive)renderSelection();}).catch(()=>{});},refresh:renderSelection,dispose(){
     alive=false;abort.abort();clearHover();clearVisuals();options.scene.remove(visuals);
     options.canvas.removeEventListener('pointermove',pointerMove);options.canvas.removeEventListener('pointerleave',clearHover);options.canvas.removeEventListener('pointerdown',pointerDown);options.canvas.removeEventListener('pointerup',pointerUp);
     for(const source of catalogs.values())for(const mesh of source.meshes){mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();}
+    for(const outline of outlines.values())outline.dispose();
+    outlines.clear();
     catalogs.clear();
   }};
 }

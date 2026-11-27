@@ -9,10 +9,11 @@ import { AssemblyEntry, Panel, fileUrl } from './types';
 import { assemblyModel, assemblyPlacements, assemblyMatrix, assemblyRotation } from './assembly-geometry';
 import { placeAssembly, cadEntries, checkAssembly, downloadAssemblyStep, type CadCheck, type CadEntry, type CadFaceCatalog, type CadPlacement } from './assembly-cad';
 
-import { createAssemblyFacePicker } from './assembly-face-picker';
+import { createAssemblyFacePicker, type HoleReport } from './assembly-face-picker';
 import type { FaceRole, FaceSelection } from './face-connection-state';
 import type { CadFaceReference } from './types';
 import { createAssemblyGizmo } from './assembly-gizmo';
+import type { FacePair } from './face-contact';
 import { createOrbitNavigation } from './orbit-navigation';
 import { createAssemblyLabels } from './assembly-labels';
 import { prepareInspectionModel, configureInspectionRenderer, prepareInspectionGrid, inspectionLighting } from './inspection-presentation';
@@ -40,6 +41,10 @@ type Props = {
  onMove?:(id:string,delta:number[])=>boolean;onDrag?:(delta:number[])=>void;
  onCatalog?:(catalog:CadFaceCatalog)=>void;onPlaced?:(placement:CadPlacement)=>void;
  selection?:FaceSelection|null;
+ /** Joined faces to colour by how they sit. */
+ pairs?:FacePair[];
+ /** Reports how the selected panel's holes sit on a neighbour. */
+ onHoles?:(report:HoleReport|null)=>void;
  previewOnly?:boolean;
  onFacePicked?:(role:FaceRole,face:CadFaceReference,entryId:string)=>void;
  onFaceMessage?:(message:string)=>void;
@@ -48,7 +53,7 @@ type Props = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
- function AssemblyViewer({projectId,live,entries,panels,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,movable=false,onSelect,onMove,onDrag,onCatalog,onPlaced,mateCheckId},ref){
+ function AssemblyViewer({projectId,live,entries,panels,onReadyChange,selection=null,previewOnly=false,onFacePicked,onFaceMessage,onValidation,children,activeId=null,movable=false,onSelect,onMove,onDrag,onCatalog,onPlaced,mateCheckId,pairs,onHoles},ref){
   const host = useRef<HTMLDivElement>(null);
   const viewApi = useRef<(AssemblyViewerHandle&{screenshot:()=>void;exportGLB:()=>Promise<void>})|null>(null);
   const applyRef = useRef<(()=>void)|null>(null);
@@ -69,6 +74,12 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
   const pickerRef=useRef<ReturnType<typeof createAssemblyFacePicker>|null>(null);
   useEffect(()=>{interaction.current={selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,movable,onSelect,onMove,onDrag,onCatalog,onPlaced};displayRef.current?.();},[selection,previewOnly,onFacePicked,onFaceMessage,onValidation,activeId,movable,onSelect,onMove,onDrag,onCatalog,onPlaced]);
   useEffect(()=>{void pickerRef.current?.update(selection);},[selection]);
+  const pairsLatest=useRef(pairs);
+  useEffect(()=>{pairsLatest.current=pairs;pickerRef.current?.setPairs(pairs??[]);},[pairs]);
+  // Holes are compared only for a plain selection, not while faces are being picked or joined.
+  const focusId=selection||previewOnly?null:activeId;
+  const holesLatest=useRef({focusId,onHoles});
+  useEffect(()=>{holesLatest.current={focusId,onHoles};pickerRef.current?.setFocus(focusId);},[focusId,onHoles]);
   // Parent selection/highlight updates must not restart CAD placement.
   useEffect(()=>{entriesLatest.current=JSON.parse(entriesKey).entries;checked.current=mateCheckId;layoutRef.current?.();},[entriesKey,mateCheckId]);
   useEffect(()=>{onValidation?.({key:cad.key,valid:ready&&!cad.checking&&!!cad.result?.valid,token:cad.result?.token??null,checking:cad.checking,message:cad.checking?'':cad.error||cad.result?.issues.join(' ')||'',warning:cad.checking?'':cad.result?.warnings?.join(' ')||''});},[cad,ready,onValidation]);
@@ -159,8 +170,11 @@ const AssemblyViewer = forwardRef<AssemblyViewerHandle, Props>(
       onPick:(role,face,id)=>interaction.current.onFacePicked?.(role,face,id),onMessage:message=>interaction.current.onFaceMessage?.(message),
       onSelect:id=>interaction.current.onSelect?.(id),onCatalog:catalog=>interaction.current.onCatalog?.(catalog),
       blocked:()=>!!gizmoRef.current?.intercepting,dragged:()=>navigation.moved,
-      onPanelHover:id=>{if(hoveredId!==id){hoveredId=id;applyRef.current?.();}}});
+      onPanelHover:id=>{if(hoveredId!==id){hoveredId=id;applyRef.current?.();}},
+      onHoles:report=>holesLatest.current.onHoles?.(report)});
      void pickerRef.current.update(interaction.current.selection);
+     pickerRef.current.setPairs(pairsLatest.current??[]);
+     pickerRef.current.setFocus(holesLatest.current.focusId);
     }
     let submittedKey='';
     async function validateLayout():Promise<CadCheck>{
