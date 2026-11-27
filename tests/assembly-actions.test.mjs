@@ -8,7 +8,7 @@ import { withMate } from '../components/flatforge/plane-mates.ts';
 const source = fs.readFileSync(new URL('../components/flatforge/assembly-actions.ts', import.meta.url), 'utf8');
 const compiled = ts.transpile(source, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })
   .replace("'./plane-mates'", JSON.stringify(new URL('../components/flatforge/plane-mates.ts', import.meta.url).href));
-const { canMove, connectionStatus, movePanel, planConnection, removePanel } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
+const { canMove, connectionStatus, describeMove, movePanel, planConnection, removePanel } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
 
 const identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 const at = x => [...identity.slice(0, 12), x, 0, 0, 1];
@@ -109,6 +109,17 @@ test('removing the base makes the next panel the fixed base, in place', () => {
   assert.deepEqual(without[0].pose.matrix, at(300));
   assert.equal(without[1].planeMates[0].targetId, 'b');
   assert.deepEqual(removePanel([root], 'a', null), []);
+});
+
+test('a movement is described by its length, heading from above and angle from level', () => {
+  const rounded = delta => Object.values(describeMove(delta)).map(v => v === null ? null : Math.round(v * 10) / 10);
+  assert.deepEqual(rounded([25, 0, 0]), [25, 0, 0]);
+  assert.deepEqual(rounded([0, 10, 0]), [10, 90, 0]);
+  assert.deepEqual(rounded([0, -10, 0]), [10, 270, 0]);
+  assert.deepEqual(rounded([-3, 4, 0]), [5, 126.9, 0]);
+  assert.deepEqual(rounded([3, 0, 4]), [5, 0, 53.1]);
+  assert.deepEqual(rounded([0, 0, -7]), [7, null, -90]);
+  assert.deepEqual(rounded([0, 0, 0]), [0, null, null]);
 });
 
 test('the list says what each panel is connected to', () => {

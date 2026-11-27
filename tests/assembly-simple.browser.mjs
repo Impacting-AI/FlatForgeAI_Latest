@@ -184,6 +184,14 @@ try {
     window.__scene.traverse(o => { if (o.isTransformControlsRoot) { const c = o.controls; found = { attached: !!c.object, axis: c.axis, at: c.object?.position.toArray() }; } });
     return found;
   });
+  const values = page.getByRole('complementary', { name: 'Movement values' });
+  const number = async selector => Number((await values.locator(selector).innerText()).replace(/[^0-9.+-]/g, ''));
+  const moveValues = async () => [await number('[data-axis=X] dd'), await number('[data-axis=Y] dd'), await number('[data-axis=Z] dd')];
+  /** "Position from Panel A" must equal the distance between the two CAD bounding-box centres. */
+  async function positionMatches() {
+    const centre = id => layout().bounds[id].min.map((v, i) => (v + layout().bounds[id].max[i]) / 2);
+    for (const [i, axis] of ['X', 'Y', 'Z'].entries()) near(await number(`[data-position=${axis}] dd`), centre(b)[i] - centre(a)[i], .06, 'position ' + axis);
+  }
   async function dragAxis(axis, pixels, { shift = false } = {}) {
     await loaded();
     const handle = await gizmo(); assert.ok(handle.attached, 'gizmo on the selected panel');
@@ -206,9 +214,17 @@ try {
       const at = (await gizmo()).at[index]; if (last !== null) jumps.push(at - last); last = at;
     }
     await status.getByText(new RegExp('Panel B · X')).waitFor();
+    assert.equal(await values.locator('h4').first().innerText(), 'MOVING NOW');
+    const live = await moveValues();
     await page.mouse.up(); if (shift) await page.keyboard.up('Shift');
     await loaded();
     const delta = position(b).map((v, i) => v - before[i]);
+    assert.equal(await values.locator('h4').first().innerText(), 'LAST MOVE');
+    const shown = await moveValues();
+    assert.deepEqual(shown, live, 'the values stay after release');
+    shown.forEach((value, i) => near(value, delta[i], .051, 'sidebar value'));
+    near(await number('[data-value=distance] dd'), Math.hypot(...delta), .051, 'distance');
+    await positionMatches();
     assert.ok(Math.sign(delta[index]) === Math.sign(pixels) && Math.abs(delta[index]) > (shift ? .05 : 1), `${axis} moved ${delta}`);
     for (let i = 0; i < 3; i++) if (i !== index) near(delta[i], 0, .002, 'single axis');
     near(delta[index] * (shift ? 10 : 1), Math.round(delta[index] * (shift ? 10 : 1)), .002, 'snap step');
@@ -222,6 +238,19 @@ try {
   await page.locator('.asm-tree>li[data-entry=B]').getByText('Not connected').waitFor();
   await page.screenshot({ path: path.join(output, '03-gizmo.png') });
   pass('gizmo drags move the panel along X, Y and Z, snap to 1 mm (0.1 mm with Shift), smoothly and alone');
+  await page.screenshot({ path: path.join(output, '08-values.png') });
+  await button('Minimize movement values').click();
+  assert.equal(await values.count(), 0);
+  await page.screenshot({ path: path.join(output, '09-values-minimized.png') });
+  await dragAxis_minimized();
+  await button('Show movement values').click(); await values.waitFor();
+  pass('movement sidebar shows live and final values matching the CAD positions; it minimizes and restores');
+  async function dragAxis_minimized() {
+    // The sidebar stays out of the way while minimized, including after a keyboard move.
+    const count = placements.length; await page.keyboard.press('PageUp');
+    for (let i = 0; i < 200 && placements.length === count; i++) await page.waitForTimeout(50);
+    await loaded(); assert.equal(await values.count(), 0);
+  }
 
   // The dragged position is what gets saved, and a reload returns it.
   await button('Save Assembly').click(); await status.getByText('Assembly saved to this project.').waitFor({ timeout: 60000 });
@@ -231,6 +260,7 @@ try {
   assert.equal(await page.locator('[data-unsaved-assembly]').count(), 0);
   pass('moved position saves and survives a reload');
 
+  assert.equal(await values.count(), 0, 'nothing selected, no sidebar');
   // Click a panel in the 3D view to select it, then precise keyboard steps.
   const label = page.locator('.asm-model-label', { hasText: 'Panel B' });
   await label.click(); await loaded();
@@ -248,7 +278,10 @@ try {
   assert.equal(right.reduce((s, v) => s + Math.abs(v), 0), 1); assert.deepEqual(left.map((v, i) => v + right[i]), [0, 0, 0]);
   assert.equal(forward.reduce((s, v) => s + Math.abs(v), 0), 1); assert.deepEqual(back.map((v, i) => v + forward[i]), [0, 0, 0]);
   assert.equal(forward[2] + right[2], 0); assert.ok(right[0] > 0 && forward[1] > 0, 'directions follow the view');
-  assert.deepEqual(await step('PageUp'), [0, 0, 1]); assert.deepEqual(await step('PageDown', { shift: true }), [0, 0, -.1]);
+  assert.deepEqual(await step('PageUp'), [0, 0, 1]);
+  assert.deepEqual(await moveValues(), [0, 0, 1]); await positionMatches();
+  assert.equal(await values.locator('[data-value=tilt] dd').innerText(), '90°');
+  assert.equal(await values.locator('[data-value=heading] dd').innerText(), '—'); assert.deepEqual(await step('PageDown', { shift: true }), [0, 0, -.1]);
   const held = position(b);
   assert.deepEqual(await step('PageUp', { times: 15 }), [0, 0, 15]);
   await button('Undo').click(); await loaded();

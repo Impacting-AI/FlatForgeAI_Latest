@@ -96,6 +96,19 @@ export function removePanel(entries: AssemblyEntry[], id: string, placement: Cad
   });
 }
 
+/**
+ * Length and direction of a movement in world millimetres. Heading is measured from above,
+ * 0° along +X and 90° along +Y; tilt is the angle above (+) or below (−) level.
+ */
+export function describeMove([x, y, z]: number[]) {
+  const level = Math.hypot(x, y), distance = Math.hypot(level, z);
+  return {
+    distance,
+    heading: level ? (Math.atan2(y, x) * 180 / Math.PI + 360) % 360 : null,
+    tilt: distance ? Math.atan2(z, level) * 180 / Math.PI : null,
+  };
+}
+
 export function connectionStatus(entry: AssemblyEntry, entries: AssemblyEntry[], report?: MateReport) {
   if (entry.targetId === null) return { tone: 'base', label: 'Base · fixed' };
   const targets = entry.planeMates?.map(m => m.targetId) ?? (entry.connection && entry.mateState === 'active' ? [entry.targetId] : []);

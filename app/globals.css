@@ -528,6 +528,27 @@ fieldset.asm-pane{margin:0;min-width:0;border-top:0;border-bottom:0;border-left:
 .assembly-workspace.is-fullscreen :is(.asm-cad-controls,.viewport-actions,.axis-key){display:none}
 .assembly-workspace.is-fullscreen .asm-status{bottom:14px}
 .assembly-workspace .asm-exit-fullscreen{position:absolute;top:12px;right:12px;z-index:8;width:32px;height:32px;padding:0}
+/* Movement values: a right-hand sidebar below the download buttons. */
+.asm-move-panel,.assembly-workspace .asm-move-open{position:absolute;right:12px;top:max(98px,var(--assembly-toolbar-bottom,68px));z-index:6}
+.asm-move-panel{width:236px;max-width:calc(100% - 24px);max-height:calc(100% - max(98px,var(--assembly-toolbar-bottom,68px)) - 120px);overflow:auto;background:#fffffff7;border:1px solid #cdd7df;border-radius:8px;padding:10px 12px;box-shadow:0 4px 20px #1e39431a;font-size:11px;color:#2e4656}
+.asm-move-panel[data-moving=true]{border-color:#2e92cb;box-shadow:0 0 0 2px #2e92cb33}
+.asm-move-panel header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.asm-move-panel header div{min-width:0}
+.asm-move-panel header strong{display:block;font-size:12px}
+.asm-move-panel header small{display:block;font-size:10px;color:#71838d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.assembly-workspace .asm-move-panel header button{width:24px;height:24px;padding:0;flex:none}
+.asm-move-panel h4{margin:10px 0 4px;padding-top:8px;border-top:1px solid #e2e9ee;font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#71838d}
+.asm-move-panel dl{margin:0}
+.asm-move-panel dl+dl{margin-top:5px}
+.asm-move-panel dl>div{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:2px 0}
+.asm-move-panel dt{display:flex;gap:7px;color:#52697a}
+.asm-move-panel dt b{width:9px}
+.asm-move-panel dd{margin:0;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.asm-move-panel [data-axis=X] b,.asm-move-panel [data-position=X] b,.asm-move-panel [data-angle=X] b{color:#d22f27}
+.asm-move-panel [data-axis=Y] b,.asm-move-panel [data-position=Y] b,.asm-move-panel [data-angle=Y] b{color:#1b8a3a}
+.asm-move-panel [data-axis=Z] b,.asm-move-panel [data-position=Z] b,.asm-move-panel [data-angle=Z] b{color:#2455c7}
+.asm-move-panel p{margin:4px 0;color:#637581;line-height:1.5}
+@media(max-width:900px){.asm-move-panel{width:190px}}
 /* ── Project Drawings: files can be dropped anywhere on the page ── */
 .project-drawings.drag-active{outline:2px dashed #39a88e;outline-offset:8px;border-radius:8px;background:#f1f7f4}
 /* ── Extract & Review: full-width flat pattern, drawing evidence below ── */

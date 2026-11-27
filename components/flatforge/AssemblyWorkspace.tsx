@@ -2,6 +2,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {Plus,Undo2,Redo2,Link2,Maximize2,Minimize2,Save} from 'lucide-react';
 import AssemblyPanelList from './AssemblyPanelList';
+import AssemblyMovePanel from './AssemblyMovePanel';
 import AssemblyViewer,{type AssemblyViewerHandle} from './AssemblyViewer';
 import {useProjectAssembly} from './useProjectAssembly';
 import {baseId,type Pick} from './plane-mates';
@@ -36,6 +37,10 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  const [validation,setValidation]=useState({key:'',valid:false,token:null as string|null,checking:false,message:'',warning:''}),[ready,setReady]=useState(false);
  const [drag,setDrag]=useState<number[]|null>(null),[notice,setNotice]=useState('');
  const [history,setHistory]=useState<AssemblyHistory>({past:[],future:[]});
+ // The movement values stay readable after a move, until something else changes the layout.
+ const [lastMove,setLastMove]=useState<{id:string;delta:number[]}|null>(null);
+ const [valuesMinimized,setValuesMinimized]=useState(()=>{try{return localStorage.getItem('ffMoveValues')==='minimized'}catch{return false}});
+ useEffect(()=>{try{localStorage.setItem('ffMoveValues',valuesMinimized?'minimized':'open')}catch{}},[valuesMinimized]);
  const catalogs=useRef<Record<string,CadFaceCatalog>>({}),added=useRef<string|null>(null);
  const hold=useRef<Hold|null>(null);
 
@@ -53,7 +58,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function commit(next:AssemblyEntry[]){setHistory(h=>recordAction(h,entries));store.setEntries(next);}
  function travel(direction:'undo'|'redo'){
   if(busy||drag)return;const from=direction==='undo'?history.past:history.future;if(!from.length)return;
-  const next=from[from.length-1];store.setEntries(next);setMating(null);setNotice('');
+  const next=from[from.length-1];store.setEntries(next);setMating(null);setNotice('');setLastMove(null);
   setHistory(direction==='undo'?{past:history.past.slice(0,-1),future:[...history.future,entries]}:{past:[...history.past,entries],future:history.future.slice(0,-1)});
   if(!next.some(e=>e.id===active))setActive(null);
  }
@@ -102,7 +107,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   // Only a real mate conflict moves on to replacing earlier mates; a service error changes nothing.
   const report=placement?.constraints?.[pending.movingId];
   if(result.valid&&report?.status!=='conflict'){
-   commit(effective);setPending(null);setActive(pending.movingId);
+   commit(effective);setPending(null);setActive(pending.movingId);setLastMove(null);
    setNotice(`${title(pending.movingId)} connected to ${title(pending.targetId)}.${result.warning?` ${result.warning} Undo, or drag the panel clear.`:''}`);
   }else if(report?.status==='conflict'&&pending.attempt+1<pending.attempts.length)setPending({...pending,attempt:pending.attempt+1});
   else{
@@ -122,7 +127,7 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
  function finishMove(id:string,delta:number[]){
   const start=hold.current;hold.current=null;setDrag(null);
   if(delta.every(v=>!v))return false;
-  try{commit(movePanel(entries,id,delta,start?.placement??(ready?placement:null)));setNotice('');return true;}
+  try{commit(movePanel(entries,id,delta,start?.placement??(ready?placement:null)));setNotice('');setLastMove({id,delta});return true;}
   catch(error){setNotice((error as Error).message);return false;}
  }
  /** A held key is previewed as it repeats and saved once, on release. */
@@ -175,6 +180,12 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
   return()=>{window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur);};
  },[]);
 
+ const shownMove=drag??(selected&&lastMove?.id===selected.id?lastMove.delta:null);
+ // Until the CAD service answers, the last placement is behind by the movement just made.
+ const unplaced=drag??(!ready&&selected&&lastMove?.id===selected.id?lastMove.delta:[0,0,0]);
+ const base=effective.find(e=>e.id===baseId(effective)),own=selected&&placement?.bounds[selected.id],from=base&&placement?.bounds[base.id];
+ const position=selected&&base&&selected.id!==base.id&&own&&from?{base:title(base.id),offset:[0,1,2].map(i=>(own.min[i]+own.max[i]-from.min[i]-from.max[i])/2+unplaced[i])}:null;
+
  const problem=!pending&&ready&&validation.key===key&&!validation.checking&&!validation.valid?validation.message:'';
  const message=store.error||notice||problem||store.message;
  const axisText=(delta:number[])=>delta.map((v,i)=>`${'XYZ'[i]} ${v>0?'+':''}${v}`).join(' · ')+' mm';
@@ -207,6 +218,8 @@ export default function AssemblyWorkspace({projectId,live,panels}:{projectId:str
    {!fullscreen&&!!effective.length&&<aside className="asm-panel-list" aria-label="Assembly panels">
     <AssemblyPanelList entries={effective} placement={placement} fileNames={fileNames} active={active} busy={busy||!!drag} onSelect={select} onRemove={remove}/>
    </aside>}
+   {!fullscreen&&!mating&&!pending&&selected&&live&&<AssemblyMovePanel title={title(selected.id)} fileName={fileNames[selected.id]} delta={shownMove} moving={!!drag}
+    position={position} matrix={placement?.entries.find(e=>e.id===selected.id)?.matrix??null} minimized={valuesMinimized} onMinimize={setValuesMinimized}/>}
    {(message||hint)&&<div className="asm-status">
     {message&&<p role={store.error?'alert':'status'} className="asm-message">{message}{store.error&&<button onClick={()=>{if((store.dirty||pending)&&!window.confirm('Discard current edits and reload the saved project assembly?'))return;setPending(null);setMating(null);setActive(null);setNotice('');setHistory({past:[],future:[]});store.reload();}}>Reload saved assembly</button>}</p>}
     {hint&&<p role="status" className="asm-mode-indicator">{hint}{(store.dirty||pending)&&<span>Unsaved changes</span>}</p>}
