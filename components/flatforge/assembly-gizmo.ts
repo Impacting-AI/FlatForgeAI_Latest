@@ -1,47 +1,51 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { CadFrame } from './assembly-cad';
-import { descendants, type PositionValues } from './assembly-workspace-state';
-import type { AssemblyEntry } from './types';
 
-export type GizmoConfig={id:string;frame:CadFrame;values:PositionValues;gap:number;group?:boolean};
-/** A drag is a temporary rigid translation, never a second CAD mate solver.
- * On release the authoritative placement/solid checks replace the preview.
- * No transforms can be saved or exported until that check finishes. */
+/**
+ * Translation handles on the selected panel, along the assembly's own axes:
+ * X left/right, Y forward/back, Z up/down. Drags snap to 1 mm, or 0.1 mm with Shift.
+ * A drag only previews the move; on release the CAD service places and checks the panel.
+ */
 export function createAssemblyGizmo(options:{scene:THREE.Scene;camera:THREE.Camera;canvas:HTMLCanvasElement;orbit:OrbitControls;
-  groups:Map<string,{group:THREE.Group}>;entries:()=>AssemblyEntry[];
-  onStart:()=>void;onChange:(values:PositionValues)=>void;onEnd:()=>void}) {
+  groups:Map<string,{group:THREE.Group;localBounds:THREE.Box3}>;
+  onStart:()=>void;onDrag:(delta:number[])=>void;onEnd:(id:string,delta:number[])=>void}) {
   const control=new TransformControls(options.camera,options.canvas),anchor=new THREE.Object3D();
   options.scene.add(anchor);const helper=control.getHelper();options.scene.add(helper);
-  control.setMode('translate');control.setSpace('local');control.setSize(.8);
-  control.showXY=false;control.showYZ=false;control.showXZ=false;
-  let config:GizmoConfig|null=null,start:GizmoConfig|null=null,fine=false;
-  let basePosition=new THREE.Vector3();const basis=new THREE.Matrix4();
-  const originals=new Map<string,THREE.Matrix4>();
-  function set(next:GizmoConfig|null){
-    if(control.dragging)return;
-    config=next;
-    if(!next){control.detach();return;}
-    basis.makeBasis(new THREE.Vector3(...next.frame.u),new THREE.Vector3(...next.frame.v),new THREE.Vector3(...next.frame.n));
-    anchor.position.set(...next.frame.origin).multiplyScalar(.001);anchor.quaternion.setFromRotationMatrix(basis);anchor.updateMatrixWorld(true);control.attach(anchor);
+  control.setMode('translate');control.setSpace('world');control.setSize(.9);
+  let id:string|null=null,active:string|null=null,fine=false;
+  const from=new THREE.Vector3(),origin=new THREE.Vector3(),delta=new THREE.Vector3();
+  /** Keeps the handles on the middle of the selected panel. */
+  function refresh(){
+    const item=id?options.groups.get(id):undefined;if(!item||control.dragging)return;
+    item.group.updateMatrixWorld(true);
+    item.localBounds.clone().applyMatrix4(item.group.matrixWorld).getCenter(anchor.position);anchor.updateMatrixWorld(true);
   }
-  const pointer=(e:PointerEvent)=>{fine=e.shiftKey;};options.canvas.addEventListener('pointermove',pointer);
+  function set(next:string|null){
+    if(control.dragging)return;
+    id=next&&options.groups.has(next)?next:null;
+    if(!id){control.detach();return;}
+    refresh();control.attach(anchor);
+  }
+  // Capture phase: the snap step is known before the controller handles the same movement.
+  const pointer=(e:PointerEvent)=>{fine=e.shiftKey;};options.canvas.addEventListener('pointermove',pointer,true);
   control.addEventListener('mouseDown',()=>{
-    if(!config)return;start=structuredClone(config);basePosition=anchor.position.clone();originals.clear();
-    for(const id of (config.group?descendants(options.entries(),config.id):new Set([config.id]))){const group=options.groups.get(id)?.group;if(group){group.updateMatrix();originals.set(id,group.matrix.clone());}}
+    const item=id?options.groups.get(id):undefined;if(!item)return;
+    active=id;from.copy(anchor.position);origin.copy(item.group.position);delta.set(0,0,0);
     options.orbit.enabled=false;options.onStart();
   });
   control.addEventListener('objectChange',()=>{
-    if(!start||!control.dragging)return;
-    const local=anchor.position.clone().sub(basePosition).applyMatrix4(basis.clone().invert()).multiplyScalar(1000);
-    const step=fine?.1:1;local.set(Math.round(local.x/step)*step,Math.round(local.y/step)*step,Math.round(local.z/step)*step);
-    const delta=local.clone().multiplyScalar(.001).applyMatrix4(basis);
-    anchor.position.copy(basePosition).add(delta);
-    for(const [id,matrix] of originals){const group=options.groups.get(id)!.group;matrix.decompose(group.position,group.quaternion,group.scale);group.position.add(delta);group.updateMatrixWorld(true);}
-    options.onChange({u:start.values.u+local.x,v:start.values.v+local.y,normal:start.values.normal+local.z});
+    const item=active&&control.dragging?options.groups.get(active):undefined;if(!item)return;
+    const step=fine?.1:1,snap=(metres:number)=>Math.round(metres*1000/step)*step;
+    delta.set(snap(anchor.position.x-from.x),snap(anchor.position.y-from.y),snap(anchor.position.z-from.z));
+    anchor.position.copy(from).addScaledVector(delta,.001);
+    item.group.position.copy(origin).addScaledVector(delta,.001);item.group.updateMatrixWorld(true);
+    options.onDrag(delta.toArray().map(v=>Math.round(v*10)/10));
   });
-  control.addEventListener('mouseUp',()=>{if(start){start=null;options.orbit.enabled=true;options.onEnd();}});
-  return {set,get dragging(){return control.dragging;},get intercepting(){return control.enabled&&!!control.object&&!!control.axis;},anchor,helper,
-    dispose(){options.orbit.enabled=true;control.detach();control.dispose();options.scene.remove(helper,anchor);options.canvas.removeEventListener('pointermove',pointer);}};
+  control.addEventListener('mouseUp',()=>{
+    if(!active)return;const moved=active;active=null;options.orbit.enabled=true;
+    options.onEnd(moved,delta.toArray().map(v=>Math.round(v*10)/10));
+  });
+  return {set,refresh,get dragging(){return control.dragging;},get intercepting(){return control.enabled&&!!control.object&&!!control.axis;},
+    dispose(){options.orbit.enabled=true;control.detach();control.dispose();options.scene.remove(helper,anchor);options.canvas.removeEventListener('pointermove',pointer,true);}};
 }

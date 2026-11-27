@@ -10,7 +10,9 @@ export function createAssemblyFacePicker(options:{
   entries:()=>CadEntry[];groups:Map<string,{group:THREE.Group}>;
   onPick:(role:FaceRole,reference:CadFaceReference,entryId:string)=>void;onMessage:(message:string)=>void;
   onSelect:(id:string|null)=>void;onPanelHover:(id:string|null)=>void;
-  onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;label?:(id:string)=>string;
+  onCatalog:(catalog:CadFaceCatalog)=>void;blocked:()=>boolean;
+  /** True when the latest press turned the view, even if the pointer came back to its start. */
+  dragged?:()=>boolean;
 }) {
   let sideHover:{id:string;side:AssemblySide}|null=null;
   let selection:FaceSelection|null=null,alive=true,sequence=0,pickRevision=0;
@@ -19,7 +21,6 @@ export function createAssemblyFacePicker(options:{
   const visuals=new THREE.Group();options.scene.add(visuals);
   const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
   let down:{x:number;y:number}|null=null;
-  const tooltip=document.createElement('div');tooltip.className='asm-face-tooltip';tooltip.hidden=true;options.canvas.parentElement!.appendChild(tooltip);
   function edgeLine(edge:CadEdge,group:THREE.Group,color:number){
     const geometry=new THREE.BufferGeometry().setFromPoints([edge.a,edge.b].map(p=>new THREE.Vector3(...p).multiplyScalar(.001)));
     const line=new THREE.Line(geometry,new THREE.LineBasicMaterial({color,depthTest:false}));
@@ -40,7 +41,7 @@ export function createAssemblyFacePicker(options:{
     return hits.length>1&&hits[1].distance-hits[0].distance<.5?undefined:hits[0];
   }
   let hover:THREE.Mesh|THREE.Line|null=null,hoverKey='';
-  function clearHover(){if(hover){options.scene.remove(hover);if(hover instanceof THREE.Line)hover.geometry.dispose();(hover.material as THREE.Material).dispose();hover=null;}hoverKey='';tooltip.hidden=true;}
+  function clearHover(){if(hover){options.scene.remove(hover);if(hover instanceof THREE.Line)hover.geometry.dispose();(hover.material as THREE.Material).dispose();hover=null;}hoverKey='';}
   function setRay(event:PointerEvent){const rect=options.canvas.getBoundingClientRect();mouse.set((event.clientX-rect.left)/rect.width*2-1,-(event.clientY-rect.top)/rect.height*2+1);ray.setFromCamera(mouse,options.camera);}
   function panelHit(){
     const objects=[...options.groups.values()].filter(item=>item.group.visible).map(item=>item.group);
@@ -66,9 +67,6 @@ export function createAssemblyFacePicker(options:{
     if(selection?.geometry==='edge'&&!candidate){clearHover();return;}
     const key=id+':'+face.id+':'+(candidate?.edge.id??'');
     if(key!==hoverKey){clearHover();hoverKey=key;hover=candidate?edgeLine(candidate.edge,options.groups.get(id)!.group,0x008dd2):new THREE.Mesh((hit.object as THREE.Mesh).geometry,new THREE.MeshBasicMaterial({color:face.supported?0x70bde0:0xe06a51,transparent:true,opacity:.45,side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));hover.matrixAutoUpdate=false;hover.matrix.copy(options.groups.get(id!)!.group.matrixWorld);hover.raycast=()=>{};options.scene.add(hover);}
-    const side=selection?.sideNames?.[role];
-    tooltip.hidden=false;tooltip.textContent=candidate?face.id+' / '+candidate.edge.id+' · Click to mate':selection?.anyPanel?`${options.label?.(id)??''}${face.id} · ${face.type} · ${face.supported?'Click to select':'Planar mates only'}`:(side?side[0].toUpperCase()+side.slice(1):'Connection')+' region'+(allowed&&allowed.length>1?' '+(allowed.indexOf(face.id)+1):'')+' · Click to select';
-    const rect=options.canvas.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(rect.width-220,event.clientX-rect.left+14))+'px';tooltip.style.top=Math.max(55,event.clientY-rect.top-35)+'px';
   };
   function clearVisuals(){
     for(const object of [...visuals.children]){
@@ -147,7 +145,7 @@ export function createAssemblyFacePicker(options:{
   const pointerDown=(event:PointerEvent)=>{down=event.button===0&&!options.blocked()?{x:event.clientX,y:event.clientY}:null;};
   const pointerUp=async(event:PointerEvent)=>{
     const start=down;down=null;
-    if(options.blocked()||!start||Math.hypot(event.clientX-start.x,event.clientY-start.y)>5)return;
+    if(options.blocked()||options.dragged?.()||!start||Math.hypot(event.clientX-start.x,event.clientY-start.y)>5)return;
     setRay(event);
     if(!selection?.pick){options.onSelect(panelHit()??null);return;}
     const role=selection.pick,id=selection.anyPanel?panelHit():(role==='reference'?selection.referenceEntryId:selection.movingEntryId);
@@ -169,7 +167,7 @@ export function createAssemblyFacePicker(options:{
       options.onMessage(selection.geometry==='edge'?'This edge borders two faces. Click just inside the flange that defines the gap direction.':'This point touches more than one CAD face. Click inside a single surface, away from its boundary.');return;
     }
     const face=source.data.faces.find(face=>face.id===hit.object.userData.faceId)!;
-    if(!face.supported){options.onMessage(`${face.type} surface: a constant-gap connection needs a planar face. Pick a planar flange or surface.`);return;}
+    if(!face.supported){options.onMessage(`${face.type} surfaces cannot be connected. Click a flat face.`);return;}
     if(selection?.geometry==='edge'){
       const candidate=nearestEdge(face,group);
       if(!candidate){options.onMessage('Click closer to a straight edge on this planar face, away from a shared corner.');return;}
@@ -180,7 +178,7 @@ export function createAssemblyFacePicker(options:{
   };
   options.canvas.addEventListener('pointermove',pointerMove);options.canvas.addEventListener('pointerleave',clearHover);options.canvas.addEventListener('pointerdown',pointerDown);options.canvas.addEventListener('pointerup',pointerUp);
   return {update,async loadAll(){for(const entry of options.entries()){if(!alive)return;try{await load(entry.id,false);}catch(error){if(alive&&!abort.signal.aborted)options.onMessage((error as Error).message);}}},highlightSide(id:string|null,side:AssemblySide|null){sideHover=id&&side?{id,side}:null;renderSelection();if(id)void load(id).then(()=>{if(alive)renderSelection();}).catch(()=>{});},refresh:renderSelection,dispose(){
-    alive=false;abort.abort();clearHover();tooltip.remove();clearVisuals();options.scene.remove(visuals);
+    alive=false;abort.abort();clearHover();clearVisuals();options.scene.remove(visuals);
     options.canvas.removeEventListener('pointermove',pointerMove);options.canvas.removeEventListener('pointerleave',clearHover);options.canvas.removeEventListener('pointerdown',pointerDown);options.canvas.removeEventListener('pointerup',pointerUp);
     for(const source of catalogs.values())for(const mesh of source.meshes){mesh.geometry.dispose();(mesh.material as THREE.Material).dispose();}
     catalogs.clear();
